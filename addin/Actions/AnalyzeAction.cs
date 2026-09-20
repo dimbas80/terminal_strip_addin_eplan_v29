@@ -20,7 +20,7 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-20 Этап 2 rev.5.2 ([MATCH]: сортировка клемм по номеру после ':')";
+        private const string BUILD_STAMP = "2026-09-20 Этап 2 rev.5.3 ([MATCH] по якорям формы PlaceHolderText + дамп [PH])";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
@@ -142,6 +142,28 @@ namespace MyEplanActions
                 _logger.Log("[ALLLAYERS] слой '" + oPair.Key + "': объектов " + oPair.Value +
                     ", из них Line: " + dicAllLayerLines[oPair.Key]);
 
+            // --- 4b. PlaceHolderText — дескрипторы строк формы (якорь «номер ↔ колонка»,
+            //         rev.5.3): порядковое сопоставление колонок и клемм неверно, когда
+            //         нумерация клеммника не совпадает с раскладкой по X (п.24, клеммы 22/23) ---
+            List<PhRow> lstPh = new List<PhRow>();
+            foreach (Placement oPlacement in lstAll)
+            {
+                PlaceHolderText oPh = oPlacement as PlaceHolderText;
+                if (oPh == null) continue;
+                PhRow oPhRow = new PhRow();
+                oPhRow.Text = SafeText("<n/a>", () => oPh.Text);
+                try
+                {
+                    PointD oLoc = oPh.Location;
+                    oPhRow.Location = new Pt(oLoc.X, oLoc.Y);
+                }
+                catch { oPhRow.Location = new Pt(double.NaN, double.NaN); }
+                lstPh.Add(oPhRow);
+                _logger.Log("[PH] (" + oPhRow.Location.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
+                    oPhRow.Location.Y.ToString("F3", CultureInfo.InvariantCulture) + ") '" + oPhRow.Text + "'");
+            }
+            _logger.Log("[INFO] PlaceHolderText (дескрипторы строк): " + lstPh.Count);
+
             // --- 5. Геометрия линий ---
             _logger.Log("[INFO] --- Линии в отчёте ---");
             List<Seg> lstSegs = new List<Seg>();
@@ -223,7 +245,7 @@ namespace MyEplanActions
 
             // --- 9. Свод [MATCH] (Задача 5): точки ↔ клеммы ↔ кабель/провод + Bridge ---
             _logger.Log("[INFO] --- Свод [MATCH]: точки ↔ клеммы ↔ кабель/провод ---");
-            List<MatchRow> lstMatch = MatchBuilder.Build(oAnalysis, oDm, _logger);
+            List<MatchRow> lstMatch = MatchBuilder.Build(oAnalysis, oDm, lstPh, _logger);
 
             _logger.Summarize("Готово: точек подключения " + oAnalysis.Points.Count +
                 "; строк [DM] " + oDm.Rows.Count + "; строк [MATCH] " + lstMatch.Count + ".");

@@ -7,7 +7,7 @@ namespace MyEplanActions
     /// <summary>Строка свода [MATCH] (Задача 5): точка подключения ↔ колонка К4 ↔
     /// клемма целевого клеммника ↔ классификация её подключений (кабель/провод).
     /// Идентичность «точка = конкретное подключение» из DM не выводится (в DM нет
-    /// координат) — сопоставление поэкранное: колонка К4 ↔ клемма по порядку.</summary>
+    /// координат) — сопоставление через колонки К4.</summary>
     public sealed class MatchRow
     {
         public Pt Point;
@@ -19,10 +19,21 @@ namespace MyEplanActions
         public readonly List<string> CableNames = new List<string>();
     }
 
+    /// <summary>Дескриптор строки формы — PlaceHolderText (rev.5.3): текст + позиция.
+    /// Якорь соответствия «номер клеммы ↔ колонка»: порядковое сопоставление колонок
+    /// и клемм неверно, когда нумерация клеммника не совпадает с раскладкой по X
+    /// (урок rev.5.2: мосты 7-8/8-9 стоят под перемычкой колонок 8/9/10).</summary>
+    public sealed class PhRow
+    {
+        public Pt Location;
+        public string Text;
+    }
+
     /// <summary>Группа [DM]-строк одной клеммы целевого клеммника (Ext+Int, без Bridge).</summary>
     public sealed class DmTerminalGroup
     {
         public string Name;
+        public int Number = -1;          // номер клеммы (суффикс после ':' в полном имени)
         public readonly List<DmRow> Rows = new List<DmRow>();
 
         public int ConnCount { get { return Rows.Count; } }
@@ -41,16 +52,14 @@ namespace MyEplanActions
     }
 
     /// <summary>Свод [MATCH] — Задача 5 (план: plan_stage2.md; решения 20.09.2026):
-    /// (а) классификация «кабель/провод» — по свойству СОЕДИНЕНИЯ (соединение
-    /// принадлежит кабелю), а не по свойствам клеммы (решение пользователя 20.09.2026).
-    /// rev.5.1: основной сигнал — №31058 «Соединение: Принадлежность=Кабель»
-    /// (на Connection и CDP); имя кабеля через CDP-пробу — доп. информация (в тестовом
-    /// проекте объекты-определения кабелей в DM отсутствуют, CDP-проба rev.5.0 имён
-    /// не дала — но сама проба подтверждена: 476 уникальных соединений, [DMERR]=0);
-    /// (б) разбор Bridge 11 vs 7 (summary п.21в): rev.5.0 СХОДИТСЯ — 11 DM-сегментов ==
-    /// арифметика графических перемычек (L=28→3 сегмента, L=14→2, L=7→1: 3+2+1+1+1+2+1).
-    /// (в) rev.5.1: в сопоставлении участвуют ВСЕ клеммы клеммника, включая без
-    /// подключений (урок rev.5.0: 10 пустых клемм выпадали — сопоставление уезжало).</summary>
+    /// (а) классификация «кабель/провод» — по свойству СОЕДИНЕНИЯ (решение
+    /// пользователя): основной сигнал — №31058 «Соединение: Принадлежность=Кабель»,
+    /// имя кабеля через CDP-пробу — доп. информация (rev.5.0–5.2, п.24);
+    /// (б) rev.5.3: «номер ↔ колонка» — по якорям формы (PlaceHolderText), а не по
+    /// порядку: подтверждено пользователем на клеммах 22/23 — у 22 подключений нет
+    /// и выводов нет, у 23 два вывода (по 3 сегмента), при этом порядковое
+    /// сопоставление приписывало её выводы клемме 22;
+    /// (в) Bridge 11==11 (п.21в закрыт, п.24).</summary>
     public static class MatchBuilder
     {
         /// <summary>Кабельное ли подключение: имя кабеля из CDP-пробы ИЛИ №31058
@@ -60,7 +69,8 @@ namespace MyEplanActions
             return oRow.CableName != null || oRow.IsCableConn == true || oRow.IsCableCdp == true;
         }
 
-        public static List<MatchRow> Build(LeadAnalysis oAnalysis, DmReport oDm, DiagnosticLogger log)
+        public static List<MatchRow> Build(LeadAnalysis oAnalysis, DmReport oDm, List<PhRow> lstPh,
+            DiagnosticLogger log)
         {
             List<MatchRow> lstRows = new List<MatchRow>();
             K4Report oK4 = oAnalysis == null ? null : oAnalysis.K4;
@@ -81,13 +91,9 @@ namespace MyEplanActions
                 else lstConnRows.Add(oRow);
             }
 
-            // --- 2. Группировка по клеммам: ПОЛНЫЙ список клемм клеммника (rev.5.1),
-            //        включая без подключений; строки [DM] раскладываются в группы ---
+            // --- 2. Группы клемм: полный список из DM + номер (суффикс имени) ---
             List<string> lstAllNames;
             bool bHaveAllNames = oDm.StripTerminalNames.TryGetValue(strTarget, out lstAllNames);
-            if (bHaveAllNames)
-                log.Log("[INFO] [MATCH] список клемм из DM: " + lstAllNames.Count +
-                    " (в т.ч. без подключений)");
             Dictionary<string, DmTerminalGroup> dicGroups = new Dictionary<string, DmTerminalGroup>();
             List<DmTerminalGroup> lstTerminals = new List<DmTerminalGroup>();
             if (bHaveAllNames)
@@ -97,6 +103,7 @@ namespace MyEplanActions
                     if (dicGroups.ContainsKey(strName)) continue; // защита от дублей имён
                     DmTerminalGroup oNew = new DmTerminalGroup();
                     oNew.Name = strName;
+                    oNew.Number = ParseTerminalNumber(strName);
                     dicGroups[strName] = oNew;
                     lstTerminals.Add(oNew);
                 }
@@ -106,64 +113,105 @@ namespace MyEplanActions
                 DmTerminalGroup oGroup;
                 if (!dicGroups.TryGetValue(oRow.TerminalName, out oGroup))
                 {
-                    // клеммы нет в списке DM (fallback rev.5.0: список недоступен)
                     oGroup = new DmTerminalGroup();
                     oGroup.Name = oRow.TerminalName;
+                    oGroup.Number = ParseTerminalNumber(oRow.TerminalName);
                     dicGroups[oRow.TerminalName] = oGroup;
                     lstTerminals.Add(oGroup);
                 }
                 oGroup.Rows.Add(oRow);
             }
-            lstTerminals.Sort(delegate(DmTerminalGroup oA, DmTerminalGroup oB)
-            {
-                // Имя клеммы — ПОЛНОЕ («=HII-1.1++ЯЧ67+#2-X2:1», урок rev.5.1: TryParse
-                // целого имени не срабатывает → лексикографика 1,10,11,...,19,2,20...).
-                // Сортируем по суффиксу после последнего ':' как по числу.
-                int nA, nB;
-                bool bA = int.TryParse(SuffixAfterColon(oA.Name), NumberStyles.Integer,
-                    CultureInfo.InvariantCulture, out nA);
-                bool bB = int.TryParse(SuffixAfterColon(oB.Name), NumberStyles.Integer,
-                    CultureInfo.InvariantCulture, out nB);
-                if (bA && bB) return nA.CompareTo(nB);
-                if (bA) return -1;
-                if (bB) return 1;
-                return string.CompareOrdinal(oA.Name, oB.Name);
-            });
+            Dictionary<int, DmTerminalGroup> dicByNumber = new Dictionary<int, DmTerminalGroup>();
+            foreach (DmTerminalGroup oGroup in lstTerminals)
+                if (oGroup.Number >= 0 && !dicByNumber.ContainsKey(oGroup.Number))
+                    dicByNumber[oGroup.Number] = oGroup;
 
             int nColumns = oK4.Columns.Count;
-            bool bAligned = nColumns == lstTerminals.Count;
+
+            // --- 3. Якоря «номер ↔ колонка» из дескрипторов формы (rev.5.3) ---
+            // Числа не сортируем и по порядку НЕ сопоставляем: каждый якорь отвечает
+            // сам за свою колонку (ближайшую по X).
+            int[] arrColNumber = new int[nColumns];
+            for (int i = 0; i < nColumns; i++) arrColNumber[i] = -1;
+            int nAnchors = 0, nAnchorCollisions = 0, nAnchorFar = 0;
+            foreach (PhRow oPh in lstPh)
+            {
+                if (oPh == null || double.IsNaN(oPh.Location.X)) continue;
+                int nNumber;
+                if (!int.TryParse(SuffixAfterColon(oPh.Text).Trim(), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out nNumber)) continue;
+                double dDist;
+                int nCol = FindNearestColumn(oK4, oPh.Location.X, out dDist);
+                if (nCol < 0) continue;
+                if (dDist > oK4.Pitch)
+                {
+                    nAnchorFar++;
+                    log.Warn("[PHCOL] дескриптор '" + oPh.Text + "' (X=" + FmtX(oPh.Location.X) +
+                        "): ближайшая колонка дальше шага (" + FmtX(dDist) + ") — якорь отброшен");
+                    continue;
+                }
+                if (arrColNumber[nCol] >= 0 && arrColNumber[nCol] != nNumber)
+                {
+                    nAnchorCollisions++;
+                    log.Warn("[PHCOL] колонка X=" + FmtX(oK4.Columns[nCol]) + ": якоря конфликтуют (" +
+                        arrColNumber[nCol] + " и " + nNumber + ") — оставлен первый");
+                    continue;
+                }
+                if (arrColNumber[nCol] == nNumber) continue;
+                arrColNumber[nCol] = nNumber;
+                nAnchors++;
+            }
+            bool bUseAnchors = nAnchors > 0;
             log.Log("[INFO] [MATCH] целевой клеммник '" + strTarget + "': точек " + oAnalysis.Points.Count +
                 ", колонок К4 " + nColumns + ", клемм в DM " + lstTerminals.Count +
-                " (подключений Ext+Int " + lstConnRows.Count + ")");
-            if (!bAligned)
+                " (подключений Ext+Int " + lstConnRows.Count + "); якорей формы: " + nAnchors +
+                (bUseAnchors ? " — сопоставление по якорям" : " — НЕТ, сопоставление по порядку УСЛОВНОЕ"));
+            if (!bUseAnchors)
+                log.Warn("[MATCH] якорей формы не найдено — колонки сопоставлены клеммам по порядку (i↔i), возможно неверное");
+            if (nColumns != lstTerminals.Count)
                 log.Warn("[MATCH] колонок К4 (" + nColumns + ") != клемм в DM (" + lstTerminals.Count +
-                    ") — сопоставление колонка↔клемма по порядку УСЛОВНОЕ, после лишней/виртуальной колонки возможен сдвиг");
+                    ") — есть колонки без клеммы/клеммы без колонки (см. [MATCHCOL])");
 
-            // --- 3. Таблица сопоставления колонок и клемм (+ WARN в обратную сторону:
-            //         расхождение числа точек колонки и подключений клеммы — ревью rev.5.0) ---
+            // --- 4. Таблица [MATCHCOL]: колонка ↔ (якорь) ↔ клемма ---
             for (int i = 0; i < nColumns; i++)
             {
-                DmTerminalGroup oGroup = i < lstTerminals.Count ? lstTerminals[i] : null;
+                int nNumber = arrColNumber[i];
+                DmTerminalGroup oGroup = null;
+                if (nNumber >= 0) dicByNumber.TryGetValue(nNumber, out oGroup);
                 int nColPoints = (oK4.Counts != null && i < oK4.Counts.Length) ? oK4.Counts[i] : -1;
                 string strLine = "[MATCHCOL] колонка X=" + FmtX(oK4.Columns[i]) + " ↔ " +
+                    (nNumber < 0 ? "<якоря нет>" : "№" + nNumber) +
                     (oGroup == null
-                        ? "<клеммы нет — колонка без терминала?>"
-                        : "клемма '" + oGroup.Name + "' (подключений " + oGroup.ConnCount +
+                        ? (nNumber >= 0 ? " — клеммы №" + nNumber + " нет в DM" : "")
+                        : " клемма '" + oGroup.Name + "' (подключений " + oGroup.ConnCount +
                           ": кабель " + oGroup.CableCount + ", провод " + oGroup.WireCount + ")") +
                     ", точек в колонке " + (nColPoints >= 0 ? nColPoints.ToString(CultureInfo.InvariantCulture) : "?");
-                if (oGroup == null && nColPoints > 0)
+                bool bHasGroup = oGroup != null;
+                if (!bHasGroup && nColPoints > 0)
                     log.Warn(strLine + " — точки есть, клеммы нет");
-                else if (oGroup != null && oGroup.ConnCount > 0 && nColPoints == 0)
+                else if (bHasGroup && oGroup.ConnCount > 0 && nColPoints == 0)
                     log.Warn(strLine + " — у клеммы подключения, а точек в колонке нет");
-                else if (oGroup != null && nColPoints >= 0 && nColPoints != oGroup.ConnCount)
+                else if (bHasGroup && nColPoints >= 0 && nColPoints != oGroup.ConnCount)
                     log.Warn(strLine + " — число точек колонки != числу подключений клеммы");
                 else
                     log.Log(strLine);
             }
-            for (int i = nColumns; i < lstTerminals.Count; i++)
-                log.Log("[MATCHCOL] клемма '" + lstTerminals[i].Name + "' — без колонки К4");
+            // Клеммы, чей номер не привязался ни к одной колонке
+            bool[] arrColUsed = new bool[nColumns];
+            for (int i = 0; i < nColumns; i++)
+                if (arrColNumber[i] >= 0) arrColUsed[i] = true;
+            foreach (DmTerminalGroup oGroup in lstTerminals)
+            {
+                if (oGroup.Number < 0) continue;
+                bool bFound = false;
+                for (int i = 0; i < nColumns; i++)
+                    if (arrColNumber[i] == oGroup.Number) { bFound = true; break; }
+                if (!bFound)
+                    log.Warn("[MATCHCOL] клемма '" + oGroup.Name + "' (№" + oGroup.Number +
+                        ", подключений " + oGroup.ConnCount + ") — нет якоря в форме");
+            }
 
-            // --- 4. Строки [MATCH]: по точкам геометрии ---
+            // --- 5. Строки [MATCH]: по точкам геометрии ---
             int nIndex = 0;
             foreach (Pt oPoint in oAnalysis.Points)
             {
@@ -172,9 +220,9 @@ namespace MyEplanActions
                 oMatchRow.Point = oPoint;
                 oMatchRow.ColumnIndex = oK4.BindIndex(oPoint);
                 if (oMatchRow.ColumnIndex >= 0) oMatchRow.ColumnX = oK4.Columns[oMatchRow.ColumnIndex];
-                DmTerminalGroup oGroup = oMatchRow.ColumnIndex >= 0 && oMatchRow.ColumnIndex < lstTerminals.Count
-                    ? lstTerminals[oMatchRow.ColumnIndex]
-                    : null;
+                DmTerminalGroup oGroup = null;
+                if (oMatchRow.ColumnIndex >= 0 && arrColNumber[oMatchRow.ColumnIndex] >= 0)
+                    dicByNumber.TryGetValue(arrColNumber[oMatchRow.ColumnIndex], out oGroup);
                 if (oGroup != null)
                 {
                     oMatchRow.TerminalName = oGroup.Name;
@@ -196,7 +244,7 @@ namespace MyEplanActions
                 else log.Log(strLine);
             }
 
-            // --- 5. Кросс-чек классификации: CDP-имя против №31058 (rev.5.1) ---
+            // --- 6. Кросс-чек классификации: CDP-имя против №31058 ---
             int nCabX = 0, nCableByName = 0, nCableBy31058Only = 0;
             foreach (DmRow oRow in lstConnRows)
             {
@@ -219,7 +267,7 @@ namespace MyEplanActions
                 }
             }
 
-            // --- 6. Итоги ---
+            // --- 7. Итоги ---
             int nCableConns = 0, nWireConns = 0;
             foreach (DmTerminalGroup oGroup in lstTerminals)
             {
@@ -227,13 +275,14 @@ namespace MyEplanActions
                 nWireConns += oGroup.WireCount;
             }
             log.Log("[INFO] [MATCH-SUM] точек " + lstRows.Count + ", колонок К4 " + nColumns +
-                ", клемм в DM " + lstTerminals.Count + "; подключений целевого клеммника: Ext+Int " +
-                lstConnRows.Count + " (кабельных " + nCableConns +
-                " [по имени CDP " + nCableByName + ", только №31058 " + nCableBy31058Only +
-                "], проводных " + nWireConns + "); сирот " + oK4.Orphans +
-                ", перегруженных колонок " + oK4.Over + "; конфликтов классификации: " + nCabX);
+                ", клемм в DM " + lstTerminals.Count + ", якорей " + nAnchors +
+                "; подключений целевого клеммника: Ext+Int " + lstConnRows.Count +
+                " (кабельных " + nCableConns + " [по имени CDP " + nCableByName +
+                ", только №31058 " + nCableBy31058Only + "], проводных " + nWireConns +
+                "); сирот " + oK4.Orphans + ", перегруженных колонок " + oK4.Over +
+                "; конфликтов классификации: " + nCabX);
 
-            // --- 7. Bridge целевого клеммника: разбор 11 vs 7 (summary п.21в) ---
+            // --- 8. Bridge целевого клеммника: п.21в закрыт (п.24) ---
             HashSet<string> dicPairs = new HashSet<string>();
             foreach (DmRow oRow in lstBridgeRows)
             {
@@ -246,14 +295,36 @@ namespace MyEplanActions
                         "' (cable=" + (oRow.CableName ?? "<провод>") + ")");
             }
             log.Log("[INFO] [BRIDGE] строк [DM] Bridge: " + lstBridgeRows.Count +
-                " = сегментов " + dicPairs.Count + " (каждый виден с обоих концов); графических " +
-                "перемычек стубов: " + oAnalysis.Jumpers.Count +
-                " (п.21в закрыт rev.5.0: L=28→3 сегмента, L=14→2, L=7→1 — суммы сходятся с DM)");
+                " = сегментов " + dicPairs.Count + "; графических перемычек стубов: " +
+                oAnalysis.Jumpers.Count + " (п.21в закрыт rev.5.0: L=28→3 сегмента, L=14→2, L=7→1)");
 
             log.Summarize("[MATCH]: строк " + lstRows.Count + " (клемм " + lstTerminals.Count +
-                ", кабельных подключений " + nCableConns + ", проводных " + nWireConns +
-                ", Bridge-сегментов " + dicPairs.Count + ").");
+                ", якорей " + nAnchors + ", кабельных подключений " + nCableConns +
+                ", проводных " + nWireConns + ", Bridge-сегментов " + dicPairs.Count + ").");
             return lstRows;
+        }
+
+        /// <summary>Число клеммы из полного имени: суффикс после последнего ':' как
+        /// число, -1 если не число.</summary>
+        private static int ParseTerminalNumber(string strName)
+        {
+            int nNumber;
+            if (int.TryParse(SuffixAfterColon(strName).Trim(), NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out nNumber)) return nNumber;
+            return -1;
+        }
+
+        private static int FindNearestColumn(K4Report oK4, double dX, out double dDist)
+        {
+            int nBest = -1;
+            double dBest = double.MaxValue;
+            for (int i = 0; i < oK4.Columns.Count; i++)
+            {
+                double d = Math.Abs(oK4.Columns[i] - dX);
+                if (d < dBest) { dBest = d; nBest = i; }
+            }
+            dDist = nBest >= 0 ? dBest : double.MaxValue;
+            return nBest;
         }
 
         /// <summary>Суффикс имени после последнего ':' (номер клеммы в полном имени
