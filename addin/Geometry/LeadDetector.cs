@@ -258,8 +258,9 @@ namespace MyEplanActions
 
                 int nLeads = 0, nBridges = 0;
                 List<Pt> lstPoints = oResult.Points;
-                foreach (LineComponent oComponent in lstComponents)
+                for (int nComp = 0; nComp < lstComponents.Count; nComp++)
                 {
+                    LineComponent oComponent = lstComponents[nComp];
                     // Только компоненты на слое выводов.
                     bool bOnLeadLayer = true;
                     foreach (Seg oSeg in oComponent.Segments)
@@ -294,6 +295,8 @@ namespace MyEplanActions
                         double dDist = dDist1 >= dDist2 ? dDist1 : dDist2;
                         LogCablePoint(log, oCable, dDist, "одиночный вывод, внешний конец");
                         lstPoints.Add(oCable);
+                        oResult.PointComponent.Add(nComp);
+                        oResult.PointIsBridge.Add(false);
                     }
                     else
                     {
@@ -302,7 +305,11 @@ namespace MyEplanActions
                         LogCablePoint(log, oLeaf1, dDist1, "мост, лист 1");
                         LogCablePoint(log, oLeaf2, dDist2, "мост, лист 2");
                         lstPoints.Add(oLeaf1);
+                        oResult.PointComponent.Add(nComp);
+                        oResult.PointIsBridge.Add(true);
                         lstPoints.Add(oLeaf2);
+                        oResult.PointComponent.Add(nComp);
+                        oResult.PointIsBridge.Add(true);
                     }
                 }
                 oResult.Leads = nLeads;
@@ -319,7 +326,8 @@ namespace MyEplanActions
                 if (lstStubs.Count == 0)
                     log.Log("[INFO] [RESULT] стубы-маркеры клемм не найдены — контроль К4 пропущен");
                 else
-                    oResult.K4 = CheckK4Report(lstPoints, lstStubs, lstJumpers, log);
+                    oResult.K4 = CheckK4Report(lstPoints, lstStubs, lstJumpers,
+                        AddInConfiguration.Orientation, log);
                 log.Summarize("Выводов: " + nLeads + ", точек подключения (кабель+провод): " +
                     lstPoints.Count + ".");
             }
@@ -331,19 +339,26 @@ namespace MyEplanActions
         }
 
         /// <summary>К4 (rev.13): привязка точек подключения к колонкам клемм и контроль
-        /// «не более 2 подключений на клемму» (две стороны клеммы). Колонки = центры
-        /// стубов + виртуальные позиции под перемычками стубов (шаг сетки клемм —
-        /// медиана шага соседних стубов, НЕ длина сегментов формы). Привязка по |ΔX|
-        /// ≤ полушага. Клемма без точек — норма (нет подключений → нет выводов);
+        /// «не более 2 подключений на клемму» (две стороны клеммы). Колонки = проекции
+        /// центров стубов на ось ориентации + виртуальные позиции под перемычками
+        /// стубов (шаг сетки клемм — медиана шага соседних стубов вдоль оси, НЕ длина
+        /// сегментов формы). Привязка по |Δ оси| ≤ полушага (rev.6.2, Задача 4: ось
+        /// задаётся параметром orientation — X при Horizontal, Y при Vertical; путь
+        /// Horizontal байт-в-байт как в rev.6.1). Клемма без точек — норма (нет
+        /// подключений → нет выводов);
         /// WARN — только точки-«сироты» и клеммы с &gt;2 точками. Возвращает K4Report
-        /// (колонки/шаг/привязка) для свода [MATCH] (Задача 5); логи — как в rev.13.</summary>
+        /// (колонки/шаг/привязка/ось) для свода [MATCH] (Задача 5); логи — как в
+        /// rev.13, строки [K4] печатают ось.</summary>
         public static K4Report CheckK4Report(List<Pt> lstPoints, List<Seg> lstStubs, List<Seg> lstJumpers,
-            DiagnosticLogger log)
+            ReportOrientation orientation, DiagnosticLogger log)
         {
             K4Report oReport = new K4Report();
+            oReport.Orientation = orientation;
+            bool bVertical = orientation == ReportOrientation.Vertical;
+            string strAxis = bVertical ? "Y" : "X";
             List<double> lstCols = oReport.Columns;
             foreach (Seg oStub in lstStubs)
-                lstCols.Add((oStub.A.X + oStub.B.X) / 2.0);
+                lstCols.Add(bVertical ? (oStub.A.Y + oStub.B.Y) / 2.0 : (oStub.A.X + oStub.B.X) / 2.0);
             lstCols.Sort();
             if (lstCols.Count < 2)
             {
@@ -351,9 +366,9 @@ namespace MyEplanActions
                 return oReport;
             }
 
-            // Шаг сетки клемм: НИЖНЯЯ медиана разностей X соседних стубов (при чётном
-            // числе берём меньшую из двух средних — завышенный шаг расставил бы
-            // виртуальные колонки реже нужного).
+            // Шаг сетки клемм: НИЖНЯЯ медиана разностей оси соседних колонок-стубов
+            // (при чётном числе берём меньшую из двух средних — завышенный шаг
+            // расставил бы виртуальные колонки реже нужного).
             List<double> lstDiffs = new List<double>();
             for (int i = 1; i < lstCols.Count; i++)
                 lstDiffs.Add(lstCols[i] - lstCols[i - 1]);
@@ -373,20 +388,20 @@ namespace MyEplanActions
             // сетки (под перемычкой могут быть клеммы без собственного стуба).
             foreach (Seg oJumper in lstJumpers)
             {
-                double dA = Math.Min(oJumper.A.X, oJumper.B.X);
-                double dB = Math.Max(oJumper.A.X, oJumper.B.X);
+                double dA = bVertical ? Math.Min(oJumper.A.Y, oJumper.B.Y) : Math.Min(oJumper.A.X, oJumper.B.X);
+                double dB = bVertical ? Math.Max(oJumper.A.Y, oJumper.B.Y) : Math.Max(oJumper.A.X, oJumper.B.X);
                 // Запас 0.25*dPitch — float-гвард: колонка на dB не должна потеряться
-                // из-за накопления погрешности dX += dPitch.
-                for (double dX = dA; dX <= dB + dPitch * 0.25; dX += dPitch)
+                // из-за накопления погрешности dPos += dPitch вдоль оси.
+                for (double dPos = dA; dPos <= dB + dPitch * 0.25; dPos += dPitch)
                 {
                     bool bExists = false;
                     foreach (double dCol in lstCols)
-                        if (Math.Abs(dCol - dX) <= dHalf) { bExists = true; break; }
+                        if (Math.Abs(dCol - dPos) <= dHalf) { bExists = true; break; }
                     if (!bExists)
                     {
-                        lstCols.Add(dX);
-                        log.Log("[K4] колонка клеммы без стуба (под перемычкой): X=" +
-                            dX.ToString("F3", CultureInfo.InvariantCulture));
+                        lstCols.Add(dPos);
+                        log.Log("[K4] колонка клеммы без стуба (под перемычкой): " + strAxis + "=" +
+                            dPos.ToString("F3", CultureInfo.InvariantCulture));
                     }
                 }
             }
@@ -397,11 +412,12 @@ namespace MyEplanActions
             int nOrphan = 0, nOver = 0;
             foreach (Pt oPoint in lstPoints)
             {
+                double dPos = bVertical ? oPoint.Y : oPoint.X;
                 int nBest = -1;
                 double dBest = double.MaxValue;
                 for (int i = 0; i < lstCols.Count; i++)
                 {
-                    double d = Math.Abs(lstCols[i] - oPoint.X);
+                    double d = Math.Abs(lstCols[i] - dPos);
                     if (d < dBest) { dBest = d; nBest = i; }
                 }
                 if (nBest >= 0 && dBest <= dHalf)
@@ -410,8 +426,8 @@ namespace MyEplanActions
                     if (arrCounts[nBest] == 3) // WARN один раз на колонку
                     {
                         nOver++;
-                        log.Warn("[K4] на клемму X=" + lstCols[nBest].ToString("F3", CultureInfo.InvariantCulture) +
-                            " привязано более 2 точек подключения");
+                        log.Warn("[K4] на клемму " + strAxis + "=" + lstCols[nBest].ToString("F3", CultureInfo.InvariantCulture) +
+                            " привязано более 2 точек подключения (если у клеммы есть раздвоение — см. [SPLIT] в [MATCH])");
                     }
                 }
                 else
@@ -420,9 +436,9 @@ namespace MyEplanActions
                     log.Warn("[K4] точка подключения (" +
                         oPoint.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
                         oPoint.Y.ToString("F3", CultureInfo.InvariantCulture) +
-                        ") не привязалась к колонке клемм (ближайшая X=" +
+                        ") не привязалась к колонке клемм (ближайшая " + strAxis + "=" +
                         (nBest >= 0 ? lstCols[nBest].ToString("F3", CultureInfo.InvariantCulture) : "?") +
-                        ", ΔX=" + dBest.ToString("F3", CultureInfo.InvariantCulture) + ")");
+                        ", Δ" + strAxis + "=" + dBest.ToString("F3", CultureInfo.InvariantCulture) + ")");
                 }
             }
             oReport.Orphans = nOrphan;
@@ -435,7 +451,7 @@ namespace MyEplanActions
                 else if (nCount == 1) n1++;
                 else if (nCount == 2) n2++;
             }
-            log.Log("[INFO] [K4] клемм-колонок: " + lstCols.Count + " (стубов " + lstStubs.Count +
+            log.Log("[INFO] [K4] клемм-колонок: " + lstCols.Count + " (" + strAxis + ", стубов " + lstStubs.Count +
                 ", виртуальных под перемычками " + (lstCols.Count - lstStubs.Count) +
                 "); распределение точек на клемму: 0×" + n0 + ", 1×" + n1 + ", 2×" + n2 +
                 ", >2×" + nOver + "; точек без клеммы: " + nOrphan);

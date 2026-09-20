@@ -36,10 +36,16 @@ namespace MyEplanActions
     }
 
     /// <summary>Итог контроля К4 (rev.13 + Задача 5): колонки клемм, шаг сетки,
-    /// привязка точек. Потребитель — MatchBuilder (свод [MATCH]).</summary>
+    /// привязка точек. rev.6.2 (Задача 4): колонки хранят координаты ВДОЛЬ оси
+    /// ориентации (X при Horizontal / Y при Vertical), привязка — по |Δ оси| ≤
+    /// полушага. Потребитель — MatchBuilder (свод [MATCH]).</summary>
     public sealed class K4Report
     {
         public readonly List<double> Columns = new List<double>();
+        /// <summary>Ось, на которой лежат колонки (rev.6.2). По умолчанию
+        /// Horizontal: K4Report создаётся только в CheckK4Report, где поле
+        /// всегда проставляется из параметра ориентации.</summary>
+        public ReportOrientation Orientation = ReportOrientation.Horizontal;
         public double Pitch;
         public double Half;
         public int[] Counts;
@@ -48,15 +54,17 @@ namespace MyEplanActions
         /// <summary>false, если контроль пропущен (стубов &lt; 2 или шаг не определён).</summary>
         public bool Valid;
 
-        /// <summary>Индекс колонки клеммы для точки (|ΔX| ≤ полушага), -1 = сирота.</summary>
+        /// <summary>Индекс колонки клеммы для точки (|Δ оси| ≤ полушага: X при
+        /// Horizontal / Y при Vertical, rev.6.2), -1 = сирота.</summary>
         public int BindIndex(Pt oPoint)
         {
             if (!Valid || Columns.Count == 0) return -1;
+            double dCoord = Orientation == ReportOrientation.Vertical ? oPoint.Y : oPoint.X;
             int nBest = -1;
             double dBest = double.MaxValue;
             for (int i = 0; i < Columns.Count; i++)
             {
-                double d = Math.Abs(Columns[i] - oPoint.X);
+                double d = Math.Abs(Columns[i] - dCoord);
                 if (d < dBest) { dBest = d; nBest = i; }
             }
             if (nBest >= 0 && dBest <= Half) return nBest;
@@ -74,6 +82,14 @@ namespace MyEplanActions
         public int Leads;
         public int Bridges;
         public K4Report K4;
+
+        /// <summary>Индекс компоненты для каждой точки из Points (индексы совпадают) —
+        /// rev.5.6: оба листа моста (К2) принадлежат одной клемме, MatchBuilder
+        /// привязывает свободный слот раздвоения к клемме якоренного листа.</summary>
+        public readonly List<int> PointComponent = new List<int>();
+
+        /// <summary>Точка — лист моста (К2); индексы совпадают с Points.</summary>
+        public readonly List<bool> PointIsBridge = new List<bool>();
     }
 
     public static class LeadGeometry

@@ -30,6 +30,17 @@ namespace MyEplanActions
         public const string ReportFormName = "Клемник_ОУ(горизонтально)_addin";
         public const string ReportFilterSchemaName = "";
 
+        // Ориентация отчёта (Этап 3, Задача 4, rev.6.2): ось, вдоль которой идут
+        // колонки/якоря — Horizontal — колонки по X (текущая горизонтальная форма),
+        // Vertical — по Y (вертикальная форма). Переключается вручную между прогонами:
+        // A (Vertical — вертикальный стенд) / B (Horizontal — регресс rev.6.1).
+        // Потребители: AnchorResolver.Build, LeadDetector.CheckK4Report, MatchBuilder.
+        public const ReportOrientation Orientation = ReportOrientation.Horizontal;
+
+        // Имя формы вертикального стенда (прогон A): «Клемник_ОУ(вертикально)_addin».
+        // ReportFormName НЕ меняется и кодом по ориентации не подставляется (текущее
+        // поведение не меняем): перед Vertical-прогоном подменить вручную.
+
         // Целевой клеммник: отчёт строится по ОДНОМУ клеммнику, сверка [CROSS]/[MATCH]
         // идёт с его подключениями (не с суммой по проекту — урок rev.4.0, summary п.21).
         // Этап 2: захардкоден; позже значение подставляется из выбора пользователя

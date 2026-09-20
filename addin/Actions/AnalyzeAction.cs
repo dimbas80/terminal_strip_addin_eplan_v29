@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Reflection;
 using System.Windows.Forms;
 using Eplan.EplApi.ApplicationFramework;
 using Eplan.EplApi.Base;
 using Eplan.EplApi.DataModel;
 using Eplan.EplApi.DataModel.Graphics;
+// rev.6.1: Terminal живёт в EObjects (как в EplanTerminalStripReader.cs); алиас —
+// чтобы не тянуть весь EObjects в файл и избежать двусмысленностей с Graphics.
+using Terminal = Eplan.EplApi.DataModel.EObjects.Terminal;
 using Eplan.EplApi.HEServices;
 
 namespace MyEplanActions
@@ -21,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-20 Этап 2 rev.5.4 ([PH] через TEXT-свойства рефлексией; якорный [MATCH])";
+        private const string BUILD_STAMP = "2026-09-20 Этап 3 rev.6.2 (вертикальная ориентация: ось в K4/AnchorResolver, [ORIENT])";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 2 (Data Model + детектор)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 3 rev.6.2 (вертикальная ориентация: ось в K4/AnchorResolver, [ORIENT])", BUILD_STAMP);
             try
             {
                 Run();
@@ -68,6 +70,9 @@ namespace MyEplanActions
             }
             DocumentTypeManager.DocumentType ePageType = oPage.PageType;
             _logger.Log("[INFO] Активная страница: " + oPage.IdentifyingName + ", тип: " + ePageType);
+            // rev.6.2 (Задача 4): ориентация отчёта из конфига — критерий прогонов:
+            // A — [ORIENT] Vertical, B — [ORIENT] Horizontal (регресс rev.6.1).
+            _logger.Log("[INFO] [ORIENT] ориентация отчёта: " + AddInConfiguration.Orientation);
             if (ePageType != DocumentTypeManager.DocumentType.CircuitSingleLine)
             {
                 _logger.Fail("Активная страница \"" + oPage.IdentifyingName + "\" имеет тип " + ePageType +
@@ -146,16 +151,30 @@ namespace MyEplanActions
             // --- 4b. PlaceHolderText — дескрипторы строк формы (якорь «номер ↔ колонка»,
             //         rev.5.3): порядковое сопоставление колонок и клемм неверно, когда
             //         нумерация клеммника не совпадает с раскладкой по X (п.24, клеммы 22/23).
-            //         rev.5.4: прямого .Text у PlaceHolderText нет (CS1061 rev.5.3) —
-            //         текст достаётся рефлексией по TEXT-свойствам (урок rev.7) + дамп [PHPROP] ---
+            //         rev.5.5 (docs API 2.9: PlaceHolderText : Graphics.Text): текст —
+            //         это Text.Contents / GetDisplayString(); TEXT-свойства из Properties
+            //         дескриптора текст не хранят (прогон rev.5.4: 270 дескрипторов — 0) ---
             List<PhRow> lstPh = new List<PhRow>();
+            List<PlaceHolderText> lstPhObjects = new List<PlaceHolderText>();
             foreach (Placement oPlacement in lstAll)
             {
                 PlaceHolderText oPh = oPlacement as PlaceHolderText;
                 if (oPh == null) continue;
+                lstPhObjects.Add(oPh);
                 PhRow oPhRow = new PhRow();
-                string strProps;
-                oPhRow.Text = ResolvePlaceholderText(oPh, out strProps);
+                string strContents, strDisplay;
+                oPhRow.Text = ResolvePlaceholderText(oPh, out strContents, out strDisplay);
+                // rev.6.1: запасной якорь — полное имя клеммы-источника заполнителя
+                // (SourceObject → Terminal, проба [PHPROBE] rev.5.5; Terminal.Name —
+                // ПОЛНОЕ имя, урок rev.5.2). Пустая строка = данных нет.
+                oPhRow.SourceTerminalName = "";
+                try
+                {
+                    Terminal oTerm = oPh.SourceObject as Terminal;
+                    if (oTerm != null)
+                        oPhRow.SourceTerminalName = SafeText("", () => oTerm.Name) ?? "";
+                }
+                catch { oPhRow.SourceTerminalName = ""; }
                 try
                 {
                     PointD oLoc = oPh.Location;
@@ -164,10 +183,15 @@ namespace MyEplanActions
                 catch { oPhRow.Location = new Pt(double.NaN, double.NaN); }
                 lstPh.Add(oPhRow);
                 _logger.Log("[PH] (" + oPhRow.Location.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
-                    oPhRow.Location.Y.ToString("F3", CultureInfo.InvariantCulture) + ") '" + oPhRow.Text + "'" +
-                    (strProps.Length > 0 ? " | " + strProps : ""));
+                    oPhRow.Location.Y.ToString("F3", CultureInfo.InvariantCulture) + ") '" + oPhRow.Text +
+                    "' | contents='" + strContents + "' display='" + strDisplay + "'");
             }
             _logger.Log("[INFO] PlaceHolderText (дескрипторы строк): " + lstPh.Count);
+
+            // Проба членов дескриптора: SourceObject может вернуть клемму-источник
+            // (прямой якорь «объект ↔ колонка» без парсинга текста), PropDescr —
+            // какое свойство отображает заполнитель, PlaceHolderType — тип заполнителя.
+            LogPlaceHolderProbes(lstPhObjects, lstPh);
 
             // --- 5. Геометрия линий ---
             _logger.Log("[INFO] --- Линии в отчёте ---");
@@ -262,82 +286,81 @@ namespace MyEplanActions
             catch { return (short)-1; }
         }
 
-        // --- PlaceHolderText: TEXT-свойства через рефлексию (rev.5.4) ---
+        // --- PlaceHolderText: текст через Text.Contents / GetDisplayString (rev.5.5) ---
 
-        private sealed class TextPropCandidate
+        /// <summary>Текст дескриптора: якорем считается значение, парсящееся как номер
+        /// клеммы (Contents → GetDisplayString); если ни одно не парсится, но непусто —
+        /// возвращается как есть (не-числа отфильтрует AnchorResolver). Сырые значения
+        /// обоих членов — в out-параметрах для хвоста строки [PH]; "&lt;err&gt;" = чтение бросило.
+        /// Прогон rev.5.4 доказал: в Properties дескриптора текста нет (рефлексия по
+        /// TEXT-id — 270 пустых чтений), docs API 2.9: текст живёт в Text.Contents
+        /// (тип MultiLangString — берём .ToString(); GetDisplayString возвращает string).</summary>
+        private static string ResolvePlaceholderText(PlaceHolderText oPh, out string strContents, out string strDisplay)
         {
-            public string Name;
-            public AnyPropertyId Id;
+            strContents = SafeText("<err>", () => oPh.Contents == null ? "" : oPh.Contents.ToString());
+            strDisplay = SafeText("<err>", () => oPh.GetDisplayString());
+            if (strContents == null) strContents = "";
+            if (strDisplay == null) strDisplay = "";
+            if (AnchorResolver.ParseTerminalNumber(strContents) >= 0) return strContents;
+            if (AnchorResolver.ParseTerminalNumber(strDisplay) >= 0) return strDisplay;
+            if (strContents.Length > 0 && strContents != "<err>") return strContents;
+            if (strDisplay.Length > 0 && strDisplay != "<err>") return strDisplay;
+            return "<текст не найден>";
         }
 
-        private static List<TextPropCandidate> s_lstTextProps;
-
-        /// <summary>Все статические AnyPropertyId с «TEXT» в имени из вложенных классов
-        /// Properties (Properties.TerminalStrip.TERMINALSTRIP_COUNTOFTERMINALS и т.п.).
-        /// Имя id-члена в 2.9 иначе не достать (урок rev.7/8: обратной конвертации
-        /// AnyPropertyId → int нет, DescribePropertyId не работает).</summary>
-        private static List<TextPropCandidate> FindTextProperties()
+        /// <summary>Проба членов PlaceHolderText (rev.5.5) на трёх дескрипторах ряда
+        /// номеров формы (Y=-81: у тестовой формы ряд «1…60», прогон rev.5.4 + пример
+        /// пользователя: текст «1» @ (52.85;-81)): SourceObject — объект-источник
+        /// заполнителя (запасной путь якоря: Terminal → имя → номер, если у другой
+        /// формы текст ряда не прочитается), PropDescr — отображаемое свойство,
+        /// PlaceHolderType — тип заполнителя.
+        /// TODO(rev.5.7+): проба диагностическая с захардкоденными координатами
+        /// тестовой формы — удалить или перевести на конфигурацию, когда станет
+        /// ясно, нужен ли запасной якорь через SourceObject.</summary>
+        private void LogPlaceHolderProbes(List<PlaceHolderText> lstPhObjects, List<PhRow> lstPh)
         {
-            if (s_lstTextProps != null) return s_lstTextProps;
-            s_lstTextProps = new List<TextPropCandidate>();
-            try
+            double[] arrProbeX = new double[] { 52.85, 199.85, 472.85 };
+            double dRowY = -81.0;
+            _logger.Log("[INFO] --- Проба PlaceHolderText: SourceObject/PropDescr/PlaceHolderType (ряд Y=" +
+                dRowY.ToString("F1", CultureInfo.InvariantCulture) + ") ---");
+            foreach (double dProbeX in arrProbeX)
             {
-                Type tProperties = typeof(Properties);
-                foreach (Type tNested in tProperties.GetNestedTypes(BindingFlags.Public))
+                int nBest = -1;
+                double dBest = double.MaxValue;
+                for (int i = 0; i < lstPhObjects.Count; i++)
                 {
-                    PropertyInfo[] arrPi = tNested.GetProperties(BindingFlags.Public | BindingFlags.Static);
-                    foreach (PropertyInfo oPi in arrPi)
-                    {
-                        if (oPi.Name.IndexOf("TEXT", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                        if (oPi.PropertyType != typeof(AnyPropertyId)) continue;
-                        try
-                        {
-                            AnyPropertyId oId = oPi.GetValue(null, null) as AnyPropertyId;
-                            if (oId == null) continue;
-                            TextPropCandidate oCand = new TextPropCandidate();
-                            oCand.Name = tNested.Name + "." + oPi.Name;
-                            oCand.Id = oId;
-                            s_lstTextProps.Add(oCand);
-                        }
-                        catch { }
-                    }
-                    FieldInfo[] arrFi = tNested.GetFields(BindingFlags.Public | BindingFlags.Static);
-                    foreach (FieldInfo oFi in arrFi)
-                    {
-                        if (oFi.Name.IndexOf("TEXT", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                        if (oFi.FieldType != typeof(AnyPropertyId)) continue;
-                        try
-                        {
-                            AnyPropertyId oId = oFi.GetValue(null) as AnyPropertyId;
-                            if (oId == null) continue;
-                            TextPropCandidate oCand = new TextPropCandidate();
-                            oCand.Name = tNested.Name + "." + oFi.Name;
-                            oCand.Id = oId;
-                            s_lstTextProps.Add(oCand);
-                        }
-                        catch { }
-                    }
+                    if (double.IsNaN(lstPh[i].Location.X)) continue;
+                    if (Math.Abs(lstPh[i].Location.Y - dRowY) > 0.5) continue; // только ряд номеров
+                    double d = Math.Abs(lstPh[i].Location.X - dProbeX);
+                    if (d < dBest) { dBest = d; nBest = i; }
                 }
+                string strProbe = "[PHPROBE] X=" + dProbeX.ToString("F2", CultureInfo.InvariantCulture);
+                if (nBest < 0)
+                {
+                    _logger.Log(strProbe + ": в ряду номеров дескриптора нет");
+                    continue;
+                }
+                PlaceHolderText oPh = lstPhObjects[nBest];
+                string strAt = " (дескриптор X=" +
+                    lstPh[nBest].Location.X.ToString("F3", CultureInfo.InvariantCulture) + ")";
+                try
+                {
+                    object oSource = oPh.SourceObject;
+                    if (oSource == null)
+                        _logger.Log(strProbe + strAt + ": SourceObject=null");
+                    else
+                        _logger.Log(strProbe + strAt + ": SourceObject=" + oSource.GetType().Name + " '" +
+                            SafeText("<n/a>", () => ((StorableObject)oSource).ToStringIdentifier()) + "'");
+                }
+                catch (Exception oException)
+                {
+                    _logger.Log(strProbe + strAt + ": SourceObject бросил " +
+                        oException.GetType().Name + ": " + oException.Message);
+                }
+                _logger.Log(strProbe + strAt + ": PropDescr=" +
+                    SafeText("<err>", () => oPh.PropDescr.ToString()) +
+                    ", PlaceHolderType=" + SafeText("<err>", () => oPh.PlaceHolderType.ToString()));
             }
-            catch { }
-            return s_lstTextProps;
-        }
-
-        /// <summary>Текст дескриптора: читаем все TEXT-свойства, якорем берём первое
-        /// значение, парсящееся как номер клеммы; все непустые — в strProps для [PH].</summary>
-        private string ResolvePlaceholderText(PlaceHolderText oPh, out string strProps)
-        {
-            System.Text.StringBuilder oSb = new System.Text.StringBuilder();
-            string strBest = null;
-            foreach (TextPropCandidate oCand in FindTextProperties())
-            {
-                string strVal = SafeText(null, () => oPh.Properties[oCand.Id].ToString());
-                if (string.IsNullOrEmpty(strVal)) continue;
-                oSb.Append(oCand.Name).Append("='").Append(strVal).Append("' ");
-                if (strBest == null && MatchBuilder.ParseTerminalNumber(strVal) >= 0) strBest = strVal;
-            }
-            strProps = oSb.ToString();
-            return strBest ?? "<текст не найден>";
         }
 
         private static string SafeText(string strFallback, Func<string> oGetter)
