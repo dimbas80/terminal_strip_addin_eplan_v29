@@ -58,6 +58,11 @@ namespace MyEplanActions
         // По-клеммниковая статистика: полное имя клеммника -> счётчики (rev.4.1).
         public readonly Dictionary<string, DmStripStats> PerStrip =
             new Dictionary<string, DmStripStats>();
+        // rev.5.1: ВСЕ имена клемм клеммника (в порядке TerminalStrip.Terminals),
+        // включая клеммы без подключений — иначе сопоставление колонок К4 уезжает
+        // (урок rev.5.0: 10 клемм без подключений выпадали, 61 колонка vs 50 групп).
+        public readonly Dictionary<string, List<string>> StripTerminalNames =
+            new Dictionary<string, List<string>>();
         // Кабель -> число жил, встреченных в подключениях клемм (первое обнаружение
         // логируется как [DMCABLE]).
         public readonly Dictionary<string, int> CableWireCounts = new Dictionary<string, int>();
@@ -140,9 +145,14 @@ namespace MyEplanActions
                         oReport.PerStrip[strStripName] = oStats;
                     }
                     oStats.TerminalCount += arrTerminals.Length;
+                    List<string> lstNames = new List<string>();
                     int nRowsBefore = oReport.Rows.Count;
                     foreach (Terminal oTerminal in arrTerminals)
+                    {
+                        lstNames.Add(SafeText("<n/a>", () => oTerminal.Name));
                         ReadTerminal(oReport, oStrip, oTerminal);
+                    }
+                    oReport.StripTerminalNames[strStripName] = lstNames;
                     for (int i = nRowsBefore; i < oReport.Rows.Count; i++)
                     {
                         DmRow oRow = oReport.Rows[i];

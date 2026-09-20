@@ -32,7 +32,7 @@ namespace MyEplanActions
             get
             {
                 int nCount = 0;
-                foreach (DmRow oRow in Rows) if (oRow.CableName != null) nCount++;
+                foreach (DmRow oRow in Rows) if (MatchBuilder.IsCableRow(oRow)) nCount++;
                 return nCount;
             }
         }
@@ -42,13 +42,24 @@ namespace MyEplanActions
 
     /// <summary>Свод [MATCH] — Задача 5 (план: plan_stage2.md; решения 20.09.2026):
     /// (а) классификация «кабель/провод» — по свойству СОЕДИНЕНИЯ (соединение
-    /// принадлежит кабелю), а не по свойствам клеммы: основной сигнал — CDP-проба
-    /// (ConnectionDefPoints → ConnectionDefinitionPoint.CableDefinitionLine → Cable.Name),
-    /// кросс-чек — №31058 «Соединение: Принадлежность=Кабель» (расхождения — [CABX]);
-    /// (б) разбор Bridge 11 vs 12 (summary п.21в): пары «клемма↔клемма» из [DM]-строк
-    /// Bridge против графических перемычек [JUMPER].</summary>
+    /// принадлежит кабелю), а не по свойствам клеммы (решение пользователя 20.09.2026).
+    /// rev.5.1: основной сигнал — №31058 «Соединение: Принадлежность=Кабель»
+    /// (на Connection и CDP); имя кабеля через CDP-пробу — доп. информация (в тестовом
+    /// проекте объекты-определения кабелей в DM отсутствуют, CDP-проба rev.5.0 имён
+    /// не дала — но сама проба подтверждена: 476 уникальных соединений, [DMERR]=0);
+    /// (б) разбор Bridge 11 vs 7 (summary п.21в): rev.5.0 СХОДИТСЯ — 11 DM-сегментов ==
+    /// арифметика графических перемычек (L=28→3 сегмента, L=14→2, L=7→1: 3+2+1+1+1+2+1).
+    /// (в) rev.5.1: в сопоставлении участвуют ВСЕ клеммы клеммника, включая без
+    /// подключений (урок rev.5.0: 10 пустых клемм выпадали — сопоставление уезжало).</summary>
     public static class MatchBuilder
     {
+        /// <summary>Кабельное ли подключение: имя кабеля из CDP-пробы ИЛИ №31058
+        /// «Принадлежность=Кабель» (на Connection либо на CDP).</summary>
+        public static bool IsCableRow(DmRow oRow)
+        {
+            return oRow.CableName != null || oRow.IsCableConn == true || oRow.IsCableCdp == true;
+        }
+
         public static List<MatchRow> Build(LeadAnalysis oAnalysis, DmReport oDm, DiagnosticLogger log)
         {
             List<MatchRow> lstRows = new List<MatchRow>();
@@ -70,14 +81,32 @@ namespace MyEplanActions
                 else lstConnRows.Add(oRow);
             }
 
-            // --- 2. Группировка по клеммам (порядок чтения), затем сортировка по номеру ---
+            // --- 2. Группировка по клеммам: ПОЛНЫЙ список клемм клеммника (rev.5.1),
+            //        включая без подключений; строки [DM] раскладываются в группы ---
+            List<string> lstAllNames;
+            bool bHaveAllNames = oDm.StripTerminalNames.TryGetValue(strTarget, out lstAllNames);
+            if (bHaveAllNames)
+                log.Log("[INFO] [MATCH] список клемм из DM: " + lstAllNames.Count +
+                    " (в т.ч. без подключений)");
             Dictionary<string, DmTerminalGroup> dicGroups = new Dictionary<string, DmTerminalGroup>();
             List<DmTerminalGroup> lstTerminals = new List<DmTerminalGroup>();
+            if (bHaveAllNames)
+            {
+                foreach (string strName in lstAllNames)
+                {
+                    if (dicGroups.ContainsKey(strName)) continue; // защита от дублей имён
+                    DmTerminalGroup oNew = new DmTerminalGroup();
+                    oNew.Name = strName;
+                    dicGroups[strName] = oNew;
+                    lstTerminals.Add(oNew);
+                }
+            }
             foreach (DmRow oRow in lstConnRows)
             {
                 DmTerminalGroup oGroup;
                 if (!dicGroups.TryGetValue(oRow.TerminalName, out oGroup))
                 {
+                    // клеммы нет в списке DM (fallback rev.5.0: список недоступен)
                     oGroup = new DmTerminalGroup();
                     oGroup.Name = oRow.TerminalName;
                     dicGroups[oRow.TerminalName] = oGroup;
@@ -162,21 +191,26 @@ namespace MyEplanActions
                 else log.Log(strLine);
             }
 
-            // --- 5. Кросс-чек классификации: CDP-кабель против №31058 ---
-            int nCabX = 0;
+            // --- 5. Кросс-чек классификации: CDP-имя против №31058 (rev.5.1) ---
+            int nCabX = 0, nCableByName = 0, nCableBy31058Only = 0;
             foreach (DmRow oRow in lstConnRows)
             {
-                bool? eSignal = oRow.IsCableConn;
-                bool? dSignal = oRow.IsCableCdp;
-                bool? bSignal = eSignal ?? dSignal;
-                if (bSignal == null) continue;
-                bool bByCable = oRow.CableName != null;
-                if (bSignal.Value != bByCable)
+                bool bByName = oRow.CableName != null;
+                bool bByProp = oRow.IsCableConn == true || oRow.IsCableCdp == true;
+                if (bByName) nCableByName++;
+                if (bByName && !bByProp)
                 {
                     nCabX++;
+                    log.Warn("[CABX] клемма '" + oRow.TerminalName + "' conn '" + oRow.ConnectionName +
+                        "': имя кабеля '" + oRow.CableName + "' из CDP, но №31058 c:" +
+                        FmtBool(oRow.IsCableConn) + " d:" + FmtBool(oRow.IsCableCdp));
+                }
+                else if (!bByName && bByProp)
+                {
+                    nCableBy31058Only++;
                     log.Log("[CABX] клемма '" + oRow.TerminalName + "' conn '" + oRow.ConnectionName +
-                        "': cable=" + (bByCable ? oRow.CableName : "<провод>") +
-                        ", №31058 c:" + FmtBool(eSignal) + " d:" + FmtBool(dSignal));
+                        "': кабель по №31058 c:" + FmtBool(oRow.IsCableConn) + " d:" +
+                        FmtBool(oRow.IsCableCdp) + " (имени нет — определения кабеля в DM отсутствуют)");
                 }
             }
 
@@ -189,9 +223,10 @@ namespace MyEplanActions
             }
             log.Log("[INFO] [MATCH-SUM] точек " + lstRows.Count + ", колонок К4 " + nColumns +
                 ", клемм в DM " + lstTerminals.Count + "; подключений целевого клеммника: Ext+Int " +
-                lstConnRows.Count + " (кабельных " + nCableConns + ", проводных " + nWireConns +
-                "); сирот " + oK4.Orphans + ", перегруженных колонок " + oK4.Over +
-                "; расхождений с №31058: " + nCabX);
+                lstConnRows.Count + " (кабельных " + nCableConns +
+                " [по имени CDP " + nCableByName + ", только №31058 " + nCableBy31058Only +
+                "], проводных " + nWireConns + "); сирот " + oK4.Orphans +
+                ", перегруженных колонок " + oK4.Over + "; конфликтов классификации: " + nCabX);
 
             // --- 7. Bridge целевого клеммника: разбор 11 vs 7 (summary п.21в) ---
             HashSet<string> dicPairs = new HashSet<string>();
@@ -220,6 +255,7 @@ namespace MyEplanActions
         /// <summary>Описание подключений клеммы: «кабель N (имена) + провод M».</summary>
         private static string DescribeConns(DmTerminalGroup oGroup)
         {
+            if (oGroup.ConnCount == 0) return "подключений нет";
             List<string> lstNames = new List<string>();
             foreach (DmRow oRow in oGroup.Rows)
                 if (oRow.CableName != null && !lstNames.Contains(oRow.CableName))
