@@ -236,5 +236,11 @@ namespace MyEplanActions
         {
             return dX.ToString("F3", CultureInfo.InvariantCulture);
         }
+
+        /// <summary>bool? → "True"/"False"/"-" (не задано) — формат строк [DM]/[CABX].</summary>
+        private static string FmtBool(bool? bValue)
+        {
+            return bValue == null ? "-" : (bValue.Value ? "True" : "False");
+        }
     }
 }
