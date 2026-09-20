@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
 using System.Windows.Forms;
 using Eplan.EplApi.ApplicationFramework;
 using Eplan.EplApi.Base;
@@ -20,7 +21,7 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-20 Этап 2 rev.5.3 ([MATCH] по якорям формы PlaceHolderText + дамп [PH])";
+        private const string BUILD_STAMP = "2026-09-20 Этап 2 rev.5.4 ([PH] через TEXT-свойства рефлексией; якорный [MATCH])";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
@@ -144,14 +145,17 @@ namespace MyEplanActions
 
             // --- 4b. PlaceHolderText — дескрипторы строк формы (якорь «номер ↔ колонка»,
             //         rev.5.3): порядковое сопоставление колонок и клемм неверно, когда
-            //         нумерация клеммника не совпадает с раскладкой по X (п.24, клеммы 22/23) ---
+            //         нумерация клеммника не совпадает с раскладкой по X (п.24, клеммы 22/23).
+            //         rev.5.4: прямого .Text у PlaceHolderText нет (CS1061 rev.5.3) —
+            //         текст достаётся рефлексией по TEXT-свойствам (урок rev.7) + дамп [PHPROP] ---
             List<PhRow> lstPh = new List<PhRow>();
             foreach (Placement oPlacement in lstAll)
             {
                 PlaceHolderText oPh = oPlacement as PlaceHolderText;
                 if (oPh == null) continue;
                 PhRow oPhRow = new PhRow();
-                oPhRow.Text = SafeText("<n/a>", () => oPh.Text);
+                string strProps;
+                oPhRow.Text = ResolvePlaceholderText(oPh, out strProps);
                 try
                 {
                     PointD oLoc = oPh.Location;
@@ -160,7 +164,8 @@ namespace MyEplanActions
                 catch { oPhRow.Location = new Pt(double.NaN, double.NaN); }
                 lstPh.Add(oPhRow);
                 _logger.Log("[PH] (" + oPhRow.Location.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
-                    oPhRow.Location.Y.ToString("F3", CultureInfo.InvariantCulture) + ") '" + oPhRow.Text + "'");
+                    oPhRow.Location.Y.ToString("F3", CultureInfo.InvariantCulture) + ") '" + oPhRow.Text + "'" +
+                    (strProps.Length > 0 ? " | " + strProps : ""));
             }
             _logger.Log("[INFO] PlaceHolderText (дескрипторы строк): " + lstPh.Count);
 
@@ -255,6 +260,84 @@ namespace MyEplanActions
         {
             try { return oPlacement.LayerId; }
             catch { return (short)-1; }
+        }
+
+        // --- PlaceHolderText: TEXT-свойства через рефлексию (rev.5.4) ---
+
+        private sealed class TextPropCandidate
+        {
+            public string Name;
+            public AnyPropertyId Id;
+        }
+
+        private static List<TextPropCandidate> s_lstTextProps;
+
+        /// <summary>Все статические AnyPropertyId с «TEXT» в имени из вложенных классов
+        /// Properties (Properties.TerminalStrip.TERMINALSTRIP_COUNTOFTERMINALS и т.п.).
+        /// Имя id-члена в 2.9 иначе не достать (урок rev.7/8: обратной конвертации
+        /// AnyPropertyId → int нет, DescribePropertyId не работает).</summary>
+        private static List<TextPropCandidate> FindTextProperties()
+        {
+            if (s_lstTextProps != null) return s_lstTextProps;
+            s_lstTextProps = new List<TextPropCandidate>();
+            try
+            {
+                Type tProperties = typeof(Properties);
+                foreach (Type tNested in tProperties.GetNestedTypes(BindingFlags.Public))
+                {
+                    PropertyInfo[] arrPi = tNested.GetProperties(BindingFlags.Public | BindingFlags.Static);
+                    foreach (PropertyInfo oPi in arrPi)
+                    {
+                        if (oPi.Name.IndexOf("TEXT", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        if (oPi.PropertyType != typeof(AnyPropertyId)) continue;
+                        try
+                        {
+                            AnyPropertyId oId = oPi.GetValue(null, null) as AnyPropertyId;
+                            if (oId == null) continue;
+                            TextPropCandidate oCand = new TextPropCandidate();
+                            oCand.Name = tNested.Name + "." + oPi.Name;
+                            oCand.Id = oId;
+                            s_lstTextProps.Add(oCand);
+                        }
+                        catch { }
+                    }
+                    FieldInfo[] arrFi = tNested.GetFields(BindingFlags.Public | BindingFlags.Static);
+                    foreach (FieldInfo oFi in arrFi)
+                    {
+                        if (oFi.Name.IndexOf("TEXT", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        if (oFi.FieldType != typeof(AnyPropertyId)) continue;
+                        try
+                        {
+                            AnyPropertyId oId = oFi.GetValue(null) as AnyPropertyId;
+                            if (oId == null) continue;
+                            TextPropCandidate oCand = new TextPropCandidate();
+                            oCand.Name = tNested.Name + "." + oFi.Name;
+                            oCand.Id = oId;
+                            s_lstTextProps.Add(oCand);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            return s_lstTextProps;
+        }
+
+        /// <summary>Текст дескриптора: читаем все TEXT-свойства, якорем берём первое
+        /// значение, парсящееся как номер клеммы; все непустые — в strProps для [PH].</summary>
+        private string ResolvePlaceholderText(PlaceHolderText oPh, out string strProps)
+        {
+            System.Text.StringBuilder oSb = new System.Text.StringBuilder();
+            string strBest = null;
+            foreach (TextPropCandidate oCand in FindTextProperties())
+            {
+                string strVal = SafeText(null, () => oPh.Properties[oCand.Id].ToString());
+                if (string.IsNullOrEmpty(strVal)) continue;
+                oSb.Append(oCand.Name).Append("='").Append(strVal).Append("' ");
+                if (strBest == null && MatchBuilder.ParseTerminalNumber(strVal) >= 0) strBest = strVal;
+            }
+            strProps = oSb.ToString();
+            return strBest ?? "<текст не найден>";
         }
 
         private static string SafeText(string strFallback, Func<string> oGetter)

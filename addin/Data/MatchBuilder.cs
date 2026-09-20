@@ -305,8 +305,8 @@ namespace MyEplanActions
         }
 
         /// <summary>Число клеммы из полного имени: суффикс после последнего ':' как
-        /// число, -1 если не число.</summary>
-        private static int ParseTerminalNumber(string strName)
+        /// число, -1 если не число. Публичный: используется дампом [PH] (rev.5.4).</summary>
+        public static int ParseTerminalNumber(string strName)
         {
             int nNumber;
             if (int.TryParse(SuffixAfterColon(strName).Trim(), NumberStyles.Integer,
