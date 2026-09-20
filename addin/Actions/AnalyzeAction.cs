@@ -20,7 +20,7 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-20 Этап 2 rev.5.1 ([MATCH]: все клеммы DM, кабель = №31058 + CDP-имя)";
+        private const string BUILD_STAMP = "2026-09-20 Этап 2 rev.5.2 ([MATCH]: сортировка клемм по номеру после ':')";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 

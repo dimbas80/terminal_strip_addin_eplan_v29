@@ -116,9 +116,14 @@ namespace MyEplanActions
             }
             lstTerminals.Sort(delegate(DmTerminalGroup oA, DmTerminalGroup oB)
             {
+                // Имя клеммы — ПОЛНОЕ («=HII-1.1++ЯЧ67+#2-X2:1», урок rev.5.1: TryParse
+                // целого имени не срабатывает → лексикографика 1,10,11,...,19,2,20...).
+                // Сортируем по суффиксу после последнего ':' как по числу.
                 int nA, nB;
-                bool bA = int.TryParse(oA.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out nA);
-                bool bB = int.TryParse(oB.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out nB);
+                bool bA = int.TryParse(SuffixAfterColon(oA.Name), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out nA);
+                bool bB = int.TryParse(SuffixAfterColon(oB.Name), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out nB);
                 if (bA && bB) return nA.CompareTo(nB);
                 if (bA) return -1;
                 if (bB) return 1;
@@ -243,13 +248,21 @@ namespace MyEplanActions
             log.Log("[INFO] [BRIDGE] строк [DM] Bridge: " + lstBridgeRows.Count +
                 " = сегментов " + dicPairs.Count + " (каждый виден с обоих концов); графических " +
                 "перемычек стубов: " + oAnalysis.Jumpers.Count +
-                "; разность сегменты−перемычки: " + (dicPairs.Count - oAnalysis.Jumpers.Count) +
-                " (п.21в, ожидание по шагу 7: 4+4+4=12 — разобрать)");
+                " (п.21в закрыт rev.5.0: L=28→3 сегмента, L=14→2, L=7→1 — суммы сходятся с DM)");
 
             log.Summarize("[MATCH]: строк " + lstRows.Count + " (клемм " + lstTerminals.Count +
                 ", кабельных подключений " + nCableConns + ", проводных " + nWireConns +
                 ", Bridge-сегментов " + dicPairs.Count + ").");
             return lstRows;
+        }
+
+        /// <summary>Суффикс имени после последнего ':' (номер клеммы в полном имени
+        /// «=HII-1.1++ЯЧ67+#2-X2:1»); если ':' нет — имя целиком.</summary>
+        private static string SuffixAfterColon(string strName)
+        {
+            if (strName == null) return "";
+            int nPos = strName.LastIndexOf(':');
+            return nPos >= 0 ? strName.Substring(nPos + 1) : strName;
         }
 
         /// <summary>Описание подключений клеммы: «кабель N (имена) + провод M».</summary>
