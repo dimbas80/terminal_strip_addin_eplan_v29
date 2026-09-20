@@ -1,0 +1,22 @@
+# Артефакты сборки (csc.exe, build_addin.bat / spike)
+*.dll
+*.pdb
+bin/
+obj/
+
+# Прогоны и разовая диагностика (выводы зафиксированы в summary.md)
+*.log
+err.csv
+
+# Служебное и локальное
+.scratch/
+.codegraph*/
+workflows/
+.hermes/
+.DS_Store
+
+# Python (наследие шаблона, не мешает)
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
