@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-21 Этап 3 rev.6.3 ([MATCH-SKIP] WARN при точках без колонок — фикс whole-branch ревью)";
+        private const string BUILD_STAMP = "2026-09-21 Этап 4 rev.7.1 (Фаза D: исправлена инверсия Top/Bottom — «верх↔Int, низ↔Ext» по данным пользователя)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 3 rev.6.2 (вертикальная ориентация: ось в K4/AnchorResolver, [ORIENT])", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 4 rev.7.1 (Фаза D: исправлена инверсия Top/Bottom в TerminalConnectionModel)", BUILD_STAMP);
             try
             {
                 Run();
@@ -276,8 +276,14 @@ namespace MyEplanActions
             _logger.Log("[INFO] --- Свод [MATCH]: точки ↔ клеммы ↔ кабель/провод ---");
             List<MatchRow> lstMatch = MatchBuilder.Build(oAnalysis, oDm, lstPh, _logger);
 
+            // --- 10. Фаза D: TerminalConnectionModel — связка точки с конкретным Connection ---
+            _logger.Log("[INFO] --- Фаза D: TerminalConnectionModel (точка ↔ Connection по стороне) ---");
+            List<TerminalConnectionModel> lstTcm = TerminalConnectionModelBuilder.Build(
+                lstMatch, oDm, oAnalysis, oAnalysis.K4, AddInConfiguration.TargetStripName, _logger);
+
             _logger.Summarize("Готово: точек подключения " + oAnalysis.Points.Count +
-                "; строк [DM] " + oDm.Rows.Count + "; строк [MATCH] " + lstMatch.Count + ".");
+                "; строк [DM] " + oDm.Rows.Count + "; строк [MATCH] " + lstMatch.Count +
+                "; моделей [TCM] " + lstTcm.Count + ".");
         }
 
         private static short SafeLayerId(GraphicalPlacement oPlacement)
