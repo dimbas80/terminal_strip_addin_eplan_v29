@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-21 Этап 4 rev.7.1 (Фаза D: исправлена инверсия Top/Bottom — «верх↔Int, низ↔Ext» по данным пользователя)";
+        private const string BUILD_STAMP = "2026-09-21 Этап 5 rev.8.1 (Фаза E: фикс двойного назначения DmRow в TCM + маркеры [CABGROUP]; прогон rev.8.0: K140 у точек Unknown и Bottom клеммы №2)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 4 rev.7.1 (Фаза D: исправлена инверсия Top/Bottom в TerminalConnectionModel)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 5 rev.8.1 (Фаза E: фикс double-assignment в TCM + маркеры [CABGROUP])", BUILD_STAMP);
             try
             {
                 Run();
@@ -284,6 +284,12 @@ namespace MyEplanActions
             _logger.Summarize("Готово: точек подключения " + oAnalysis.Points.Count +
                 "; строк [DM] " + oDm.Rows.Count + "; строк [MATCH] " + lstMatch.Count +
                 "; моделей [TCM] " + lstTcm.Count + ".");
+
+            // --- 11. Фаза E: CableLayoutBuilder — группировка соединений по кабелям ---
+            _logger.Log("[INFO] --- Фаза E: CableLayout (группировка соединений по кабелям) ---");
+            CableLayoutModel oLayout = CableLayoutBuilder.Build(lstTcm, _logger);
+            _logger.Summarize("Фаза E: кабелей " + oLayout.Cables.Count +
+                ", проводных " + oLayout.NoCableConnections.Count + ".");
         }
 
         private static short SafeLayerId(GraphicalPlacement oPlacement)

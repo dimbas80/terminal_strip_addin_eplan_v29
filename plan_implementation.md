@@ -1122,6 +1122,22 @@ TerminalConnectionModel[]
 
 ## Фаза E — CableLayoutBuilder
 
+> **Статус: ЗАВЕРШЕНА (21.09.2026, Этап 5, rev.8.0→rev.8.1; summary п.38).** Реализовано:
+> `addin/Data/CableLayoutBuilder.cs` (+`CableModel`/`CableLayoutModel` — §4.5/§4.6, полная
+> структура Left/Right/Other/SymbolPosition). Решения (spec
+> `docs/superpowers/specs/2026-09-21-fase-e-cablelayout-design.md`): бинарная группировка —
+> в проекте нет объектов-определений кабелей (`CableName == null`, только №31058), кабельные
+> соединения → один `CableModel` без имени; провода → `NoCableConnections`; группировка по
+> `CableName` — при появлении реальных кабелей (ключ заложен). Семантика стороны =
+> `TerminalSide` из модели (Top/Right→Right, Bottom/Left→Left, Unknown→Other) — §9
+> (Start/EndPoint якорной линии) не применяется: якоря — дескрипторы PlaceHolderText.
+> Прогон rev.8.0 вскрыл Critical-баг Фазы D (двойное назначение DmRow в TCM — K140 у точек
+> Unknown и Bottom клеммы №2) — исправлен в rev.8.1 (единый пул потребления); прогон
+> rev.8.1: все счётчики сошлись (`[CABGROUP]` 1×15: Left 8/Right 7/Other 0;
+> `[CABGROUP-SUM]` 1/62/0 == `[MATCH-SUM]` 15/62; WARN 10). Критерии left-only/right-only
+> проверены по факту данных; both-sides/multiple — «не воспроизведены» (ждут проекта
+> с `CableName`). Маркеры `[CABGROUP]` (не `[CABLE]` — коллизия с дампом точек LeadDetector).
+
 Группировать соединения по кабелям.
 
 Отдельно проверить:

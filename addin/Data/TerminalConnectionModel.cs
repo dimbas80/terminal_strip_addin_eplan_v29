@@ -153,32 +153,35 @@ namespace MyEplanActions
                         : TerminalGeometry.PointSide(bV, oRow.Point, dRef));
                 }
 
-                List<DmRow> lstExt = new List<DmRow>(), lstInt = new List<DmRow>();
-                foreach (DmRow oRow in lstRows)
-                    (oRow.Side == "Int" ? lstInt : lstExt).Add(oRow);
-
-                List<DmRow>[] arrPool = { lstExt, lstInt };
-                int[] arrPoolIdx = { 0, 0 };
+                // rev.8.1: выбор строго из lstRemain (единый пул потребления) —
+                // rev.7.x мог выдать ОДНУ DmRow ДВАЖДЫ: remain-путь (Unknown-точка)
+                // забирал строку из lstRemain, а пул-массив продолжал её видеть
+                // (прогон rev.8.0: клемма №2 — K140 назначен точкам Unknown И Bottom,
+                // провод '#5' pin=1 потерян; [TCM] 16 «кабелей» против 15 в DM).
+                // Порядок: сначала точки с известной стороной (известные стороны
+                // забирают свои пулы первыми), Unknown — в конце (иначе Unknown
+                // перехватил бы кабель у Bottom на клемме №2).
                 List<DmRow> lstRemain = new List<DmRow>(lstRows);
+                List<int> lstOrder = new List<int>();
                 for (int k = 0; k < oEntry.Value.Count; k++)
+                    if (lstSides[k] != TerminalSide.Unknown) lstOrder.Add(k);
+                for (int k = 0; k < oEntry.Value.Count; k++)
+                    if (lstSides[k] == TerminalSide.Unknown) lstOrder.Add(k);
+                foreach (int k in lstOrder)
                 {
                     int nIdx = oEntry.Value[k];
                     TerminalSide oSide = lstSides[k];
-                    // rev.7.1: пул по исправленной стороне — Top(верх)↔Int, Bottom(низ)↔Ext
+                    // rev.7.1: предпочтение по стороне — Top(верх)↔Int, Bottom(низ)↔Ext
                     // (данные пользователя: клемма 31 — кабель внизу на Ext, провод вверху на Int);
                     // Left/Right (Vertical) — без данных, оставлено Left↔Ext, Right↔Int.
-                    int nPool;
-                    if (oSide == TerminalSide.Top || oSide == TerminalSide.Right) nPool = 1;
-                    else if (oSide == TerminalSide.Bottom || oSide == TerminalSide.Left) nPool = 0;
-                    else nPool = -1;
+                    bool bWantInt = (oSide == TerminalSide.Top || oSide == TerminalSide.Right);
                     DmRow oPicked = null;
-                    if (nPool >= 0 && arrPoolIdx[nPool] < arrPool[nPool].Count)
-                        oPicked = arrPool[nPool][arrPoolIdx[nPool]++];
-                    if (oPicked == null)
+                    if (oSide != TerminalSide.Unknown)
                     {
                         foreach (DmRow oRow in lstRemain)
-                            if (oRow != null) { oPicked = oRow; break; }
+                            if ((oRow.Side == "Int") == bWantInt) { oPicked = oRow; break; }
                     }
+                    if (oPicked == null && lstRemain.Count > 0) oPicked = lstRemain[0];
                     if (oPicked != null) lstRemain.Remove(oPicked);
                     lstModels.Add(MakeModel(lstMatch[nIdx], oPicked, oSide, IsBridge(oAnalysis, nIdx)));
                 }
