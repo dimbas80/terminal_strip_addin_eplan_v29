@@ -80,9 +80,17 @@ namespace MyEplanActions
         {
             List<MatchRow> lstRows = new List<MatchRow>();
             K4Report oK4 = oAnalysis == null ? null : oAnalysis.K4;
-            if (oK4 == null || !oK4.Valid || oAnalysis.Points.Count == 0)
+            if (oAnalysis == null || oAnalysis.Points.Count == 0)
             {
-                log.Log("[INFO] [MATCH-SKIP] контроль К4 недоступен или точек нет — свод пропущен");
+                log.Log("[INFO] [MATCH-SKIP] точек подключения нет — свод пропущен");
+                return lstRows;
+            }
+            if (oK4 == null || !oK4.Valid)
+            {
+                // Ревью Этапа 3 (Important): точки есть, но колонки не определились —
+                // это аварийный режим (весь свод теряется), поэтому WARN, а не INFO.
+                log.Log("[WARN] [MATCH-SKIP] контроль К4 недоступен (стубов нет или <2 — шаг не определён): "
+                    + oAnalysis.Points.Count + " точек остались без сопоставления клеммам — свод пропущен");
                 return lstRows;
             }
             string strTarget = AddInConfiguration.TargetStripName;

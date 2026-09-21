@@ -23,7 +23,7 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-20 Этап 3 rev.6.2 (вертикальная ориентация: ось в K4/AnchorResolver, [ORIENT])";
+        private const string BUILD_STAMP = "2026-09-21 Этап 3 rev.6.3 ([MATCH-SKIP] WARN при точках без колонок — фикс whole-branch ревью)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 

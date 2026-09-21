@@ -135,7 +135,7 @@ namespace MyEplanActions
         /// «ряд»). Прогон rev.5.5: у тестовой формы ряд «1…60» на Y=-81 (60 шт.),
         /// прочие строки — этажи/уровни/позиции (-XP1:10, -SF1:2), давшие 106
         /// коллизий [PHCOL]. Этап 3: ось ряда выбирается ориентацией (Vertical —
-        /// бакет по X, Задача 3).</summary>
+        /// бакет по X, Задача 4).</summary>
         private static double FindDominantAnchorRow(List<PhRow> lstPh, bool bVertical)
         {
             Dictionary<long, int> dicCount = new Dictionary<long, int>();
