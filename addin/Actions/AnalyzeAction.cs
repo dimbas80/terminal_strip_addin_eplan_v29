@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-22 Этап 6 rev.9.6 (Фаза F: реальная группировка по полному DT из ConnectionName + красное превью)";
+        private const string BUILD_STAMP = "2026-09-22 Этап 7 rev.10.1 (Фаза G: подходы 8мм + колонка символов + DT-свойства)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 6 rev.9.6 (Фаза F: группировка по DT + красное превью)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.10.1 (Фаза G: ревизии геометрии + DT символов)", BUILD_STAMP);
             try
             {
                 Run();
@@ -295,10 +295,13 @@ namespace MyEplanActions
             _logger.Log("[INFO] --- Фаза F: геометрия кабельной разводки ---");
             CableGeometryConfig oGeomCfg = new CableGeometryConfig();
             oGeomCfg.BusOffsetMm = AddInConfiguration.CableBusOffsetMm;
-            oGeomCfg.SymbolOffsetMm = AddInConfiguration.CableSymbolOffsetMm;
-            oGeomCfg.PitchMm = AddInConfiguration.CablePitchMm;
             oGeomCfg.LevelPitchMm = AddInConfiguration.CableLevelPitchMm;
             oGeomCfg.BusLiftMm = AddInConfiguration.CableBusLiftMm;
+            oGeomCfg.ApproachOffsetMm = AddInConfiguration.CableApproachOffsetMm;
+            oGeomCfg.ApproachPitchMm = AddInConfiguration.CableApproachPitchMm;
+            oGeomCfg.SymbolColumnOffsetMm = AddInConfiguration.CableSymbolColumnOffsetMm;
+            oGeomCfg.SymbolGapMm = AddInConfiguration.CableSymbolGapMm;
+            oGeomCfg.SymbolStackPitchMm = AddInConfiguration.CableSymbolStackPitchMm;
             // Край ряда по оси выноса (ревизия 2): H — max X колонок К4, V — min Y.
             // К4 невалиден — NaN, builder уйдёт в fallback на точки кабеля (WARN).
             double dStripEndAxis = double.NaN;
@@ -335,37 +338,17 @@ namespace MyEplanActions
             _logger.Summarize("Фаза F: сегментов " + oGeom.Segments.Count +
                 ", символов " + oGeom.Symbols.Count + ".");
 
-            // --- 13. Фаза F: отладочное превью (PreviewDraw) — Graphics.Line по сегментам.
-            // НЕ идемпотентно: повторный прогон дублирует линии (удалить вручную).
-            if (AddInConfiguration.PreviewDraw)
-            {
-                int nDrawn = 0;
-                // Красное перо превью (просьба пользователя): ColorId 1 = красный
-                // в штатной палитре EPLAN; паттерн Pen — example/ShowCablesInSegment.cs.
-                Pen oPreviewPen = new Pen();
-                oPreviewPen.ColorId = 1;
-                oPreviewPen.Width = 0.35;
-                oPreviewPen.StyleId = 0;
-                foreach (Seg oPrevSeg in oGeom.Segments)
-                {
-                    try
-                    {
-                        Line oNewLine = new Line();
-                        oNewLine.Create(oPage,
-                            new PointD(oPrevSeg.A.X, oPrevSeg.A.Y),
-                            new PointD(oPrevSeg.B.X, oPrevSeg.B.Y));
-                        oNewLine.Pen = oPreviewPen;
-                        nDrawn++;
-                    }
-                    catch (Exception oPrevEx)
-                    {
-                        _logger.Warn("[PREVIEW] Line.Create бросил " +
-                            oPrevEx.GetType().Name + ": " + oPrevEx.Message);
-                    }
-                }
-                _logger.Summarize("Превью: нарисовано линий " + nDrawn + " из " +
-                    oGeom.Segments.Count + " (слой по умолчанию; удалить вручную).");
-            }
+            // --- 13. Фаза G: реальные объекты по CableGeometryResult (spec
+            // 2026-09-22-fase-g-graphics-design.md). Слой линий — GraphicalLayer из дерева
+            // отчёта (строки на слое GraphicsLayerName); перо красное — рабочий вывод по
+            // решению пользователя. НЕ идемпотентно: повтор — дубликаты (очистка — Фаза I).
+            GraphicalLayer oCableLayer = GraphicLineCreator.ResolveLayerFromTree(
+                lstAll, AddInConfiguration.GraphicsLayerName, _logger);
+            int nLines = GraphicLineCreator.CreateLines(oPage, oGeom, oCableLayer, _logger);
+            int nSymbols = CableSymbolCreator.CreateSymbols(oPage, oGeom, _logger);
+            _logger.Summarize("Фаза G: линий " + nLines + "/" + oGeom.Segments.Count +
+                ", символов " + nSymbols + "/" + oGeom.Symbols.Count +
+                " (не идемпотентно: повторный прогон дублирует объекты).");
 
             // --- 14. Проба чтения реальных кабелей проекта (для реальной группировки) ---
             oDmReader.ReadCables(oProject);

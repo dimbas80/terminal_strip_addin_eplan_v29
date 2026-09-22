@@ -55,24 +55,42 @@ namespace MyEplanActions
         // а не имя слоя; имя достаётся через GraphicalPlacement.Layer.Name (урок rev.7/9).
         public const int LayerPropertyNumber = 19019;
 
-        // Фаза F (rev.9.0): параметры геометрии кабельной разводки (spec
+        // Фаза F (rev.9.0): параметры шин кабельной разводки (spec
         // 2026-09-21-fase-f-cable-geometry-design.md): отступ шины от крайних точек
-        // стороны (перпендикулярно ряду), вынос SymbolAxis за крайнюю точку кабеля
-        // (вдоль ряда), разнос SymbolAxis нескольких кабелей.
+        // стороны (перпендикулярно ряду). Ревизия 2 (22.09.2026): разнос уровней
+        // шин кабелей (перпендикулярно ряду, кабель 1 ближе). Ревизия 4: подъём
+        // шины целиком дополнительно к отступу от кончиков выводов.
         public const double CableBusOffsetMm = 10.0;
-        public const double CableSymbolOffsetMm = 10.0;
-        public const double CablePitchMm = 20.0;
-
-        // Ревизия 2 (22.09.2026): разнос уровней шин кабелей (перепендикулярно ряду,
-        // кабель 1 ближе); ревизия 4: подъём шины целиком дополнительно к отступу
-        // от кончиков выводов, перпендикулярно ряду.
         public const double CableLevelPitchMm = 8.0;
         public const double CableBusLiftMm = 8.0;
 
-        // Отладочное превью Фазы F: рисовать вычисленную геометрию Graphics.Line
-        // на странице отчёта. НЕ идемпотентно: повторный прогон дублирует линии
-        // (удалять вручную; идентификация объектов — Фаза I). Слой по умолчанию.
-        public const bool PreviewDraw = false;
+        // Ревизия rev.10.1 (22.09.2026, spec 2026-09-22-fase-g-graphics-design.md §9,
+        // эталон «Кабель с двух сторон.pdf»): подходы и символы. Подход кабеля i —
+        // вертикаль за краем ряда (по оси выноса) с шагом 8 мм; шины заканчиваются
+        // на подходе. Колонка символов — за последним подходом двусторонних кабелей.
+        public const double CableApproachOffsetMm = 10.0;
+        public const double CableApproachPitchMm = 8.0;
+        public const double CableSymbolColumnOffsetMm = 16.0;
+        // Зазор линия–символ (по умолчанию для CABDCP2, в UI позже).
+        public const double CableSymbolGapMm = 8.0;
+        // Шаг стопки символов по вертикали (из эталона rev.10.0).
+        public const double CableSymbolStackPitchMm = 16.0;
+
+        // Фаза G (spec 2026-09-22-fase-g-graphics-design.md): реальные объекты кабельной
+        // разводки вместо превью. Линии — слой EPLAN100 и красное перо (решение
+        // пользователя, spec §2.2); слой резолвится из дерева отчёта
+        // (GraphicLineCreator.ResolveLayerFromTree), не найден — слой по умолчанию.
+        // НЕ идемпотентно: повторный прогон дублирует объекты (очистка — Фаза I).
+        public const string GraphicsLayerName = "EPLAN100";
+        public const int GraphicsPenColorId = 1;      // красный в штатной палитре EPLAN
+        public const double GraphicsPenWidthMm = 0.35;
+
+        // Символ кабеля: библиотека SPECIAL, 16 / CABDCP2, вариант 0 (= «A»; решение
+        // пользователя 22.09.2026). Индексация Symbol.Item 0-based (эмпирика rev.10.0:
+        // индекс 1 дал вариант B); вариант A = 0; в UI позже.
+        public const string SymbolLibrary = "SPECIAL";
+        public const string SymbolName = "CABDCP2";
+        public const int SymbolVariant = 0;
 
         // Точка вставки отчёта на странице.
         public const double InsertX = 20.0;
