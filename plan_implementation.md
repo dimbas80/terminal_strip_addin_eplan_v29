@@ -1149,6 +1149,10 @@ TerminalConnectionModel[]
 
 ## Фаза F — Geometry Engine
 
+**Статус: ЗАВЕРШЕНА** (rev.9.0–rev.9.6, прогоны 21–22.09.2026 — summary п.39–44;
+`addin/Geometry/CableGeometryBuilder.cs`, unit-тесты `tests/` 56/0, секции 12–13
+`[GEOM]` + превью).
+
 Без создания объектов EPLAN сначала вычислять геометрию как чистые координаты.
 
 Результат, например:

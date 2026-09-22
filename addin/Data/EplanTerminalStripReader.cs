@@ -162,6 +162,9 @@ namespace MyEplanActions
                     }
                 }
             }
+            _log.Log("[CBLPROP-SUM] соединений: " + _nCblPropConns + ", свойств: " + _nCblPropValues);
+            _log.Log("[PROBE5-SUM] соединений: " + _nProbe5Conns + ", direct-ok: " + _nProbe5DirectOk +
+                ", cdp-ok: " + _nProbe5CdpOk + ", connprop: " + _nProbe5ConnProps);
             return oReport;
         }
 
@@ -326,6 +329,12 @@ namespace MyEplanActions
                 if (oInfo.IsCableConn == true) oReport.IsCable31058ConnTrue++;
                 if (oInfo.IsCableCdp == true) oReport.IsCable31058CdpTrue++;
                 _dicCableInfo[oConn] = oInfo;
+                // Проба [CBLPROP] (rev.9.4): свойства кабельного соединения ЦЕЛЕВОГО
+                // клеммника (№31058=true) — ищем, где живёт имя кабеля: K-кабели не
+                // спарены (CableConnections=0, проба [CBL] rev.9.3), связь ищем в
+                // свойствах соединения.
+                if (oInfo.IsCableConn == true && oRow.StripName == AddInConfiguration.TargetStripName)
+                    ProbeCableProperties(oRow, oConn);
             }
             oRow.CableName = oInfo.CableName;
             oRow.CdpCount = oInfo.CdpCount;
@@ -376,6 +385,260 @@ namespace MyEplanActions
         {
             try { return oGetter(); }
             catch { return nFallback; }
+        }
+
+        // --- Проба чтения реальных кабелей проекта (Task 6, rev.9.3) ---
+
+        /// <summary>Диагностическая проба чтения РЕАЛЬНЫХ кабелей проекта из DataModel
+        /// (перед реальной группировкой; группировка CableLayoutBuilder не меняется).
+        /// Паттерн — рабочий пример example/ShowCablesInSegment.cs:76-127:
+        /// DMObjectsFinder + FunctionsFilter (Category = Function.Enums.Category.Cable) →
+        /// GetFunctions → as Cable → Cable.Name (полный DT); жилы кабеля —
+        /// Cable.CableConnections (Connection[], подтверждено KB, plan_stage2).
+        /// Дампы: [CBL] на кабель (connections=N), [CBLCONN] на соединение —
+        /// идентификатор для офлайн-сопоставления со строками [DM]
+        /// (DmRow.ConnectionName): попытки по порядку Connection.Name, затем
+        /// StorableObject.ToStringIdentifier(), при ошибке <err>; [CBL-SUM] — итог
+        /// (0 при пустом результате/ошибке перечисления). Ошибки членов — в дампы,
+        /// обход не прерывается.</summary>
+        public void ReadCables(Project oProject)
+        {
+            int nCables = 0;
+            Function[] arrFunctions;
+            try
+            {
+                DMObjectsFinder oFinder = new DMObjectsFinder(oProject);
+                FunctionsFilter oCableFilter = new FunctionsFilter();
+                oCableFilter.Category = Function.Enums.Category.Cable;
+                arrFunctions = oFinder.GetFunctions(oCableFilter);
+            }
+            catch (Exception oException)
+            {
+                _log.Log("[CBL-SUM] кабелей: 0");
+                _log.Warn("[CBL] перечисление кабелей не удалось (DMObjectsFinder/GetFunctions): " +
+                    oException.GetType().Name + ": " + oException.Message);
+                return;
+            }
+            if (arrFunctions == null || arrFunctions.Length == 0)
+            {
+                _log.Log("[CBL-SUM] кабелей: 0");
+                return;
+            }
+            for (int i = 0; i < arrFunctions.Length; i++)
+            {
+                Cable oCable = arrFunctions[i] as Cable;
+                if (oCable == null) continue;
+                nCables++;
+                string strName = SafeText("<n/a>", () => oCable.Name);
+                try
+                {
+                    Connection[] arrConns = oCable.CableConnections;
+                    int nConns = arrConns == null ? 0 : arrConns.Length;
+                    _log.Log("[CBL] #" + i + " '" + strName + "' connections=" + nConns);
+                    if (arrConns == null) continue;
+                    for (int j = 0; j < arrConns.Length; j++)
+                    {
+                        Connection oConn = arrConns[j];
+                        if (oConn == null) continue;
+                        _log.Log("[CBLCONN] '" + strName + "' #" + j + ": conn='" + ConnIdOf(oConn) + "'");
+                    }
+                }
+                catch (Exception oException)
+                {
+                    _log.Log("[CBL] #" + i + " '" + strName + "' connections=<err>");
+                    _log.Warn("[CBL] '" + strName + "': CableConnections: " +
+                        oException.GetType().Name + ": " + oException.Message);
+                }
+            }
+            _log.Log("[CBL-SUM] кабелей: " + nCables);
+        }
+
+        /// <summary>Идентификатор соединения для [CBLCONN]: попытки по порядку —
+        /// Connection.Name, затем StorableObject.ToStringIdentifier(), при ошибке
+        /// &lt;err&gt;. ВАЖНО: в API 2.9 у Connection (Connection : StorableObject, docs)
+        /// НЕТ свойства Name — попытка Name идёт через рефлексию (член отсутствует/
+        /// бросил → универсальный ToStringIdentifier()); при появлении Name в будущих
+        /// версиях дамп автоматически покажет его.</summary>
+        private static string ConnIdOf(Connection oConn)
+        {
+            try
+            {
+                System.Reflection.PropertyInfo oName = oConn.GetType().GetProperty("Name");
+                object oValue = oName != null ? oName.GetValue(oConn, null) : null;
+                string strName = oValue as string;
+                if (!string.IsNullOrEmpty(strName)) return strName;
+            }
+            catch { }
+            return SafeText("<err>", () => oConn.ToStringIdentifier());
+        }
+
+        // --- Проба [CBLPROP] (rev.9.4): свойства кабельных соединений целевого клеммника ---
+
+        // Счётчики пробы: соединений обработано / непустых значений выдамплено.
+        private int _nCblPropConns;
+        private int _nCblPropValues;
+
+        // Кэши сбора AnyPropertyId (один раз за прогон на вариант; пусто после
+        // неудачного сбора — проба молча не даёт строк).
+        private static List<KeyValuePair<string, AnyPropertyId>> _lstCablePropIds;
+        private static bool _bCablePropIdsTried;
+        private static List<KeyValuePair<string, AnyPropertyId>> _lstAllPropIds;
+        private static bool _bAllPropIdsTried;
+
+        /// <summary>Сбор статических AnyPropertyId из вложенных классов
+        /// Eplan.EplApi.DataModel.Properties (паттерн rev.5.4 [PH]-текстов:
+        /// рефлексия по вложенным классам Properties, статические поля-идентификаторы).
+        /// bCableOnly=true — только имена с "CABLE" (rev.9.4); false — ВСЕ
+        /// (проба rev.9.5: полное дампирование свойств первого кабельного соединения).
+        /// Ключ пары — "<NestedClass>.<Field>" для читаемости дампа.</summary>
+        private static List<KeyValuePair<string, AnyPropertyId>> CollectPropIds(bool bCableOnly)
+        {
+            List<KeyValuePair<string, AnyPropertyId>> lstResult;
+            bool bTried;
+            if (bCableOnly) { lstResult = _lstCablePropIds; bTried = _bCablePropIdsTried; }
+            else { lstResult = _lstAllPropIds; bTried = _bAllPropIdsTried; }
+            if (bTried) return lstResult;
+            lstResult = new List<KeyValuePair<string, AnyPropertyId>>();
+            try
+            {
+                Type oPropsType = typeof(Properties);
+                Type[] arrNested = oPropsType.GetNestedTypes(System.Reflection.BindingFlags.Public);
+                foreach (Type oNested in arrNested)
+                {
+                    System.Reflection.FieldInfo[] arrFields = oNested.GetFields(
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                    foreach (System.Reflection.FieldInfo oField in arrFields)
+                    {
+                        if (oField.FieldType != typeof(AnyPropertyId)) continue;
+                        if (bCableOnly && !oField.Name.Contains("CABLE")) continue;
+                        AnyPropertyId oId = oField.GetValue(null) as AnyPropertyId;
+                        if (oId != null)
+                            lstResult.Add(new KeyValuePair<string, AnyPropertyId>(
+                                oNested.Name + "." + oField.Name, oId));
+                    }
+                }
+            }
+            catch { lstResult = new List<KeyValuePair<string, AnyPropertyId>>(); }
+            if (bCableOnly) { _lstCablePropIds = lstResult; _bCablePropIdsTried = true; }
+            else { _lstAllPropIds = lstResult; _bAllPropIdsTried = true; }
+            return lstResult;
+        }
+
+        // Счётчики пробы rev.9.5: соединений / direct-успехов / CDP-успехов /
+        // непустых свойств полного дампа (первое соединение).
+        private int _nProbe5Conns;
+        private int _nProbe5DirectOk;
+        private int _nProbe5CdpOk;
+        private int _nProbe5ConnProps;
+
+        /// <summary>Проба [CBLPROP] (rev.9.4) + расширение rev.9.5 — на каждом
+        /// кабельном соединении (№31058=true, целевой клеммник):
+        /// 1) [CONNCBL] прямой путь KB п.20 — Connection.CableDefinitionLine
+        ///    (бросает при ≠1 CDP — ловим);
+        /// 2) [CDPCBL] перепроверка п.24 — CableDefinitionLine каждого ConnectionDefPoint;
+        /// 3) [CONNPROP] полный дамп непустых свойств — ТОЛЬКО на первом соединении
+        ///    (среди всех свойств ищем, где живёт полное DT кабеля);
+        /// 4) [CBLPROP] (rev.9.4) — свойства с "CABLE" в имени (не менялся).
+        /// try/catch на каждый член; пропуски молча (диагностика).</summary>
+        private void ProbeCableProperties(DmRow oRow, Connection oConn)
+        {
+            _nCblPropConns++;
+            _nProbe5Conns++;
+            string strId = "'" + oRow.TerminalName + "' conn='" + oRow.ConnectionName + "'";
+
+            // 1. Прямой путь (KB п.20): Connection.CableDefinitionLine.
+            try
+            {
+                Cable oDirect = oConn.CableDefinitionLine;
+                if (oDirect != null)
+                {
+                    _nProbe5DirectOk++;
+                    _log.Log("[CONNCBL] " + strId + ": direct -> '" +
+                        SafeText("<n/a>", () => oDirect.Name) + "'");
+                }
+                else
+                {
+                    _log.Log("[CONNCBL] " + strId + ": direct -> <null>");
+                }
+            }
+            catch (Exception oException)
+            {
+                _log.Log("[CONNCBL] " + strId + ": direct -> <err: " + oException.GetType().Name + ">");
+            }
+
+            // 2. Путь через CDP (п.24, перепроверка): CableDefinitionLine каждого CDP.
+            try
+            {
+                ConnectionDefinitionPoint[] arrCdp = oConn.ConnectionDefPoints;
+                if (arrCdp != null)
+                {
+                    for (int j = 0; j < arrCdp.Length; j++)
+                    {
+                        ConnectionDefinitionPoint oCdp = arrCdp[j];
+                        if (oCdp == null) continue;
+                        try
+                        {
+                            Cable oCdpCable = oCdp.CableDefinitionLine;
+                            if (oCdpCable != null)
+                            {
+                                _nProbe5CdpOk++;
+                                _log.Log("[CDPCBL] " + strId + " cdp #" + j + " -> '" +
+                                    SafeText("<n/a>", () => oCdpCable.Name) + "'");
+                            }
+                            else
+                            {
+                                _log.Log("[CDPCBL] " + strId + " cdp #" + j + " -> <null>");
+                            }
+                        }
+                        catch (Exception oCdpException)
+                        {
+                            _log.Log("[CDPCBL] " + strId + " cdp #" + j + " -> <err: " +
+                                oCdpException.GetType().Name + ">");
+                        }
+                    }
+                }
+            }
+            catch (Exception oException)
+            {
+                _log.Log("[CDPCBL] " + strId + ": ConnectionDefPoints -> <err: " +
+                    oException.GetType().Name + ">");
+            }
+
+            // 3. Полный дамп непустых свойств — только на ПЕРВОМ кабельном соединении:
+            // среди ВСЕХ свойств соединения ищем, где живёт полное DT кабеля
+            // (если оно хранится свойством с именем без «CABLE»).
+            if (_nProbe5Conns == 1)
+            {
+                foreach (KeyValuePair<string, AnyPropertyId> oPair in CollectPropIds(false))
+                {
+                    try
+                    {
+                        PropertyValue oValue = oConn.Properties[oPair.Value];
+                        if (oValue == null || oValue.IsEmpty) continue;
+                        string strValue = oValue.ToString();
+                        if (strValue.Length == 0) continue;
+                        _nProbe5ConnProps++;
+                        _log.Log("[CONNPROP] " + strId + ": '" + oPair.Key + "' = '" + strValue + "'");
+                    }
+                    catch { /* диагностика: неприменимое свойство — пропуск */ }
+                }
+            }
+
+            // 4. [CBLPROP] (rev.9.4) — свойства с "CABLE" в имени (без изменений).
+            foreach (KeyValuePair<string, AnyPropertyId> oPair in CollectPropIds(true))
+            {
+                try
+                {
+                    PropertyValue oValue = oConn.Properties[oPair.Value];
+                    if (oValue == null || oValue.IsEmpty) continue;
+                    string strValue = oValue.ToString();
+                    if (strValue.Length == 0) continue;
+                    _nCblPropValues++;
+                    _log.Log("[CBLPROP] '" + oRow.TerminalName + "' conn='" + oRow.ConnectionName +
+                        "': '" + oPair.Key + "' = '" + strValue + "'");
+                }
+                catch { /* диагностика: неприменимое свойство соединения — пропуск */ }
+            }
         }
     }
 }

@@ -55,6 +55,25 @@ namespace MyEplanActions
         // а не имя слоя; имя достаётся через GraphicalPlacement.Layer.Name (урок rev.7/9).
         public const int LayerPropertyNumber = 19019;
 
+        // Фаза F (rev.9.0): параметры геометрии кабельной разводки (spec
+        // 2026-09-21-fase-f-cable-geometry-design.md): отступ шины от крайних точек
+        // стороны (перпендикулярно ряду), вынос SymbolAxis за крайнюю точку кабеля
+        // (вдоль ряда), разнос SymbolAxis нескольких кабелей.
+        public const double CableBusOffsetMm = 10.0;
+        public const double CableSymbolOffsetMm = 10.0;
+        public const double CablePitchMm = 20.0;
+
+        // Ревизия 2 (22.09.2026): разнос уровней шин кабелей (перепендикулярно ряду,
+        // кабель 1 ближе); ревизия 4: подъём шины целиком дополнительно к отступу
+        // от кончиков выводов, перпендикулярно ряду.
+        public const double CableLevelPitchMm = 8.0;
+        public const double CableBusLiftMm = 8.0;
+
+        // Отладочное превью Фазы F: рисовать вычисленную геометрию Graphics.Line
+        // на странице отчёта. НЕ идемпотентно: повторный прогон дублирует линии
+        // (удалять вручную; идентификация объектов — Фаза I). Слой по умолчанию.
+        public const bool PreviewDraw = false;
+
         // Точка вставки отчёта на странице.
         public const double InsertX = 20.0;
         public const double InsertY = 20.0;

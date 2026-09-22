@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-21 Этап 5 rev.8.1 (Фаза E: фикс двойного назначения DmRow в TCM + маркеры [CABGROUP]; прогон rev.8.0: K140 у точек Unknown и Bottom клеммы №2)";
+        private const string BUILD_STAMP = "2026-09-22 Этап 6 rev.9.6 (Фаза F: реальная группировка по полному DT из ConnectionName + красное превью)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 5 rev.8.1 (Фаза E: фикс double-assignment в TCM + маркеры [CABGROUP])", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 6 rev.9.6 (Фаза F: группировка по DT + красное превью)", BUILD_STAMP);
             try
             {
                 Run();
@@ -290,6 +290,85 @@ namespace MyEplanActions
             CableLayoutModel oLayout = CableLayoutBuilder.Build(lstTcm, _logger);
             _logger.Summarize("Фаза E: кабелей " + oLayout.Cables.Count +
                 ", проводных " + oLayout.NoCableConnections.Count + ".");
+
+            // --- 12. Фаза F: CableGeometryBuilder — чистая геометрия кабельной разводки ---
+            _logger.Log("[INFO] --- Фаза F: геометрия кабельной разводки ---");
+            CableGeometryConfig oGeomCfg = new CableGeometryConfig();
+            oGeomCfg.BusOffsetMm = AddInConfiguration.CableBusOffsetMm;
+            oGeomCfg.SymbolOffsetMm = AddInConfiguration.CableSymbolOffsetMm;
+            oGeomCfg.PitchMm = AddInConfiguration.CablePitchMm;
+            oGeomCfg.LevelPitchMm = AddInConfiguration.CableLevelPitchMm;
+            oGeomCfg.BusLiftMm = AddInConfiguration.CableBusLiftMm;
+            // Край ряда по оси выноса (ревизия 2): H — max X колонок К4, V — min Y.
+            // К4 невалиден — NaN, builder уйдёт в fallback на точки кабеля (WARN).
+            double dStripEndAxis = double.NaN;
+            if (oAnalysis.K4 != null && oAnalysis.K4.Valid && oAnalysis.K4.Columns.Count > 0)
+            {
+                bool bVerticalK4 = AddInConfiguration.Orientation == ReportOrientation.Vertical;
+                double dExtreme = bVerticalK4 ? double.PositiveInfinity : double.NegativeInfinity;
+                foreach (double dCol in oAnalysis.K4.Columns)
+                {
+                    if (bVerticalK4) { if (dCol < dExtreme) dExtreme = dCol; }
+                    else if (dCol > dExtreme) dExtreme = dCol;
+                }
+                if (!double.IsInfinity(dExtreme)) dStripEndAxis = dExtreme;
+            }
+            CableGeometryResult oGeom = CableGeometryBuilder.Build(
+                oLayout, AddInConfiguration.Orientation, oGeomCfg, dStripEndAxis);
+
+            foreach (CableSymbolPlacement oSym in oGeom.Symbols)
+                _logger.Log("[GEOM] символ '" + (oSym.CableName ?? "<без имени>") + "' #" +
+                    oSym.CableIndex.ToString(CultureInfo.InvariantCulture) + ": (" +
+                    oSym.Position.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
+                    oSym.Position.Y.ToString("F3", CultureInfo.InvariantCulture) + ")");
+            foreach (Seg oGeomSeg in oGeom.Segments)
+                _logger.Log("[GEOM] seg: (" +
+                    oGeomSeg.A.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
+                    oGeomSeg.A.Y.ToString("F3", CultureInfo.InvariantCulture) + ") -> (" +
+                    oGeomSeg.B.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
+                    oGeomSeg.B.Y.ToString("F3", CultureInfo.InvariantCulture) + ")");
+            foreach (string strGeomWarn in oGeom.Warnings)
+                _logger.Warn(strGeomWarn);
+            _logger.Log("[INFO] [GEOM-SUM] кабелей " + oGeom.Symbols.Count +
+                ", сегментов " + oGeom.Segments.Count +
+                ", предупреждений " + oGeom.Warnings.Count);
+            _logger.Summarize("Фаза F: сегментов " + oGeom.Segments.Count +
+                ", символов " + oGeom.Symbols.Count + ".");
+
+            // --- 13. Фаза F: отладочное превью (PreviewDraw) — Graphics.Line по сегментам.
+            // НЕ идемпотентно: повторный прогон дублирует линии (удалить вручную).
+            if (AddInConfiguration.PreviewDraw)
+            {
+                int nDrawn = 0;
+                // Красное перо превью (просьба пользователя): ColorId 1 = красный
+                // в штатной палитре EPLAN; паттерн Pen — example/ShowCablesInSegment.cs.
+                Pen oPreviewPen = new Pen();
+                oPreviewPen.ColorId = 1;
+                oPreviewPen.Width = 0.35;
+                oPreviewPen.StyleId = 0;
+                foreach (Seg oPrevSeg in oGeom.Segments)
+                {
+                    try
+                    {
+                        Line oNewLine = new Line();
+                        oNewLine.Create(oPage,
+                            new PointD(oPrevSeg.A.X, oPrevSeg.A.Y),
+                            new PointD(oPrevSeg.B.X, oPrevSeg.B.Y));
+                        oNewLine.Pen = oPreviewPen;
+                        nDrawn++;
+                    }
+                    catch (Exception oPrevEx)
+                    {
+                        _logger.Warn("[PREVIEW] Line.Create бросил " +
+                            oPrevEx.GetType().Name + ": " + oPrevEx.Message);
+                    }
+                }
+                _logger.Summarize("Превью: нарисовано линий " + nDrawn + " из " +
+                    oGeom.Segments.Count + " (слой по умолчанию; удалить вручную).");
+            }
+
+            // --- 14. Проба чтения реальных кабелей проекта (для реальной группировки) ---
+            oDmReader.ReadCables(oProject);
         }
 
         private static short SafeLayerId(GraphicalPlacement oPlacement)

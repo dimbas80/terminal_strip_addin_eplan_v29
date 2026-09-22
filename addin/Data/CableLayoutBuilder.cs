@@ -6,10 +6,9 @@ namespace MyEplanActions
     /// <summary>Builder CableLayoutModel (Фаза E, plan_implementation §10 «Этап 6»):
     /// группирует соединения клеммника по кабелям. Чистый модуль — только модели, без
     /// EPLAN-API. Семантика стороны = TerminalSide из модели (сторона ряда, rev.7.1):
-    /// Top/Right → Right, Bottom/Left → Left, Unknown → Other. Бинарный случай: в проекте
-    /// CableName == null (summary п.21б/п.24, только №31058 IsCable) → все кабельные
-    /// соединения в один CableModel без имени; при появлении CableName — группировка
-    /// по имени (ключ расширения заложен).</summary>
+    /// Top/Right → Right, Bottom/Left → Left, Unknown → Other. rev.9.6: ключ группировки —
+    /// ПОЛНОЕ DT из ConnectionName (проба rev.9.5: у кабельных соединений ConnectionName =
+    /// DT кабеля, CableDefinitionLine == null); null-имя — fallback в один кабель „без имени“.</summary>
     public static class CableLayoutBuilder
     {
         public static CableLayoutModel Build(List<TerminalConnectionModel> lstModels, DiagnosticLogger log)
@@ -21,8 +20,9 @@ namespace MyEplanActions
                 return oLayout;
             }
 
-            // Группировка кабельных соединений по имени (CableName); null-имя — один
-            // кабель «без имени» под ключом "": Dictionary<string,> не допускает null-ключей.
+            // Группировка кабельных соединений по ключу (ConnectionName ?? CableName,
+            // rev.9.6); null-имя — один кабель «без имени» под ключом "":
+            // Dictionary<string,> не допускает null-ключей.
             Dictionary<string, CableModel> dicCables = new Dictionary<string, CableModel>();
             foreach (TerminalConnectionModel oM in lstModels)
             {
@@ -31,12 +31,12 @@ namespace MyEplanActions
                     if (oM != null) oLayout.NoCableConnections.Add(oM);
                     continue;
                 }
-                string strKey = oM.CableName ?? "";   // null → ключ ""; CableModel.Name хранит null
+                string strKey = oM.ConnectionName ?? oM.CableName ?? "";   // rev.9.6: полное DT кабеля живёт в ConnectionName (проба rev.9.5); CableName (CDP-путь) — fallback
                 CableModel oCable;
                 if (!dicCables.TryGetValue(strKey, out oCable))
                 {
                     oCable = new CableModel();
-                    oCable.Name = oM.CableName;
+                    oCable.Name = oM.ConnectionName ?? oM.CableName;
                     dicCables[strKey] = oCable;
                     oLayout.Cables.Add(oCable);
                 }
@@ -78,7 +78,7 @@ namespace MyEplanActions
                 log.Log("[CABGROUP-SUM] кабелей " + oLayout.Cables.Count.ToString(CultureInfo.InvariantCulture) +
                     ", проводных (NoCable) " + oLayout.NoCableConnections.Count.ToString(CultureInfo.InvariantCulture) +
                     ", кабельных подключений с Unknown-стороной " + nUnknown.ToString(CultureInfo.InvariantCulture) +
-                    " (both-sides/multiple не воспроизведены: CableName в проекте отсутствует)");
+                    " (группировка по полному DT из ConnectionName, rev.9.6)");
             }
             return oLayout;
         }
