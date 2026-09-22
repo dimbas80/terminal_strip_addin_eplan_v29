@@ -13,7 +13,7 @@ namespace MyEplanActions
     }
 
     /// <summary>Результат Geometry Engine: сегменты (ветви + шины + вертикали-подходы +
-    /// заходы + джампы; LayerName остаётся null — слой назначит Фаза G) и позиции
+    /// заходы; LayerName остаётся null — слой назначит Фаза G) и позиции
     /// символов. Warnings — побудительный список для log.Warn в AnalyzeAction
     /// (builder без логгера — чистый модуль).</summary>
     public sealed class CableGeometryResult
@@ -52,13 +52,16 @@ namespace MyEplanActions
     /// заканчиваются на X_i; край ряда NaN — fallback на крайнюю точку кабеля + WARN);
     /// двусторонний кабель (Right и Left непусты) — одна вертикаль на X_i между
     /// своими уровнями шин (диапазон расширяется на уровень символа Y_i) и
-    /// горизонтальный заход на Y_i до SymX − Gap; односторонний — шина сразу до
-    /// SymX − Gap и вертикальный джамп там до Y_i (вырожденные сегменты не создаются);
+    /// горизонтальный заход на Y_i до SymX − Gap; односторонний (rev.10.5) — шина
+    /// сразу до SymX − Gap на своём уровне, БЕЗ джампа;
     /// колонка символов SymX = последний подход двусторонних (нет — последний подход
-    /// всех) + ColumnOffset; стопка символов Y_i = anchor + (N−1−i)·StackPitch,
-    /// якорь — минимальный уровень шин всех кабелей, N — число кабелей раскладки
-    /// (пропущенный кабель сохраняет свой слот — как с уровнями шин). Символ —
-    /// точка (SymX, Y_i). Без EPLAN-типов и без логгера; дампы печатает
+    /// всех) + ColumnOffset; стопка символов ДВУСТОРОННИХ Y_i = anchor +
+    /// (N−1−i)·StackPitch (слот по индексу кабеля), якорь — минимальный уровень
+    /// шин всех кабелей. Символ: двусторонний — (SymX, Y_i); односторонний —
+    /// (SymX, уровень своей шины; при нескольких групп — первой непустой
+    /// Right→Left→Other + WARN); символы не обязаны идти друг за другом
+    /// (rev.10.5); совпадение позиций двух символов — WARN. Без EPLAN-типов
+    /// и без логгера; дампы печатает
     /// AnalyzeAction.</summary>
     public static class CableGeometryBuilder
     {
@@ -170,11 +173,29 @@ namespace MyEplanActions
                 List<TerminalConnectionModel> oOther = oCable.OtherConnections;
                 bool bBilateral = CountOf(oRight) > 0 && CountOf(oLeft) > 0;
 
-                // Стопка символов: idx 0 сверху, idx N−1 на якоре (самом глубоком уровне шин).
+                // Стопка символов ДВУСТОРОННИХ: idx 0 сверху, idx N−1 на якоре (слот по
+                // индексу кабеля; односторонние в стопке не участвуют — rev.10.5).
                 double dY = dAnchor + (nCount - 1 - nCable) * oCfg.SymbolStackPitchMm;
 
+                // rev.10.5 (шаг 2): односторонний — символ в конце своей шины, на
+                // УРОВНЕ ШИНЫ; джамп/заход не строятся. Символы не обязаны идти
+                // друг за другом — слот одностороннего в стопке остаётся пустым.
+                double dSymPerp = dY;
+                if (!bBilateral)
+                {
+                    string strCableName = oCable.Name ?? "<без имени>";
+                    int nGroups = 0;
+                    dSymPerp = double.NaN;
+                    if (!double.IsNaN(arrBusRight[nCable])) { dSymPerp = arrBusRight[nCable]; nGroups++; }
+                    if (!double.IsNaN(arrBusLeft[nCable])) { if (double.IsNaN(dSymPerp)) dSymPerp = arrBusLeft[nCable]; nGroups++; }
+                    if (!double.IsNaN(arrBusOther[nCable])) { if (double.IsNaN(dSymPerp)) dSymPerp = arrBusOther[nCable]; nGroups++; }
+                    if (nGroups > 1)
+                        oRes.Warnings.Add("[GEOM] кабель '" + strCableName + "': групп сторон " +
+                            nGroups + " — символ на уровне первой (Right→Left→Other); правило не валидировано данными");
+                }
+
                 // Шины двустороннего заканчиваются на подходе X_i, одностороннего —
-                // сразу на SymX − Gap (до джампа к символу).
+                // сразу на SymX − Gap (за 7 мм от центра своего символа, rev.10.5).
                 double dBusEndAxis = bBilateral ? arrX[nCable] : dEndAxis;
                 AddGroup(oRes, oRight, arrBusRight[nCable], bV, dBusEndAxis);
                 AddGroup(oRes, oLeft, arrBusLeft[nCable], bV, dBusEndAxis);
@@ -205,22 +226,27 @@ namespace MyEplanActions
                         oRes.Segments.Add(oEntry);
                     }
                 }
-                else
-                {
-                    // Односторонний: вертикальный джамп до уровня символа на каждом
-                    // уровне шины (K100: шина сверху — символ внизу стопки).
-                    AddJog(oRes, arrBusRight[nCable], bV, dEndAxis, dY);
-                    AddJog(oRes, arrBusLeft[nCable], bV, dEndAxis, dY);
-                    AddJog(oRes, arrBusOther[nCable], bV, dEndAxis, dY);
-                }
 
-                oCable.SymbolPosition = PtOf(bV, dSymAxis, dY);
+                oCable.SymbolPosition = PtOf(bV, dSymAxis, dSymPerp);
                 CableSymbolPlacement oSym = new CableSymbolPlacement();
                 oSym.CableName = oCable.Name;
                 oSym.CableIndex = nCable;
                 oSym.Position = oCable.SymbolPosition;
                 oRes.Symbols.Add(oSym);
             }
+
+            // rev.10.5: символы односторонних выходят из стопки — проверяем
+            // уникальность позиций (наложение двух символов в колонке SymX —
+            // ошибка раскладки: пересечение уровня шины со слотом стопки или
+            // с уровнем шины другого кабеля).
+            for (int i = 0; i < oRes.Symbols.Count; i++)
+                for (int j = i + 1; j < oRes.Symbols.Count; j++)
+                    if (Math.Abs(oRes.Symbols[i].Position.X - oRes.Symbols[j].Position.X) <= 1e-6 &&
+                        Math.Abs(oRes.Symbols[i].Position.Y - oRes.Symbols[j].Position.Y) <= 1e-6)
+                        oRes.Warnings.Add("[GEOM] наложение символов кабелей '" +
+                            (oRes.Symbols[i].CableName ?? "<без имени>") + "' и '" +
+                            (oRes.Symbols[j].CableName ?? "<без имени>") +
+                            "' — совпали позиции в колонке символов; проверьте уровни шин");
             return oRes;
         }
 
@@ -228,8 +254,8 @@ namespace MyEplanActions
         /// ряду до уровня шины — ревизия 4: шина поднята ЦЕЛИКОМ на BusLiftMm, хвоста-
         /// уголка нет), шина от крайней точки группы, ПРОТИВОПОЛОЖНОЙ направлению выноса
         /// (H: min axis; V: max axis), до dBusEndAxis (двусторонний — подход X_i,
-        /// односторонний — SymX − Gap). Вертикаль-подход/заход/джамп строит Build
-        /// (rev.10.1).</summary>
+        /// односторонний — SymX − Gap). Вертикаль-подход/заход строит Build
+        /// (rev.10.1; джампы отменены rev.10.5).</summary>
         private static void AddGroup(CableGeometryResult oRes, List<TerminalConnectionModel> lstGroup,
             double dBusPerp, bool bV, double dBusEndAxis)
         {
@@ -251,18 +277,6 @@ namespace MyEplanActions
             oBus.A = PtOf(bV, dBusStart, dBusPerp);
             oBus.B = PtOf(bV, dBusEndAxis, dBusPerp);
             oRes.Segments.Add(oBus);
-        }
-
-        /// <summary>Вертикальный джамп одностороннего кабеля на конце линий (SymX − Gap):
-        /// от уровня шины до уровня символа; вырожденный (уровни совпали) — не создаётся.</summary>
-        private static void AddJog(CableGeometryResult oRes, double dBusPerp, bool bV,
-            double dJogAxis, double dY)
-        {
-            if (double.IsNaN(dBusPerp) || Math.Abs(dY - dBusPerp) <= EpsLen) return;
-            Seg oJog = new Seg();
-            oJog.A = PtOf(bV, dJogAxis, dBusPerp);
-            oJog.B = PtOf(bV, dJogAxis, dY);
-            oRes.Segments.Add(oJog);
         }
 
         private static int CountOf(List<TerminalConnectionModel> lst)

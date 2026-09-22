@@ -76,7 +76,7 @@ namespace MyEplanActions
         // замера п.47 опровергнут прогоном rev.10.3 (круг ушёл 1:1 с Location;
         // замер был загрязнён останцами старых прогонов — аддин неидемпотентен).
         public const double CableSymbolGapMm = 7.0;
-        // Шаг стопки символов по вертикали (из эталона rev.10.0).
+        // Шаг стопки символов по вертикали — только двусторонние кабели (rev.10.5; из эталона rev.10.0).
         public const double CableSymbolStackPitchMm = 16.0;
 
         // Фаза G (spec 2026-09-22-fase-g-graphics-design.md): реальные объекты кабельной
