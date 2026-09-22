@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-22 Этап 7 rev.10.5 (Фаза G, шаг 2: односторонний — символ в конце своей шины)";
+        private const string BUILD_STAMP = "2026-09-22 Этап 7 rev.10.6 (Фаза G: проба [SYMBOX] — размеры символов SPECIAL/CABDCP2 и GOST_single_symbol/K)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.10.5 (Фаза G: односторонний символ у шины)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.10.6 (Фаза G: проба размеров символов [SYMBOX])", BUILD_STAMP);
             try
             {
                 Run();
@@ -352,6 +352,11 @@ namespace MyEplanActions
 
             // --- 14. Проба чтения реальных кабелей проекта (для реальной группировки) ---
             oDmReader.ReadCables(oProject);
+
+            // --- 15. Проба [SYMBOX]: размеры символов кабеля (GetBoundingBox/GetLogicalArea).
+            // Диагностика Фазы H: символы вставляются у пробной точки и сразу удаляются
+            // (урок п.48 — не засорять страницу); на счётчики этапов 1–5 не влияет.
+            SymbolBoxProbe.Probe(oPage, oProject, _logger);
         }
 
         private static short SafeLayerId(GraphicalPlacement oPlacement)

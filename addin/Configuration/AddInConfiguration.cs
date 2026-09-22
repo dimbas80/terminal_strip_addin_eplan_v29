@@ -95,6 +95,17 @@ namespace MyEplanActions
         public const string SymbolName = "CABDCP2";
         public const int SymbolVariant = 0;
 
+        // Проба [SYMBOX] (rev.10.6): второй символ пробы — кандидат на Фазу H (UI,
+        // выбор символа пользователем); размеры нужны, чтобы считать зазор/шаги из
+        // геометрии символа, а не хардкодить.
+        public const string SymbolProbeLibrary = "GOST_single_symbol";
+        public const string SymbolProbeName = "K";
+        public const int SymbolProbeVariant = 0;
+        // Точка вставки пробных символов (за колонкой символов аддина по оси
+        // выноса; после замера символы удаляются — урок п.48: не засорять страницу).
+        public const double SymbolProbeX = 600.0;
+        public const double SymbolProbeY = 150.0;
+
         // Точка вставки отчёта на странице.
         public const double InsertX = 20.0;
         public const double InsertY = 20.0;
