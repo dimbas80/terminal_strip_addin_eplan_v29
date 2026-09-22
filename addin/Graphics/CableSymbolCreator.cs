@@ -114,7 +114,7 @@ namespace MyEplanActions
                 AnyPropertyId oId = CreateAnyPropertyIdFromNumber(nPropertyId);
                 if (oId == null)
                     throw new InvalidOperationException("CreateAnyPropertyIdFromNumber вернул null");
-                oRef.Properties[oId].Value = strPart;
+                oRef.Properties[oId].Set(strPart);
             }
             catch (Exception oEx)
             {
