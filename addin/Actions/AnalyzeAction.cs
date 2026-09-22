@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-22 Этап 7 rev.10.1 (Фаза G: подходы 8мм + колонка символов + DT-свойства)";
+        private const string BUILD_STAMP = "2026-09-22 Этап 7 rev.10.4 (Фаза G: зазор 7мм от центра; офсет п.47 опровергнут)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.10.1 (Фаза G: ревизии геометрии + DT символов)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.10.4 (Фаза G: зазор 7мм, без офсета)", BUILD_STAMP);
             try
             {
                 Run();

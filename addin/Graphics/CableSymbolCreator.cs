@@ -16,7 +16,9 @@ namespace MyEplanActions
     /// Placement.Location (get/set). Библиотека/имя/вариант — из AddInConfiguration
     /// (в Фазе H — выбор пользователя в UI). DT-свойства символа (rev.10.1, spec §9.5):
     /// полный DT кабеля разбирается на части и пишется в 1120/1220/1620/20000 —
-    /// каждый отказ WARN [SYMDT] и не прерывает. Поворот 0° (spec §7). Отказ —
+    /// каждый отказ WARN [SYMDT] и не прерывает. Поворот 0° (spec §7). Центр круга
+    /// = точке вставки (rev.10.4: офсет п.47 опровергнут — замер был загрязнён
+    /// останцами старых прогонов). Отказ —
     /// WARN [SYMBOL]. НЕ идемпотентно (очистка — Фаза I).</summary>
     public static class CableSymbolCreator
     {
@@ -56,6 +58,10 @@ namespace MyEplanActions
                 {
                     SymbolReference oRef = new SymbolReference();
                     oRef.Create(oPage, oVariant);
+                    // rev.10.4: офсет центра CABDCP2 из п.47 ОПРОВЕРГНУТ прогоном rev.10.3
+                    // (круг ушёл 1:1 с точкой вставки): центр круга = точке вставки.
+                    // Пишем геометрическую позицию напрямую (замер п.47 был загрязнён
+                    // останцами старых прогонов — аддин неидемпотентен).
                     oRef.Location = new PointD(oSym.Position.X, oSym.Position.Y);
                     nCreated++;
                     log.Log("[INFO] [SYMBOL] '" + (oSym.CableName ?? "<без имени>") + "' #" +

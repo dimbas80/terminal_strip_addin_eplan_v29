@@ -35,12 +35,14 @@ namespace MyEplanActions
         public double ApproachOffsetMm = 10.0;     // отступ вертикали-подхода от края ряда (axis)
         public double ApproachPitchMm = 8.0;       // шаг подходов соседних кабелей (axis)
         public double SymbolColumnOffsetMm = 16.0; // колонка символов за последним подходом (axis)
-        public double SymbolGapMm = 8.0;           // зазор линия–символ (для CABDCP2; в UI позже)
+        public double SymbolGapMm = 7.0;           // зазор линия–символ от ЦЕНТРА (= точки вставки; rev.10.4)
         public double SymbolStackPitchMm = 16.0;   // шаг стопки символов (perp; из эталона rev.10.0)
     }
 
     /// <summary>Geometry Engine (Фаза F; rev.10.1 — spec
-    /// 2026-09-22-fase-g-graphics-design.md §9, эталон «Кабель с двух сторон.pdf»):
+    /// 2026-09-22-fase-g-graphics-design.md §9, эталон «Кабель с двух сторон.pdf»;
+    /// rev.10.3: зазор SymbolGapMm = 7 мм от ЦЕНТРА круга символа; rev.10.4: офсет
+    /// вставки отменён (центр = точке вставки, гипотеза п.47 опровергнута прогоном):
     /// чистая геометрия кабельной разводки. Оси: Horizontal — axis=X (ряд), perp=Y;
     /// Vertical — axis=Y, perp=X; верх страницы — большая Y (урок rev.7.1). Группы
     /// стороны из CableModel: Right (Top/Right, большие perp) — шина за max(perp)+Off;

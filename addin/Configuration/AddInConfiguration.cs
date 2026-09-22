@@ -71,8 +71,11 @@ namespace MyEplanActions
         public const double CableApproachOffsetMm = 10.0;
         public const double CableApproachPitchMm = 8.0;
         public const double CableSymbolColumnOffsetMm = 16.0;
-        // Зазор линия–символ (по умолчанию для CABDCP2, в UI позже).
-        public const double CableSymbolGapMm = 8.0;
+        // Зазор линия–круг 7 мм от ЦЕНТРА (требование пользователя 22.09.2026).
+        // rev.10.4: центр круга CABDCP2 = точке вставки — офсет (+8.00;−14.245) из
+        // замера п.47 опровергнут прогоном rev.10.3 (круг ушёл 1:1 с Location;
+        // замер был загрязнён останцами старых прогонов — аддин неидемпотентен).
+        public const double CableSymbolGapMm = 7.0;
         // Шаг стопки символов по вертикали (из эталона rev.10.0).
         public const double CableSymbolStackPitchMm = 16.0;
 
