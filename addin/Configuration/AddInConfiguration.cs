@@ -27,7 +27,7 @@ namespace MyEplanActions
 
         // Тип отчёта и форма (rev.12: §5.1–§5.3 закрыты на этой паре).
         public const string ReportTypeName = "TerminalConnectiondiagram";
-        public const string ReportFormName = "Клемник_ОУ(горизонтально)_addin";
+        public const string ReportFormName = "Клемник_ОУ(вертикально)_addin";   // rev.10.11: вертикальная форма (прогон A)
         public const string ReportFilterSchemaName = "";
 
         // Ориентация отчёта (Этап 3, Задача 4, rev.6.2): ось, вдоль которой идут
@@ -35,11 +35,9 @@ namespace MyEplanActions
         // Vertical — по Y (вертикальная форма). Переключается вручную между прогонами:
         // A (Vertical — вертикальный стенд) / B (Horizontal — регресс rev.6.1).
         // Потребители: AnchorResolver.Build, LeadDetector.CheckK4Report, MatchBuilder.
-        public const ReportOrientation Orientation = ReportOrientation.Horizontal;
-
-        // Имя формы вертикального стенда (прогон A): «Клемник_ОУ(вертикально)_addin».
-        // ReportFormName НЕ меняется и кодом по ориентации не подставляется (текущее
-        // поведение не меняем): перед Vertical-прогоном подменить вручную.
+        // rev.10.11: прогон A — вертикальный стенд; для регресса B переключить
+        // обратно на Horizontal.
+        public const ReportOrientation Orientation = ReportOrientation.Vertical;
 
         // Целевой клеммник: отчёт строится по ОДНОМУ клеммнику, сверка [CROSS]/[MATCH]
         // идёт с его подключениями (не с суммой по проекту — урок rev.4.0, summary п.21).
@@ -60,24 +58,24 @@ namespace MyEplanActions
         // стороны (перпендикулярно ряду). Ревизия 2 (22.09.2026): разнос уровней
         // шин кабелей (перпендикулярно ряду, кабель 1 ближе). Ревизия 4: подъём
         // шины целиком дополнительно к отступу от кончиков выводов.
+        // rev.10.7 (23.09.2026, правило 2): CableLevelPitchMinMm — МИНИМУМ шага
+        // уровней шин; расчётный шаг = max(min, B·min/14) — растёт от высоты
+        // символа B (замер [SYMSIZE]).
         public const double CableBusOffsetMm = 10.0;
-        public const double CableLevelPitchMm = 8.0;
+        public const double CableLevelPitchMinMm = 8.0;
         public const double CableBusLiftMm = 8.0;
 
         // Ревизия rev.10.1 (22.09.2026, spec 2026-09-22-fase-g-graphics-design.md §9,
         // эталон «Кабель с двух сторон.pdf»): подходы и символы. Подход кабеля i —
         // вертикаль за краем ряда (по оси выноса) с шагом 8 мм; шины заканчиваются
         // на подходе. Колонка символов — за последним подходом двусторонних кабелей.
+        // rev.10.7: зазор линия–символ и шаг расстановки символов из конфига УДАЛЕНЫ —
+        // выводятся из размера символа (gap = (габарит по оси выноса)/2: H — A/2,
+        // V — B/2, rev.10.11; rev.10.8: шаг уровней шин = max(min, B·min/14),
+        // замер [SYMSIZE]; rev.10.10: ряды символов — на уровнях шин).
         public const double CableApproachOffsetMm = 10.0;
         public const double CableApproachPitchMm = 8.0;
         public const double CableSymbolColumnOffsetMm = 16.0;
-        // Зазор линия–круг 7 мм от ЦЕНТРА (требование пользователя 22.09.2026).
-        // rev.10.4: центр круга CABDCP2 = точке вставки — офсет (+8.00;−14.245) из
-        // замера п.47 опровергнут прогоном rev.10.3 (круг ушёл 1:1 с Location;
-        // замер был загрязнён останцами старых прогонов — аддин неидемпотентен).
-        public const double CableSymbolGapMm = 7.0;
-        // Шаг стопки символов по вертикали — только двусторонние кабели (rev.10.5; из эталона rev.10.0).
-        public const double CableSymbolStackPitchMm = 16.0;
 
         // Фаза G (spec 2026-09-22-fase-g-graphics-design.md): реальные объекты кабельной
         // разводки вместо превью. Линии — слой EPLAN100 и красное перо (решение
@@ -94,6 +92,9 @@ namespace MyEplanActions
         public const string SymbolLibrary = "SPECIAL";
         public const string SymbolName = "CABDCP2";
         public const int SymbolVariant = 0;
+        // rev.10.7: фолбэк замера [SYMSIZE] для A и B (14×14 — фактический размер
+        // CABDCP2); применяется, если пробная вставка/GetBoundingBox не удались.
+        public const double SymbolFallbackSizeMm = 14.0;
 
         // Проба [SYMBOX] (rev.10.6): второй символ пробы — кандидат на Фазу H (UI,
         // выбор символа пользователем); размеры нужны, чтобы считать зазор/шаги из

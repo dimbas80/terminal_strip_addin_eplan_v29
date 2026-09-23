@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-22 Этап 7 rev.10.6 (Фаза G: проба [SYMBOX] — размеры символов SPECIAL/CABDCP2 и GOST_single_symbol/K)";
+        private const string BUILD_STAMP = "2026-09-23 Этап 7 rev.10.12 (Фаза G шаг 3: DT-свойства символов через индексатор-SET — устранение S063113)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.10.6 (Фаза G: проба размеров символов [SYMBOX])", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.10.12 (Фаза G шаг 3: DT-свойства символов через индексатор-SET — устранение S063113)", BUILD_STAMP);
             try
             {
                 Run();
@@ -292,16 +292,27 @@ namespace MyEplanActions
                 ", проводных " + oLayout.NoCableConnections.Count + ".");
 
             // --- 12. Фаза F: CableGeometryBuilder — чистая геометрия кабельной разводки ---
+            // rev.10.7 (шаг 4 Фазы G, решение пользователя 23.09.2026): размер рабочего
+            // символа A×B замеряется ПЕРЕД конфигом (пробная вставка [SYMSIZE] →
+            // GetBoundingBox → Remove; отказ — фолбэк 14×14, источник виден по логу
+            // [SYMSIZE]); из размера выводятся зазор (габарит по оси выноса /2:
+            // H — A/2, V — B/2, rev.10.11) и расчётный шаг уровней
+            // шин — по нему стоят и ряды символов (rev.10.8/10.10; расчёт в builder'е).
             _logger.Log("[INFO] --- Фаза F: геометрия кабельной разводки ---");
+            double dSymW = AddInConfiguration.SymbolFallbackSizeMm;
+            double dSymH = AddInConfiguration.SymbolFallbackSizeMm;
+            SymbolSizeMeasurer.TryMeasure(oPage, _logger, out dSymW, out dSymH);
+            _logger.Log("[INFO] [SYMSIZE] конфиг: " + dSymW.ToString("F3", CultureInfo.InvariantCulture) +
+                "×" + dSymH.ToString("F3", CultureInfo.InvariantCulture) + " мм");
             CableGeometryConfig oGeomCfg = new CableGeometryConfig();
             oGeomCfg.BusOffsetMm = AddInConfiguration.CableBusOffsetMm;
-            oGeomCfg.LevelPitchMm = AddInConfiguration.CableLevelPitchMm;
+            oGeomCfg.LevelPitchMinMm = AddInConfiguration.CableLevelPitchMinMm;
             oGeomCfg.BusLiftMm = AddInConfiguration.CableBusLiftMm;
             oGeomCfg.ApproachOffsetMm = AddInConfiguration.CableApproachOffsetMm;
             oGeomCfg.ApproachPitchMm = AddInConfiguration.CableApproachPitchMm;
             oGeomCfg.SymbolColumnOffsetMm = AddInConfiguration.CableSymbolColumnOffsetMm;
-            oGeomCfg.SymbolGapMm = AddInConfiguration.CableSymbolGapMm;
-            oGeomCfg.SymbolStackPitchMm = AddInConfiguration.CableSymbolStackPitchMm;
+            oGeomCfg.SymbolWidthMm = dSymW;
+            oGeomCfg.SymbolHeightMm = dSymH;
             // Край ряда по оси выноса (ревизия 2): H — max X колонок К4, V — min Y.
             // К4 невалиден — NaN, builder уйдёт в fallback на точки кабеля (WARN).
             double dStripEndAxis = double.NaN;

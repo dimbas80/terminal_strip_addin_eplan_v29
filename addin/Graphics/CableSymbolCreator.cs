@@ -109,6 +109,15 @@ namespace MyEplanActions
         }
 
         /// <summary>Одна запись свойства символа. Пустая часть — тихий пропуск.
+        /// rev.10.12 (устранение 16× WARN [SYMDT] S063113): запись через
+        /// индексатор-SET — oRef.Properties[oId] = (PropertyValue)strPart. KB 2.9
+        /// (проверено 23.09.2026): Property(AnyPropertyId) имеет set-аксессор
+        /// ({get; set;}) и сам СОЗДАЁТ свойство при присваивании (канонический
+        /// пример KB: FUNC_COMMENT = "Comment"). Прежний путь
+        /// Properties[oId].Set(...) — это Get+Set: Get отсутствующего свойства
+        /// его не создаёт, поэтому Set падал S063113. Свойства 1120/1220/1620/20000 —
+        /// уровня размещения; типизированный путь oId.AsSymbolReference (get-only
+        /// конверсия → Properties.SymbolReference) — запасной, здесь не используется.
         /// Отказ (id не создан reflection-ом, свойство неприменимо) — WARN [SYMDT]
         /// "(id) ('часть'): Тип: сообщение", остальные части пишутся дальше.</summary>
         private static void WriteSymProperty(SymbolReference oRef, DiagnosticLogger log,
@@ -120,7 +129,10 @@ namespace MyEplanActions
                 AnyPropertyId oId = CreateAnyPropertyIdFromNumber(nPropertyId);
                 if (oId == null)
                     throw new InvalidOperationException("CreateAnyPropertyIdFromNumber вернул null");
-                oRef.Properties[oId].Set(strPart);
+                // Индексатор-SET: set-аксессор Property(AnyPropertyId) создаёт
+                // свойство; неявная конверсия string→PropertyValue есть (op_Implicit),
+                // явный каст — для читаемости.
+                oRef.Properties[oId] = (PropertyValue)strPart;
             }
             catch (Exception oEx)
             {
