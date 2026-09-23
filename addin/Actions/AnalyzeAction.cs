@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-23 Этап 7 rev.10.12 (Фаза G шаг 3: DT-свойства символов через индексатор-SET — устранение S063113)";
+        private const string BUILD_STAMP = "2026-09-23 Этап 7 rev.11.0 (Фаза G: линия-ссылка от символа кабеля — References в геометрии + PolyLine-стрелка)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.10.12 (Фаза G шаг 3: DT-свойства символов через индексатор-SET — устранение S063113)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.11.0 (Фаза G: линия-ссылка от символа кабеля — References в геометрии + PolyLine-стрелка)", BUILD_STAMP);
             try
             {
                 Run();
@@ -313,6 +313,12 @@ namespace MyEplanActions
             oGeomCfg.SymbolColumnOffsetMm = AddInConfiguration.CableSymbolColumnOffsetMm;
             oGeomCfg.SymbolWidthMm = dSymW;
             oGeomCfg.SymbolHeightMm = dSymH;
+            // rev.11.0: параметры линии-ссылки от символа кабеля (решение
+            // пользователя 23.09.2026) — длина ВКЛЮЧАЯ стрелку, размеры стрелки.
+            oGeomCfg.ReferenceLineLengthMm = AddInConfiguration.CableReferenceLineLengthMm;
+            oGeomCfg.ReferenceArrowLengthMm = AddInConfiguration.CableReferenceArrowLengthMm;
+            oGeomCfg.ReferenceArrowHalfWidthMm = AddInConfiguration.CableReferenceArrowHalfWidthMm;
+            oGeomCfg.ReferenceArrowNotchDepthMm = AddInConfiguration.CableReferenceArrowNotchDepthMm;
             // Край ряда по оси выноса (ревизия 2): H — max X колонок К4, V — min Y.
             // К4 невалиден — NaN, builder уйдёт в fallback на точки кабеля (WARN).
             double dStripEndAxis = double.NaN;
@@ -341,10 +347,19 @@ namespace MyEplanActions
                     oGeomSeg.A.Y.ToString("F3", CultureInfo.InvariantCulture) + ") -> (" +
                     oGeomSeg.B.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
                     oGeomSeg.B.Y.ToString("F3", CultureInfo.InvariantCulture) + ")");
+            // rev.11.0: дамп линий-ссылок (start → tip; стрелка — на слое Graphics).
+            foreach (ReferenceElement oRefGeom in oGeom.References)
+                _logger.Log("[GEOM] ref '" + (oRefGeom.CableName ?? "<без имени>") + "' #" +
+                    oRefGeom.CableIndex.ToString(CultureInfo.InvariantCulture) + ": (" +
+                    oRefGeom.Line.A.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
+                    oRefGeom.Line.A.Y.ToString("F3", CultureInfo.InvariantCulture) + ")-(" +
+                    oRefGeom.Line.B.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
+                    oRefGeom.Line.B.Y.ToString("F3", CultureInfo.InvariantCulture) + ")");
             foreach (string strGeomWarn in oGeom.Warnings)
                 _logger.Warn(strGeomWarn);
             _logger.Log("[INFO] [GEOM-SUM] кабелей " + oGeom.Symbols.Count +
                 ", сегментов " + oGeom.Segments.Count +
+                ", ссылок " + oGeom.References.Count +
                 ", предупреждений " + oGeom.Warnings.Count);
             _logger.Summarize("Фаза F: сегментов " + oGeom.Segments.Count +
                 ", символов " + oGeom.Symbols.Count + ".");
@@ -357,8 +372,13 @@ namespace MyEplanActions
                 lstAll, AddInConfiguration.GraphicsLayerName, _logger);
             int nLines = GraphicLineCreator.CreateLines(oPage, oGeom, oCableLayer, _logger);
             int nSymbols = CableSymbolCreator.CreateSymbols(oPage, oGeom, _logger);
+            // rev.11.0: линии-ссылки от символов — линия + замкнутая
+            // PolyLine-стрелка с заливкой (решение пользователя 23.09.2026);
+            // слой и перо — как у линий разводки.
+            int nRefs = ReferenceArrowCreator.CreateReferences(oPage, oGeom, oCableLayer, _logger);
             _logger.Summarize("Фаза G: линий " + nLines + "/" + oGeom.Segments.Count +
                 ", символов " + nSymbols + "/" + oGeom.Symbols.Count +
+                ", ссылок " + nRefs + "/" + oGeom.References.Count +
                 " (не идемпотентно: повторный прогон дублирует объекты).");
 
             // --- 14. Проба чтения реальных кабелей проекта (для реальной группировки) ---

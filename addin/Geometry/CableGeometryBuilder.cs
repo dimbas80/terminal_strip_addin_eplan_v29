@@ -12,21 +12,40 @@ namespace MyEplanActions
         public Pt Position;              // SymbolPosition, страничные координаты
     }
 
+    /// <summary>Линия-ссылка от символа кабеля (rev.11.0, решение пользователя
+    /// 23.09.2026): продолжение шины этого кабеля с ДРУГОЙ стороны символа,
+    /// наружу от клеммника, на уровне ряда символа (= уровень его шины). Line —
+    /// от дальнего края символа (SymAxis + sDir·зазор) до острия стрелки (конец
+    /// линии = остриё). Arrow — 4 точки замкнутого контура стрелки в порядке
+    /// [остриё, верхний угол, вырез, нижний угол]; замыкание контура и заливку
+    /// достраивает Graphics-слой (PolyLine.Closed + IsSurfaceFilled).</summary>
+    public sealed class ReferenceElement
+    {
+        public Seg Line;                 // линия-ссылка (страничные координаты)
+        public Pt[] Arrow;               // 4 точки контура стрелки
+        public string CableName;         // имя кабеля или null (бинарный случай)
+        public int CableIndex = -1;      // 0-based индекс в CableLayoutModel.Cables
+    }
+
     /// <summary>Результат Geometry Engine: сегменты (ветви + шины + вертикали-подходы +
-    /// заходы; LayerName остаётся null — слой назначит Фаза G) и позиции
-    /// символов. Warnings — побудительный список для log.Warn в AnalyzeAction
+    /// заходы; LayerName остаётся null — слой назначит Фаза G), позиции
+    /// символов и линии-ссылки от символов (rev.11.0 — в Segments НЕ входят).
+    /// Warnings — побудительный список для log.Warn в AnalyzeAction
     /// (builder без логгера — чистый модуль).</summary>
     public sealed class CableGeometryResult
     {
         public readonly List<Seg> Segments = new List<Seg>();
         public readonly List<CableSymbolPlacement> Symbols = new List<CableSymbolPlacement>();
+        public readonly List<ReferenceElement> References = new List<ReferenceElement>();
         public readonly List<string> Warnings = new List<string>();
     }
 
     /// <summary>Параметры разводки (rev.10.7). В проде значения — из AddInConfiguration
     /// (CableBusOffsetMm/CableLevelPitchMinMm/CableBusLiftMm/CableApproachOffsetMm/
     /// CableApproachPitchMm/CableSymbolColumnOffsetMm; размер символа A×B — из замера
-    /// [SYMSIZE]), в unit-тестах — свои.</summary>
+    /// [SYMSIZE]; rev.11.0 — CableReferenceLineLengthMm/CableReferenceArrowLengthMm/
+    /// CableReferenceArrowHalfWidthMm/CableReferenceArrowNotchDepthMm),
+    /// в unit-тестах — свои.</summary>
     public sealed class CableGeometryConfig
     {
         public double BusOffsetMm = 10.0;          // отступ шины от крайних точек группы (perp)
@@ -37,6 +56,17 @@ namespace MyEplanActions
         public double SymbolColumnOffsetMm = 16.0; // колонка символов за последним подходом (axis)
         public double SymbolWidthMm = 14.0;        // ширина символа A — габарит по страничной X (замер [SYMSIZE]; фолбэк 14 — CABDCP2)
         public double SymbolHeightMm = 14.0;       // высота символа B — габарит по страничной Y (замер [SYMSIZE]; входит в правило 2 и зазор/шаг колонок Vertical — rev.10.11)
+
+        /// <summary>Длина линии-ссылки от символа кабеля, мм ВКЛЮЧАЯ стрелку —
+        /// конец линии = остриё стрелки (rev.11.0, решение пользователя 23.09.2026).</summary>
+        public double ReferenceLineLengthMm = 20.0;
+        /// <summary>Длина стрелки ссылки от острия до задних углов, мм (rev.11.0).</summary>
+        public double ReferenceArrowLengthMm = 7.0;
+        /// <summary>Полуширина стрелки ссылки (ось → задний угол), мм (rev.11.0).</summary>
+        public double ReferenceArrowHalfWidthMm = 2.0;
+        /// <summary>Глубина выреза стрелки от задних углов к острию, мм:
+        /// вырез = остриё − (длина стрелки − глубина) (rev.11.0).</summary>
+        public double ReferenceArrowNotchDepthMm = 3.0;
     }
 
     /// <summary>Geometry Engine (Фаза F). Размер символа A×B — из замера [SYMSIZE]
@@ -62,6 +92,13 @@ namespace MyEplanActions
     /// шахматка повторяет колонки каждый 2-й слот ШТАТНО. Правило 4: конец
     /// захода/шины = ось СВОЕГО символа − sDir·(габарит по оси)/2 (rev.10.11:
     /// H — A/2, V — B/2) — у каждого кабеля свой.
+    /// rev.11.0 (решение пользователя 23.09.2026): у каждого созданного символа
+    /// строится линия-ссылка — продолжение шины с ДРУГОЙ стороны символа
+    /// (наружу от клеммника), на уровне ряда: от дальнего края символа
+    /// (SymAxis + sDir·зазор) до острия стрелки (длина из конфига, ВКЛЮЧАЯ
+    /// стрелку); стрелка — 4 точки [остриё, верхний угол, вырез, нижний угол],
+    /// замыкание/заливка — на слое Graphics (PolyLine). Ссылки выдаются в
+    /// oRes.References в порядке кабелей и НЕ попадают в Segments.
     /// Оси: Horizontal — axis=X (ряд), perp=Y; Vertical — axis=Y, perp=X;
     /// верх страницы — большая Y (урок rev.7.1). Группы
     /// стороны из CableModel: Right (Top/Right, большие perp) — шина за max(perp)+Off;
@@ -377,6 +414,12 @@ namespace MyEplanActions
                 oSym.CableIndex = nCable;
                 oSym.Position = oCable.SymbolPosition;
                 oRes.Symbols.Add(oSym);
+
+                // rev.11.0: линия-ссылка от символа наружу от клеммника (решение
+                // пользователя 23.09.2026) — только у созданного символа (здесь
+                // arrSymAxis всегда не NaN: кабель прошёл проходы (а)–(в)).
+                AddReference(oRes, bV, sDir, arrSymAxis[nCable], arrSymRow[nCable],
+                    dGap, oCfg, oCable.Name, nCable);
             }
 
             // Финальная защитная сетка (rev.10.7, правило 5): пересечение A×B-боксов
@@ -481,6 +524,40 @@ namespace MyEplanActions
             oBus.A = PtOf(bV, dBusStart, dBusPerp);
             oBus.B = PtOf(bV, dBusEndAxis, dBusPerp);
             oRes.Segments.Add(oBus);
+        }
+
+        /// <summary>Линия-ссылка от символа кабеля (rev.11.0, решение пользователя
+        /// 23.09.2026): продолжение шины с ДРУГОЙ стороны символа, наружу от
+        /// клеммника, на уровне ряда символа. Старт — дальний край символа
+        /// (SymAxis + sDir·зазор — зеркально зазору линии-шины), конец линии =
+        /// остриё стрелки (длина ВКЛЮЧАЯ стрелку). Стрелка — 4 точки в порядке
+        /// [остриё, верхний угол, вырез, нижний угол]; замыкание контура и
+        /// заливку выполняет Graphics-слой (PolyLine.Closed + IsSurfaceFilled).
+        /// В Segments ссылки НЕ попадают — счётчики сегментов не меняются.
+        /// NaN-ось/ряд (символ не создан) — ссылки нет.</summary>
+        private static void AddReference(CableGeometryResult oRes, bool bV, double sDir,
+            double dSymAxis, double dSymRow, double dGap, CableGeometryConfig oCfg,
+            string strCableName, int nCable)
+        {
+            if (double.IsNaN(dSymAxis) || double.IsNaN(dSymRow)) return;
+            double dStart = dSymAxis + sDir * dGap;
+            double dTip = dStart + sDir * oCfg.ReferenceLineLengthMm;
+            ReferenceElement oRef = new ReferenceElement();
+            oRef.Line = new Seg();
+            oRef.Line.A = PtOf(bV, dStart, dSymRow);
+            oRef.Line.B = PtOf(bV, dTip, dSymRow);
+            oRef.Arrow = new Pt[4];
+            oRef.Arrow[0] = PtOf(bV, dTip, dSymRow);
+            oRef.Arrow[1] = PtOf(bV, dTip - sDir * oCfg.ReferenceArrowLengthMm,
+                dSymRow + oCfg.ReferenceArrowHalfWidthMm);
+            oRef.Arrow[2] = PtOf(bV,
+                dTip - sDir * (oCfg.ReferenceArrowLengthMm - oCfg.ReferenceArrowNotchDepthMm),
+                dSymRow);
+            oRef.Arrow[3] = PtOf(bV, dTip - sDir * oCfg.ReferenceArrowLengthMm,
+                dSymRow - oCfg.ReferenceArrowHalfWidthMm);
+            oRef.CableName = strCableName;
+            oRef.CableIndex = nCable;
+            oRes.References.Add(oRef);
         }
 
         private static int CountOf(List<TerminalConnectionModel> lst)

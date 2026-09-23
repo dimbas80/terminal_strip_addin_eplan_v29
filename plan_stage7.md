@@ -447,3 +447,32 @@ Grep: в `addin/` не осталось ссылок на `PreviewDraw` (`grep -
 - [ ] **Step 3: Запись свойств** после Create/Location каждого символа: хелпер `CreateAnyPropertyIdFromNumber` (reflection op_Implicit/op_Explicit → AnyPropertyId, порт из spike rev.7, private static); запись `oRef.Properties[oId].Value = str` для 1120/1220/1620 (непустые) и 20000 = имя; каждый — try/catch, отказ → WARN `[SYMDT]` (id, часть, тип+сообщение), продолжаем; пустая часть — пропуск без лога. Дамп `[SYMDT] 'имя': =… / ++… / #… / имя…` (что записано).
 - [ ] **Step 4: Самопроверка** — grep SymbolVariant=0; парс на примерах пользователя (=HII-1.2++М+#3-K140 → HII-1.2/М/3/K140; =HII-1.1++М+#3-K190 → аналог); UTF-8 без BOM.
 - [ ] **Step 5: Ревью** (reviewer-субагент: парсер, отказоустойчивость, WARN-бюджет).
+
+### Task 7: Линия-ссылка от символа кабеля — rev.11.0 (решение пользователя 23.09.2026, спека §11)
+
+**Files:**
+- Modify: `tests/CableGeometryTests.cs` (Case16–19, TDD — тесты первыми)
+- Modify: `addin/Geometry/CableGeometryBuilder.cs` (ReferenceElement, References, AddReference)
+- Modify: `addin/Configuration/AddInConfiguration.cs` (4 константы CableReference*)
+- Create: `addin/Graphics/ReferenceArrowCreator.cs` (Line + PolyLine Closed→IsSurfaceFilled)
+- Modify: `addin/Actions/AnalyzeAction.cs` (проводка конфига, дамп [GEOM] ref, вызов в секции 13, BUILD_STAMP rev.11.0)
+
+**Interfaces:**
+- Consumes: `CableSymbolPlacement` (SymAxis/ряд символа из прохода (г) Build), `GraphicsLayerName`/перо конфига.
+- Produces: `CableGeometryResult.References: List<ReferenceElement>` (НЕ в Segments); дампы `[REF]`/`[REF-SUM]`; `[GEOM-SUM]` расширен полем «, ссылок N».
+
+**KB (проверено 23.09.2026):** `Graphics.PolyLine : GraphicalPlacement` — `Create(Page)`, `SetPointAt(int, ref PointD)` (свежая PolyLine — 4 точки), `Closed`, `IsSurfaceFilled` (сеттер бросает при незамкнутой — порядок Closed→IsSurfaceFilled); перо/слой наследуются.
+
+**Геометрия:** старт = `SymAxis + sDir·(зазор габарит/2)`, уровень = ряд символа; линия 20 мм включая стрелку (остриё = конец линии); стрелка: остриё / (остриё−7, ±2) / вырез (остриё−4); H→+X, V→−Y через sDir. Ожидания прогона: счётчики 1–5 == rev.10.11 построчно; `[REF-SUM]` 4 из 4; WARN без изменений.
+
+- [x] **Step 1: Тесты Case16–19** (H, V, skip-empty, кастомные длины; TDD).
+- [x] **Step 2: Геометрия** (ReferenceElement + AddReference в проходе (г) после Symbols.Add).
+- [x] **Step 3: Конфиг + ReferenceArrowCreator + секция 13 + BUILD_STAMP rev.11.0.**
+- [x] **Step 4: Ревью** — Approved with minors; миноры исправлены (мёртвый using, guard 4 точек, знаменатель [REF-SUM] → nTotal, null-safe лог, doc «логическая единица»). Примечание: при коммите не забыть `git add addin/Graphics/ReferenceArrowCreator.cs` (untracked).
+- [x] **Step 5: Прогон на стенде** (23.09.2026) — прогоны H+V чисты: `[GEOM-SUM]` 4/25/ссылок 4/0; `[REF-SUM]` 4 из 4, стрелок 4 из 4 (EPLAN100); счётчики 1–5 == rev.10.11 построчно; WARN 26 = 10 + 16 SYMDT (rev.10.12 ещё не прогонялся); визуально подтверждено на обеих ориентациях. Прогон rev.10.12 (DT) — отдельно, следующим.
+
+## Открытые риски (после rev.11.0)
+
+- rev.10.12 (DT, S063113 → индексатор-SET) — ждёт СВОЕГО прогона (после rev.11.0).
+- Отложенные миноры п.46/49/50: тихий all-null парсер DT, кэш AnyPropertyId, проверка «пробег шины сквозь чужой символ» при уровнях < B/2, guard `CableSymbolColumnOffsetMm` при B ≥ 32.
+- Идемпотентность (Фаза I): линии-ссылки дублируются при повторном прогоне, как остальные объекты.

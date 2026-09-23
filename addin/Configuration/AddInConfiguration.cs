@@ -77,6 +77,19 @@ namespace MyEplanActions
         public const double CableApproachPitchMm = 8.0;
         public const double CableSymbolColumnOffsetMm = 16.0;
 
+        // rev.11.0 (23.09.2026): линия-ссылка от символа кабеля наружу от клеммника —
+        // продолжение шины на уровне ряда символа; длина ВКЛЮЧАЯ стрелку (конец
+        // линии = остриё стрелки). Размеры стрелки из замера пользователя
+        // 23.09.2026: остриё−7 зад, ±2 полуширина, вырез −3 от зада (= −4 от
+        // острия). KB API 2.9 (проверено по eplan.help): PolyLine :
+        // GraphicalPlacement, Create(Page), точки — SetPointAt(int, ref PointD)
+        // (ref!); свойства Closed и IsSurfaceFilled — сеттер заливки бросает
+        // исключение на незамкнутой полилинии, присваивать СТРОГО после Closed=true.
+        public const double CableReferenceLineLengthMm = 20.0;
+        public const double CableReferenceArrowLengthMm = 7.0;
+        public const double CableReferenceArrowHalfWidthMm = 2.0;
+        public const double CableReferenceArrowNotchDepthMm = 3.0;
+
         // Фаза G (spec 2026-09-22-fase-g-graphics-design.md): реальные объекты кабельной
         // разводки вместо превью. Линии — слой EPLAN100 и красное перо (решение
         // пользователя, spec §2.2); слой резолвится из дерева отчёта
