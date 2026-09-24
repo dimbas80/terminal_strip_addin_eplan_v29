@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using Eplan.EplApi.DataModel;
 using Eplan.EplApi.DataModel.EObjects;
 
@@ -387,6 +388,45 @@ namespace MyEplanActions
             catch { return nFallback; }
         }
 
+        /// <summary>Чтение одного свойства объекта для дампа [SRC-DT]:
+        /// тот же паттерн SafeText — любое исключение (в т.ч. EmptyPropertyException
+        /// незаданного свойства), null id или пустое значение — «—». Чтение read-only
+        /// свойств допустимо. Id — CreateAnyPropertyIdFromNumber по номерам
+        /// 20095/20096 (rev.11.6: выходные DT-элементы ОУ; enum Properties.Function
+        /// констант DESIGNATION_* не содержит).</summary>
+        private static string SafePropText(Function oCable, AnyPropertyId oId)
+        {
+            if (oId == null) return "—";
+            try
+            {
+                PropertyValue oValue = oCable.Properties[oId];
+                if (oValue == null || oValue.IsEmpty) return "—";
+                string strValue = oValue.ToString();
+                return strValue.Length == 0 ? "—" : strValue;
+            }
+            catch { return "—"; }
+        }
+
+        /// <summary>Чтение одной части из контейнера NameParts объекта для дампа
+        /// [SRC-DT] (rev.11.6): FunctionBase.NameParts возвращает
+        /// FunctionBasePropertyList; индексатор по AnyPropertyId (тот же путь,
+        /// что WriteDeviceTagProperties/SetNamePart). Отказ get NameParts или
+        /// чтения части (бросили — вся NP-часть дампа «—»), null-список,
+        /// null id или пустая часть — «—».</summary>
+        private static string SafeNamePartText(Function oCable, AnyPropertyId oId)
+        {
+            if (oId == null) return "—";
+            try
+            {
+                FunctionBasePropertyList oParts = oCable.NameParts;
+                if (oParts == null) return "—";
+                string strValue = oParts[oId];
+                if (strValue == null || strValue.Length == 0) return "—";
+                return strValue;
+            }
+            catch { return "—"; }
+        }
+
         // --- Проба чтения реальных кабелей проекта (Task 6, rev.9.3) ---
 
         /// <summary>Диагностическая проба чтения РЕАЛЬНЫХ кабелей проекта из DataModel
@@ -424,12 +464,37 @@ namespace MyEplanActions
                 _log.Log("[CBL-SUM] кабелей: 0");
                 return;
             }
+            int nSrcDumped = 0;
             for (int i = 0; i < arrFunctions.Length; i++)
             {
                 Cable oCable = arrFunctions[i] as Cable;
                 if (oCable == null) continue;
                 nCables++;
                 string strName = SafeText("<n/a>", () => oCable.Name);
+                // rev.11.6: поиск, где эталон хранит имя устройства. Прогон
+                // rev.11.5 доказал: Properties структуры 1100/1400/1600 совпали
+                // с нашими, имя устройства в Properties-DESIGNATION_*
+                // отсутствует (1800='—'). Теперь читаем контейнер NameParts
+                // эталона — NP1800 (PRODUCT), NP1801 (SUBPRODUCT1), NP1820
+                // (FULLPRODUCT), NP1829 (PRODUCT_VISIBLE) — и выходные
+                // DT-элементы свойств P20095 (FUNC_IDENTNAMEPARTS) /
+                // P20096 (FUNC_IDENTDEVICETAGPARTS). Первые три кабеля с
+                // осмысленным именем (не '<n/a>', содержит '-'), одна строка
+                // на кабель; каждое чтение — отдельный try/catch внутри
+                // SafeNamePartText (NameParts) / SafePropText (Properties) → «—».
+                if (nSrcDumped < 3 && strName != "<n/a>" && strName.Contains("-"))
+                {
+                    nSrcDumped++;
+                    StringBuilder oDump = new StringBuilder();
+                    oDump.Append("[INFO] [SRC-DT] '" + strName + "':");
+                    oDump.Append(" NP1800='" + SafeNamePartText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1800)) + "'");
+                    oDump.Append(" NP1801='" + SafeNamePartText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1801)) + "'");
+                    oDump.Append(" NP1820='" + SafeNamePartText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1820)) + "'");
+                    oDump.Append(" NP1829='" + SafeNamePartText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1829)) + "'");
+                    oDump.Append(" P20095='" + SafePropText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(20095)) + "'");
+                    oDump.Append(" P20096='" + SafePropText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(20096)) + "'");
+                    _log.Log(oDump.ToString());
+                }
                 try
                 {
                     Connection[] arrConns = oCable.CableConnections;

@@ -23,13 +23,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-23 Этап 7 rev.11.0 (Фаза G: линия-ссылка от символа кабеля — References в геометрии + PolyLine-стрелка)";
+        private const string BUILD_STAMP = "2026-09-24 Этап 7 rev.11.11 (Фаза G: откат к NameParts-структурам — разбиение по '-' в парсере DT не зависит от настроек синтаксиса (факт rev.11.10); имя устройства — ограничение API 2.9)";
 
         private readonly DiagnosticLogger _logger = new DiagnosticLogger();
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.11.0 (Фаза G: линия-ссылка от символа кабеля — References в геометрии + PolyLine-стрелка)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 7 rev.11.11 (Фаза G: откат к NameParts-структурам — разбиение по '-' в парсере DT не зависит от настроек синтаксиса (факт rev.11.10); имя устройства — ограничение API 2.9)", BUILD_STAMP);
             try
             {
                 Run();

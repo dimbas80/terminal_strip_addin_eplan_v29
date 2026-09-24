@@ -27,7 +27,7 @@ namespace MyEplanActions
 
         // Тип отчёта и форма (rev.12: §5.1–§5.3 закрыты на этой паре).
         public const string ReportTypeName = "TerminalConnectiondiagram";
-        public const string ReportFormName = "Клемник_ОУ(вертикально)_addin";   // rev.10.11: вертикальная форма (прогон A)
+        public const string ReportFormName = "Клемник_ОУ(горизонтально)_addin";   // rev.10.11: вертикальная форма (прогон A)
         public const string ReportFilterSchemaName = "";
 
         // Ориентация отчёта (Этап 3, Задача 4, rev.6.2): ось, вдоль которой идут
@@ -37,7 +37,7 @@ namespace MyEplanActions
         // Потребители: AnchorResolver.Build, LeadDetector.CheckK4Report, MatchBuilder.
         // rev.10.11: прогон A — вертикальный стенд; для регресса B переключить
         // обратно на Horizontal.
-        public const ReportOrientation Orientation = ReportOrientation.Vertical;
+        public const ReportOrientation Orientation = ReportOrientation.Horizontal;
 
         // Целевой клеммник: отчёт строится по ОДНОМУ клеммнику, сверка [CROSS]/[MATCH]
         // идёт с его подключениями (не с суммой по проекту — урок rev.4.0, summary п.21).

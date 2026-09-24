@@ -11,12 +11,75 @@ namespace MyEplanActions
     /// <summary>Вставка символов кабеля (Фаза G, spec
     /// docs/superpowers/specs/2026-09-22-fase-g-graphics-design.md; мастер-план §13 —
     /// Этап 9). KB 2.9 (проверено 22.09.2026): SymbolLibrary(Project, String) →
-    /// Symbol = oLibrary[имя] → SymbolVariant = oSymbol[индекс]; SymbolReference.Create
-    /// — ИНСТАНСНЫЙ (public virtual void Create(Page, SymbolVariant)); позиция —
+    /// Symbol = oLibrary[имя] → SymbolVariant = oSymbol[индекс]; Create —
+    /// ИНСТАНСНЫЙ (public virtual void Create(Page, SymbolVariant)); позиция —
     /// Placement.Location (get/set). Библиотека/имя/вариант — из AddInConfiguration
-    /// (в Фазе H — выбор пользователя в UI). DT-свойства символа (rev.10.1, spec §9.5):
-    /// полный DT кабеля разбирается на части и пишется в 1120/1220/1620/20000 —
-    /// каждый отказ WARN [SYMDT] и не прерывает. Поворот 0° (spec §7). Центр круга
+    /// (в Фазе H — выбор пользователя в UI). rev.11.1: символы вставляются как
+    /// Function (наследник SymbolReference), НЕ как голый SymbolReference —
+    /// root cause S063113: DT-свойства функционального домена
+    /// (1120/1220/1620/20000, класс «Base class for functions»/FunctionBase)
+    /// SymbolReference не принимаются — все пути записи давали S063113.
+    /// Дополнительно на символе: главная функция off (свойство 20122) и вид
+    /// представления «однополюсный» (ManualPlacementType = CircuitSingleLine).
+    /// rev.11.2: ОУ символа по частям в свойства 1120/1220/1420/1620/1820
+    /// property-списка — root cause прогона: эти свойства read-only в API
+    /// (1420 в таблице нет вовсе) → 16×S063113, readback пустой, Name собрался
+    /// '=+++#'. rev.11.3: ОУ через FunctionBase.NameParts — структурная запись
+    /// блоков, мимо DT-парсера и мимо read-only property-списка (и мимо
+    /// пере-разбора Name из rev.11.1, ломавшего 'HII-1.1'); Function.Name НЕ
+    /// пишем (см. WriteDeviceTagProperties). rev.11.4: root cause — в
+    /// rev.11.3 писали через typed-аксессоры DESIGNATION_FULL* — это номера
+    /// 1120/1220/1420/1620/1820, вычисляемые агрегаты «Full …» (KB Remarks:
+    /// «This property is read-only»): offline-список молча не сохранял
+    /// значения (bOfflineOk=true), NameParts присваивался без частей →
+    /// Name '=+++#'; read-back FULL*-аксессорами — EmptyPropertyException.
+    /// Фактические блоки DT — базовые номера 1100 (PLANT)/1200 (LOCATION)/
+    /// 1400 (PLACEOFINSTALLATION)/1600 (USERDEFINED)/1800 (PRODUCT); запись —
+    /// индексатором Property(AnyPropertyId) {set} (создаёт записи; паттерн
+    /// 20122). rev.11.5: слоты блоков уточнены по факту прогона — «М»
+    /// (место сборки, «++»), записанное в 1200, отрисовалось в слоте «+»:
+    /// «++» — это 1400, «+» — это 1200 (1200/1400 поменяны местами). Имя
+    /// 1800 через NameParts платформа выбросила (readback
+    /// EmptyPropertyException) — добавлена прямая online-запись
+    /// oFunc.Properties[1800] (паттерн 20122; отказ — WARN [SYMDT-N2]).
+    /// rev.11.6: имя устройства НЕ в DESIGNATION_* — факт эталона
+    /// [SRC-DT] (Properties 1800='—'), прямая запись 1800 → S063113
+    /// (read-only) — блок [SYMDT-N2] удалён. Остался сеттер
+    /// FunctionBase.Name: пишем ГОЛОЕ имя (без '='/'++'/'+'/'#'/'-' —
+    /// парсер DT неразрывен; полный DT rev.11.1 ломался на '-' внутри
+    /// 'HII-1.1'); выживание структур после записи — замер [SYMDT-RD2].
+    /// rev.11.7: факт прогона rev.11.6 — Name-сеттер СТЁР структуры
+    /// ([SYMDT-RD2] 1100/1400/1600='—': сеттер = полная замена DT),
+    /// порядок изменён: имя первым, структуры вторым; проверка
+    /// выживания имени — финальный Name.
+    /// rev.11.9: ревизия 11.8 (видимое ОУ) отклонена ДО прогона: KB —
+    /// DESIGNATION_*_VISIBLE read-only, 20051 при пустом видимом DT
+    /// опасен; имя устройства через API 2.9 недостижимо (сеттеры
+    /// Name/NameParts взаимно исключающи — факты rev.11.6/11.7; 1800
+    /// read-only S063113; имя ∉ NameParts — эталон [SRC-DT]).
+    /// Структуры — стабильны.
+    /// rev.11.10: чистый эксперимент «только Name» — парсер DT рвёт
+    /// значения структур на '-' ('HII-1.1' → установка='HII', факт
+    /// rev.11.1), т.к. '-' не входит в разрешённые символы
+    /// идентификатора. Гипотеза (KB 2.9, Project.DeviceTagConfig →
+    /// Project.DeviceTagSettings: EnableSyntaxCheck/AllowUserCharacters/
+    /// UserCharacters; GUI: Настройки → Проекты → Устройства → Проверка
+    /// синтаксиса ОУ → Идентификатор структуры → Спец. текстовые
+    /// символы; UserCharacters действует только при обоих bool=true):
+    /// временно разрешив '-' (EnableSyntaxCheck=true,
+    /// AllowUserCharacters=true, UserCharacters += '-'), запишем ПОЛНЫЙ
+    /// DT одной строкой: oFunc.Name = '=HII-1.1++М+#3-K140' — парсер
+    /// примет 'HII-1.1' целиком как установку, '-K140' — как имя.
+    /// Запись NameParts удалена целиком: подтвердится — путь не нужен,
+    /// нет — вернём в rev.11.11. Настройки — временные: оригиналы
+    /// читаются до эксперимента и восстанавливаются в finally (даже
+    /// при отказе записи Name).
+    /// rev.11.11: эксперимент rev.11.10 (UserCharacters+='-') опровергнут
+    /// прогоном: разбиение по '-' в парсере DT не зависит от настроек
+    /// синтаксиса (EnableSyntaxCheck был False и с разрешённым '-' парсер
+    /// рвёт так же); откат к NameParts-структурам; имя устройства —
+    /// ограничение API 2.9 (см. rev.11.9).
+/// Поворот 0° (spec §7). Центр круга
     /// = точке вставки (rev.10.4: офсет п.47 опровергнут — замер был загрязнён
     /// останцами старых прогонов). Отказ —
     /// WARN [SYMBOL]. НЕ идемпотентно (очистка — Фаза I).</summary>
@@ -56,27 +119,64 @@ namespace MyEplanActions
             {
                 try
                 {
-                    SymbolReference oRef = new SymbolReference();
-                    oRef.Create(oPage, oVariant);
+                    Function oFunc = new Function();
+                    oFunc.Create(oPage, oVariant);
+                    // rev.11.1: главная функция off — свойство 20122 FUNC_MAINFUNCTION
+                    // (Boolean, объекты «Functions», перезаписываемое). Каждый отказ —
+                    // WARN [SYMFUNC] и не мешает второй записи.
+                    bool bMainFuncOffOk = false;
+                    try
+                    {
+                        AnyPropertyId oIdMainFunc = CreateAnyPropertyIdFromNumber(20122);
+                        if (oIdMainFunc == null)
+                            throw new InvalidOperationException("CreateAnyPropertyIdFromNumber(20122) вернул null");
+                        oFunc.Properties[oIdMainFunc] = (PropertyValue)false;
+                        bMainFuncOffOk = true;
+                    }
+                    catch (Exception oEx)
+                    {
+                        log.Warn("[SYMFUNC] 20122 (главная функция=false): " +
+                            oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    // rev.11.1: вид представления «однополюсный» — типизированное
+                    // свойство ManualPlacementType (FUNC_TYPE=20121 значение
+                    // 2=Single-line).
+                    bool bPlacementTypeOk = false;
+                    try
+                    {
+                        oFunc.ManualPlacementType = DocumentTypeManager.DocumentType.CircuitSingleLine;
+                        bPlacementTypeOk = true;
+                    }
+                    catch (Exception oEx)
+                    {
+                        log.Warn("[SYMFUNC] ManualPlacementType (однополюсный): " +
+                            oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    if (bMainFuncOffOk && bPlacementTypeOk)
+                        log.Log("[INFO] [SYMFUNC] главная функция=false, вид представления=однополюсный (CircuitSingleLine)");
                     // rev.10.4: офсет центра CABDCP2 из п.47 ОПРОВЕРГНУТ прогоном rev.10.3
                     // (круг ушёл 1:1 с точкой вставки): центр круга = точке вставки.
                     // Пишем геометрическую позицию напрямую (замер п.47 был загрязнён
                     // останцами старых прогонов — аддин неидемпотентен).
-                    oRef.Location = new PointD(oSym.Position.X, oSym.Position.Y);
+                    oFunc.Location = new PointD(oSym.Position.X, oSym.Position.Y);
                     nCreated++;
                     log.Log("[INFO] [SYMBOL] '" + (oSym.CableName ?? "<без имени>") + "' #" +
                         oSym.CableIndex.ToString(CultureInfo.InvariantCulture) + " @ (" +
                         oSym.Position.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
                         oSym.Position.Y.ToString("F3", CultureInfo.InvariantCulture) + ")");
 
-                    // rev.10.1 (spec §9.5): DT-свойства символа из полного DT кабеля.
-                    // Отказы — WARN [SYMDT] внутри, счётчик и остальные символы не страдают.
+                    // rev.11.11: ОУ символа — структуры через
+                    // FunctionBase.NameParts (offline-список →
+                    // присваивание, fallback get-modify-set); имя
+                    // устройства — ограничение API 2.9 (шапка
+                    // rev.11.9/11.11). Отказы — WARN [SYMDT] внутри,
+                    // счётчик и остальные символы не страдают.
                     if (!string.IsNullOrEmpty(oSym.CableName))
-                        WriteDeviceTagProperties(oRef, oSym, log);
+                        WriteDeviceTagProperties(oFunc, oSym, log);
                 }
                 catch (Exception oEx)
                 {
-                    log.Warn("[SYMBOL] Create бросил " + oEx.GetType().Name + ": " + oEx.Message +
+                    log.Warn("[SYMBOL] вставка/размещение бросили " + oEx.GetType().Name + ": " + oEx.Message +
                         " (символ '" + (oSym.CableName ?? "<без имени>") + "' #" +
                         oSym.CableIndex.ToString(CultureInfo.InvariantCulture) + ")");
                 }
@@ -85,77 +185,239 @@ namespace MyEplanActions
             return nCreated;
         }
 
-        /// <summary>Запись DT-свойств символа (rev.10.1, spec §9.5): разбор полного DT
-        /// из CableName и запись 1120 ← установка, 1220 ← место сборки, 1620 ←
-        /// определяющая структура, 20000 ← имя. Место установки НЕ пишется никогда
-        /// (spec §9.5). Дамп [SYMDT] — что записано; отсутствующая часть — «—».</summary>
-        private static void WriteDeviceTagProperties(SymbolReference oRef,
+        /// <summary>Запись ОУ символа — rev.11.11 (откат к стабильному
+        /// NameParts-пути rev.11.4–11.9). Эксперимент rev.11.10 «полный DT
+        /// одной строкой Name при временном разрешении '-'» опровергнут
+        /// прогоном: разбиение по '-' в парсере DT не зависит от настроек
+        /// синтаксиса (EnableSyntaxCheck был False и с разрешённым '-'
+        /// парсер рвёт 'HII-1.1' так же). Имя устройства через API 2.9
+        /// недостижимо (сеттеры Name/NameParts взаимно исключающи — факты
+        /// rev.11.6/11.7; 1800 read-only S063113; имя ∉ NameParts — эталон
+        /// [SRC-DT]) — записываем структуры.
+        /// Поток: [SYMDT] дамп источника (ParseDeviceTag; отсутствующая
+        /// часть — «—») → offline-список FunctionBasePropertyList (отказ —
+        /// WARN [SYMDT]) + SetNamePart×5 (1100←установка, 1400←место
+        /// сборки, 1200←место установки, 1600←структура, 1800←имя; пустая
+        /// часть — без записи) → присваивание oFunc.NameParts = oParts
+        /// (INFO; отказ — WARN + fallback) → fallback get-modify-set на
+        /// живом NameParts (все непустые части, счётчик, INFO «дописано
+        /// частей: N») → [SYMDT-RD] readback ReadBackNamePart×5
+        /// (1100/1400/1200/1600/1800; пустые не читаются) → финальный
+        /// Name-readback [SYMDT-RD] — арбитр успеха.</summary>
+        private static void WriteDeviceTagProperties(Function oFunc,
             CableSymbolPlacement oSym, DiagnosticLogger log)
         {
             string[] arrParts = ParseDeviceTag(oSym.CableName);
             string strInstallation = arrParts[0];
             string strMountingSite = arrParts[1];
-            string strUserStruct = arrParts[2];
-            string strName = arrParts[3];
+            string strPlaceOfInstallation = arrParts[2];
+            string strUserStruct = arrParts[3];
+            string strName = arrParts[4];
 
-            WriteSymProperty(oRef, log, 1120, strInstallation);
-            WriteSymProperty(oRef, log, 1220, strMountingSite);
-            WriteSymProperty(oRef, log, 1620, strUserStruct);
-            WriteSymProperty(oRef, log, 20000, strName);
-
+            // Дамп ИСТОЧНИКА (полный DT кабеля из DataModel), не запись.
             log.Log("[INFO] [SYMDT] '" + oSym.CableName + "': =" +
-                (strInstallation ?? "—") + " ++" + (strMountingSite ?? "—") + " #" +
-                (strUserStruct ?? "—") + " имя=" + (strName ?? "—"));
+                (strInstallation ?? "—") + " ++" + (strMountingSite ?? "—") + " +" +
+                (strPlaceOfInstallation ?? "—") + " #" + (strUserStruct ?? "—") +
+                " имя=" + (strName ?? "—"));
+
+            // rev.11.11: структуры ОУ — offline-список NameParts +
+            // присваивание (стабильный путь rev.11.4–11.9). Пустая/null
+            // часть — без записи (SetNamePart → true), отказ части —
+            // WARN [SYMDT], остальные продолжают писаться.
+            FunctionBasePropertyList oParts = null;
+            try
+            {
+                oParts = new FunctionBasePropertyList();
+            }
+            catch (Exception oEx)
+            {
+                log.Warn("[SYMDT] offline-список NameParts: " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+            bool bPlant = false;
+            bool bLocation = false;
+            bool bPlace = false;
+            bool bUserStruct = false;
+            bool bProduct = false;
+            if (oParts != null)
+            {
+                bPlant = SetNamePart(oParts, 1100, strInstallation, log);
+                bLocation = SetNamePart(oParts, 1400, strMountingSite, log);
+                bPlace = SetNamePart(oParts, 1200, strPlaceOfInstallation, log);
+                bUserStruct = SetNamePart(oParts, 1600, strUserStruct, log);
+                bProduct = SetNamePart(oParts, 1800, strName, log);
+            }
+            bool bOfflineOk = bPlant && bLocation && bPlace && bUserStruct &&
+                bProduct && oParts != null;
+            if (bOfflineOk)
+            {
+                try
+                {
+                    oFunc.NameParts = oParts;
+                    log.Log("[INFO] [SYMDT] запись NameParts: offline-список");
+                }
+                catch (Exception oEx)
+                {
+                    log.Warn("[SYMDT] NameParts (offline-список): " +
+                        oEx.GetType().Name + ": " + oEx.Message);
+                    NamePartsGetModifySet(oFunc, strInstallation, strMountingSite,
+                        strPlaceOfInstallation, strUserStruct, strName, log);
+                }
+            }
+            else
+            {
+                NamePartsGetModifySet(oFunc, strInstallation, strMountingSite,
+                    strPlaceOfInstallation, strUserStruct, strName, log);
+            }
+
+            // Readback [SYMDT-RD]: свежий get NameParts, по одной части
+            // (rev.11.4–11.9): пустая/null часть не писалась — не читается;
+            // отказ чтения — «недоступен» с типом исключения.
+            try
+            {
+                FunctionBasePropertyList oRd = oFunc.NameParts;
+                ReadBackNamePart(oRd, log, 1100, strInstallation);
+                ReadBackNamePart(oRd, log, 1400, strMountingSite);
+                ReadBackNamePart(oRd, log, 1200, strPlaceOfInstallation);
+                ReadBackNamePart(oRd, log, 1600, strUserStruct);
+                ReadBackNamePart(oRd, log, 1800, strName);
+            }
+            catch (Exception oEx)
+            {
+                log.Log("[INFO] [SYMDT-RD] NameParts недоступен (" + oEx.GetType().Name + ")");
+            }
+
+            // Финальный readback Name — собранное EPLAN полное ОУ
+            // (главный критерий успеха: платформа пере-собирает части).
+            try
+            {
+                log.Log("[INFO] [SYMDT-RD] Name='" + oFunc.Name + "'");
+            }
+            catch (Exception oEx)
+            {
+                log.Log("[INFO] [SYMDT-RD] Name недоступен (" + oEx.GetType().Name + ")");
+            }
         }
 
-        /// <summary>Одна запись свойства символа. Пустая часть — тихий пропуск.
-        /// rev.10.12 (устранение 16× WARN [SYMDT] S063113): запись через
-        /// индексатор-SET — oRef.Properties[oId] = (PropertyValue)strPart. KB 2.9
-        /// (проверено 23.09.2026): Property(AnyPropertyId) имеет set-аксессор
-        /// ({get; set;}) и сам СОЗДАЁТ свойство при присваивании (канонический
-        /// пример KB: FUNC_COMMENT = "Comment"). Прежний путь
-        /// Properties[oId].Set(...) — это Get+Set: Get отсутствующего свойства
-        /// его не создаёт, поэтому Set падал S063113. Свойства 1120/1220/1620/20000 —
-        /// уровня размещения; типизированный путь oId.AsSymbolReference (get-only
-        /// конверсия → Properties.SymbolReference) — запасной, здесь не используется.
-        /// Отказ (id не создан reflection-ом, свойство неприменимо) — WARN [SYMDT]
-        /// "(id) ('часть'): Тип: сообщение", остальные части пишутся дальше.</summary>
-        private static void WriteSymProperty(SymbolReference oRef, DiagnosticLogger log,
-            int nPropertyId, string strPart)
+        /// <summary>Fallback get-modify-set на живом oFunc.NameParts
+        /// (rev.11.4–11.9; возвращён rev.11.11): get, допись всех НЕпустых
+        /// частей поверх прочитанного (безусловно — независимо от
+        /// результата offline-списка), счётчик nSet, INFO «get-modify-set
+        /// (дописано частей: N)». Каждая часть — SetNamePart (отказ —
+        /// WARN [SYMDT], остальные продолжают писаться).</summary>
+        private static void NamePartsGetModifySet(Function oFunc,
+            string strInstallation, string strMountingSite,
+            string strPlaceOfInstallation, string strUserStruct,
+            string strName, DiagnosticLogger log)
+        {
+            try
+            {
+                FunctionBasePropertyList oLive = oFunc.NameParts;
+                int nSet = 0;
+                if (oLive != null)
+                {
+                    if (SetNamePart(oLive, 1100, strInstallation, log)) nSet++;
+                    if (SetNamePart(oLive, 1400, strMountingSite, log)) nSet++;
+                    if (SetNamePart(oLive, 1200, strPlaceOfInstallation, log)) nSet++;
+                    if (SetNamePart(oLive, 1600, strUserStruct, log)) nSet++;
+                    if (SetNamePart(oLive, 1800, strName, log)) nSet++;
+                }
+                log.Log("[INFO] [SYMDT] get-modify-set (дописано частей: " +
+                    nSet.ToString(CultureInfo.InvariantCulture) + ")");
+            }
+            catch (Exception oEx)
+            {
+                log.Warn("[SYMDT] get-modify-set: " + oEx.GetType().Name + ": " + oEx.Message);
+            }
+        }
+
+        /// <summary>Запись одной части DT индексатором NameParts по базовому
+        /// номеру свойства (rev.11.4; rev.11.10 не вызывалась — NameParts-путь
+        /// был удалён на время эксперимента «полный DT одной строкой»; в
+        /// rev.11.11 возвращена в строй — offline-список и fallback
+        /// get-modify-set; superseded typed-аксессоры rev.11.3:
+        /// DESIGNATION_FULL* — вычисляемые FULL*-свойства 1120/1220/1420/1620/
+        /// 1820, read-only — значения молча не сохранялись). Индексатор
+        /// Property(AnyPropertyId) {set} создаёт записи (паттерн 20122).
+        /// Пустая/null часть — без записи (true). Отказ — WARN [SYMDT]
+        /// «свойство <номер> ('<часть>'): <тип>: <сообщение>», false; остальные
+        /// части продолжают писаться.</summary>
+        private static bool SetNamePart(FunctionBasePropertyList oParts, int nLabel,
+            string strPart, DiagnosticLogger log)
+        {
+            if (string.IsNullOrEmpty(strPart)) return true;
+            try
+            {
+                AnyPropertyId oIdPart = CreateAnyPropertyIdFromNumber(nLabel);
+                if (oIdPart == null)
+                    throw new InvalidOperationException(
+                        "CreateAnyPropertyIdFromNumber(" +
+                        nLabel.ToString(CultureInfo.InvariantCulture) + ") вернул null");
+                oParts[oIdPart] = (PropertyValue)strPart;
+                return true;
+            }
+            catch (Exception oEx)
+            {
+                log.Warn("[SYMDT] свойство " +
+                    nLabel.ToString(CultureInfo.InvariantCulture) + " ('" + strPart + "'): " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Readback записанной части DT через NameParts (rev.11.4,
+        /// superseded typed-аксессоры rev.11.3 — read-only FULL*): чтение
+        /// индексатором по базовому номеру, явное присваивание
+        /// PropertyValue→string (тот же неявный оператор, что использовали
+        /// typed-аксессоры). Пустая/null часть не писалась — не
+        /// читается. Null-значение или отказ чтения — [SYMDT-RD] «недоступен»
+        /// с типом исключения, по образцу существующего кода.</summary>
+        private static void ReadBackNamePart(FunctionBasePropertyList oParts,
+            DiagnosticLogger log, int nLabel, string strPart)
         {
             if (string.IsNullOrEmpty(strPart)) return;
             try
             {
-                AnyPropertyId oId = CreateAnyPropertyIdFromNumber(nPropertyId);
-                if (oId == null)
-                    throw new InvalidOperationException("CreateAnyPropertyIdFromNumber вернул null");
-                // Индексатор-SET: set-аксессор Property(AnyPropertyId) создаёт
-                // свойство; неявная конверсия string→PropertyValue есть (op_Implicit),
-                // явный каст — для читаемости.
-                oRef.Properties[oId] = (PropertyValue)strPart;
+                AnyPropertyId oIdPart = CreateAnyPropertyIdFromNumber(nLabel);
+                if (oIdPart == null)
+                    throw new InvalidOperationException(
+                        "CreateAnyPropertyIdFromNumber(" +
+                        nLabel.ToString(CultureInfo.InvariantCulture) + ") вернул null");
+                string strBack = oParts[oIdPart];
+                if (strBack == null)
+                    log.Log("[INFO] [SYMDT-RD] " +
+                        nLabel.ToString(CultureInfo.InvariantCulture) + " недоступен (null)");
+                else
+                    log.Log("[INFO] [SYMDT-RD] " +
+                        nLabel.ToString(CultureInfo.InvariantCulture) + "='" + strBack + "'");
             }
             catch (Exception oEx)
             {
-                log.Warn("[SYMDT] свойство " + nPropertyId.ToString(CultureInfo.InvariantCulture) +
-                    " ('" + strPart + "'): " + oEx.GetType().Name + ": " + oEx.Message);
+                log.Log("[INFO] [SYMDT-RD] " +
+                    nLabel.ToString(CultureInfo.InvariantCulture) + " недоступен (" +
+                    oEx.GetType().Name + ")");
             }
         }
 
         /// <summary>Разбор полного DT кабеля на структурные части (spec §9.5).
         /// Формат: =<установка>++<место сборки>+<место установки>#<опред. структура>-<имя>.
-        /// Возвращает 4 строки: installation / mountingSite / userStruct / name;
-        /// null = блок отсутствует (пустой блок приравнен к отсутствующему).
-        /// Место установки (между '+' и '#'/'-') не разбирается — никогда не пишется.
-        /// Любая аномалия (нет маркеров) — возвращается что разобрано, остальное null.</summary>
+        /// Возвращает 5 строк: installation / mountingSite / placeOfInstallation /
+        /// userStruct / name; null = блок отсутствует (пустой блок приравнен к
+        /// отсутствующему). Место установки (между '+' и '#'/'-') разбирается и
+        /// пишется в свойство 1200, если непусто (rev.11.5: слоты по факту
+        /// прогона — «+» это 1200, rev.11.4 ошибочно писало в 1400; rev.11.2
+        /// ошибочно именовался 1420 — это read-only FULL-агрегат). Любая аномалия (нет
+        /// маркеров) — возвращается что разобрано, остальное null.</summary>
         private static string[] ParseDeviceTag(string strFullName)
         {
             string strInstallation = null;
             string strMountingSite = null;
+            string strPlaceOfInstallation = null;
             string strUserStruct = null;
             string strName = null;
 
             if (string.IsNullOrEmpty(strFullName))
-                return new string[] { null, null, null, null };
+                return new string[] { null, null, null, null, null };
 
             string s = strFullName.StartsWith("=", StringComparison.Ordinal)
                 ? strFullName.Substring(1) : strFullName;
@@ -168,7 +430,7 @@ namespace MyEplanActions
                 int nDash = s.LastIndexOf('-');
                 if (nDash >= 0 && nDash < s.Length - 1)
                     strName = NullIfEmpty(s.Substring(nDash + 1));
-                return new string[] { null, null, null, strName };
+                return new string[] { null, null, null, null, strName };
             }
             strInstallation = NullIfEmpty(s.Substring(0, nInstallEnd));
 
@@ -176,31 +438,40 @@ namespace MyEplanActions
             string strTail = s.Substring(nInstallEnd + 2);
             int nMountEnd = strTail.IndexOf('+');
             if (nMountEnd < 0)
-                return new string[] { strInstallation, NullIfEmpty(strTail), null, null };
+                return new string[] { strInstallation, NullIfEmpty(strTail), null, null, null };
             strMountingSite = NullIfEmpty(strTail.Substring(0, nMountEnd));
 
-            // Место установки — после '+' до '#' или '-' — игнорируется (не пишем, spec §9.5).
+            // Место установки — после '+' до '#' или '-'; пишется в 1200, если непусто (rev.11.5).
             string strTail2 = strTail.Substring(nMountEnd + 1);
             int nHash = strTail2.IndexOf('#');
             if (nHash < 0)
             {
-                // Без '#': имя — хвост после '-' (место установки до него).
+                // Без '#': место установки — до первого '-'; имя — хвост после '-'.
+                // Нет и '-': формат аномален (нет разделителя имени) — хвост
+                // трактуем как ИМЯ (именной блок обязателен), место установки — null.
                 int nDash = strTail2.IndexOf('-');
-                if (nDash >= 0 && nDash < strTail2.Length - 1)
+                if (nDash < 0)
+                {
+                    strName = NullIfEmpty(strTail2);
+                    return new string[] { strInstallation, strMountingSite, null, null, strName };
+                }
+                strPlaceOfInstallation = NullIfEmpty(strTail2.Substring(0, nDash));
+                if (nDash < strTail2.Length - 1)
                     strName = NullIfEmpty(strTail2.Substring(nDash + 1));
-                return new string[] { strInstallation, strMountingSite, null, strName };
+                return new string[] { strInstallation, strMountingSite, strPlaceOfInstallation, null, strName };
             }
+            strPlaceOfInstallation = NullIfEmpty(strTail2.Substring(0, nHash));
             string strTail3 = strTail2.Substring(nHash + 1);
 
             // Определяющая структура — после '#' до '-'; имя — после этого '-'.
             int nStructEnd = strTail3.IndexOf('-');
             if (nStructEnd < 0)
-                return new string[] { strInstallation, strMountingSite, NullIfEmpty(strTail3), null };
+                return new string[] { strInstallation, strMountingSite, strPlaceOfInstallation, NullIfEmpty(strTail3), null };
             strUserStruct = NullIfEmpty(strTail3.Substring(0, nStructEnd));
             if (nStructEnd < strTail3.Length - 1)
                 strName = NullIfEmpty(strTail3.Substring(nStructEnd + 1));
 
-            return new string[] { strInstallation, strMountingSite, strUserStruct, strName };
+            return new string[] { strInstallation, strMountingSite, strPlaceOfInstallation, strUserStruct, strName };
         }
 
         /// <summary>Пустой блок == отсутствующий: пустая строка нормализуется в null.</summary>
@@ -213,8 +484,10 @@ namespace MyEplanActions
         /// <summary>Создаёт AnyPropertyId из номера свойства. По документации API 2.9
         /// конвертация есть ИЗ номера (op_Implicit Int32 -> AnyPropertyId). Оператор
         /// вызывается через reflection (порт из spike rev.7), чтобы сборка не зависела
-        /// от точной сигнатуры оператора. Не удалось — null (логирует вызывающий).</summary>
-        private static AnyPropertyId CreateAnyPropertyIdFromNumber(int nNumber)
+        /// от точной сигнатуры оператора. Не удалось — null (логирует вызывающий).
+        /// internal с rev.11.5: используется также дампом [SRC-DT] в
+        /// EplanTerminalStripReader.</summary>
+        internal static AnyPropertyId CreateAnyPropertyIdFromNumber(int nNumber)
         {
             try
             {
