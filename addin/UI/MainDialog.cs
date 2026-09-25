@@ -2,18 +2,24 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
+// rev.13.1 (H-4, ruling R10): Project — только для браузера символов (чтение
+// списков); диалог по-прежнему не мутирует EPLAN-объекты.
+using Eplan.EplApi.DataModel;
 
 namespace MyEplanActions
 {
     /// <summary>
     /// Диалог генерации схемы подключений клеммника (Фаза H, задача H-2; спека
     /// 2026-09-25-fase-h-ui-design.md §2 п.1–3, 9, §4). Программный layout без
-    /// designer (TableLayoutPanel). ЧИСТЫЙ модуль — EPLAN-типов не держит:
-    /// только выбор (строки) и предвыбор из настроек. Предвыбор — точным
-    /// сравнением БЕЗ trim (хвостовой пробел имени формы значим, урок п.33).
-    /// Результаты после DialogResult.OK — свойства SelectedStripName /
-    /// SelectedFormName / SelectedOrientation. Символ кабеля — заглушка до H-4:
-    /// кнопка браузера disabled, слоты варианта — подписи из настроек.
+    /// designer (TableLayoutPanel). EPLAN-тип держит только Project (rev.13.1,
+    /// H-4: браузер символа; null — кнопка браузера остаётся выключенной, штатно).
+    /// Предвыбор — точным сравнением БЕЗ trim (хвостовой пробел имени формы
+    /// значим, урок п.33). Результаты после DialogResult.OK — свойства
+    /// SelectedStripName / SelectedFormName / SelectedOrientation +
+    /// SelectedSymbolLibrary / SelectedSymbolName / SelectedVariantH /
+    /// SelectedVariantV (H-4: выбор браузера применён к внутреннему
+    /// settings-объекту; «Отмена» браузера — ничего не меняет; значения
+    /// НЕ триммингуются).
     /// </summary>
     public class MainDialog : Form
     {
@@ -25,12 +31,20 @@ namespace MyEplanActions
         private readonly Label _lblVariantV = new Label();
         private readonly Button _btnBrowseSymbol = new Button();
 
+        // H-4 (R10): проект для браузера (null — кнопка выключена) и объект
+        // настроек диалога — выбор браузера применяется к его 4 полям.
+        private readonly Project _oProject;
+        private readonly AddInSettings _oEffective;
+
         /// <summary>Диалог: списки (null — пустые), предвыбор из настроек
-        /// (null — дефолты из AddInConfiguration).</summary>
+        /// (null — дефолты из AddInConfiguration). oProject (rev.13.1, H-4) —
+        /// текущий проект для браузера символов; null — кнопка выключена.</summary>
         public MainDialog(List<string> lstStripNames, List<string> lstFormNames,
-            AddInSettings oSettings)
+            AddInSettings oSettings, Project oProject = null)
         {
             AddInSettings oEffective = oSettings ?? new AddInSettings();
+            _oEffective = oEffective;
+            _oProject = oProject;
 
             Text = "Генерация схемы подключений клеммника";
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -58,20 +72,16 @@ namespace MyEplanActions
             _cboOrientation.Items.Add("Вертикальная");
             _cboOrientation.SelectedIndex = OrientationIndexOf(oEffective.OrientationMode);
 
-            // (4) Символ кабеля — заглушка: H-4 здесь появятся свойства
-            // SymbolLibrary/SymbolName/VariantH/VariantV (браузер символа и слоты
-            // варианта — спека §2 п.7; контракт не потерять).
-            _lblSymbol.Text = oEffective.SymbolLibrary + "/" + oEffective.SymbolName +
-                " (вариант H/V " + oEffective.VariantH.ToString() + "/" +
-                oEffective.VariantV.ToString() + ")";
+            // (4) Символ кабеля — H-4 (ruling R10): браузер активен при доступном
+            // проекте; выбор применяется к 4 полям _oEffective + переподписи.
             _lblSymbol.AutoSize = true;
-            _lblVariantH.Text = "вариант H: " + oEffective.VariantH.ToString();
             _lblVariantH.AutoSize = true;
-            _lblVariantV.Text = "вариант V: " + oEffective.VariantV.ToString();
             _lblVariantV.AutoSize = true;
             _btnBrowseSymbol.Text = "Выбрать символ…";
             _btnBrowseSymbol.AutoSize = true;
-            _btnBrowseSymbol.Enabled = false;
+            _btnBrowseSymbol.Enabled = _oProject != null;
+            _btnBrowseSymbol.Click += BtnBrowseSymbolOnClick;
+            UpdateSymbolLabels();
 
             // (5) Кнопки: «Создать» — валидация в Click (DialogResult=OK ставится
             // ТОЛЬКО при валидном выборе — закрыться с пустым выбором нельзя);
@@ -163,6 +173,37 @@ namespace MyEplanActions
             }
         }
 
+        /// <summary>H-4 (R10): «Выбрать символ…» — браузер с текущим выбором;
+        /// OK — применить 4 значения к _oEffective (значения НЕ триммить — урок
+        /// хвостового пробела) и переподписать слоты; «Отмена» — ничего не меняет.
+        /// _oProject == null — выход (кнопка в этом случае выключена, штатно).</summary>
+        private void BtnBrowseSymbolOnClick(object oSender, EventArgs oArgs)
+        {
+            if (_oProject == null) return;
+            using (SymbolBrowserDialog oBrowser = new SymbolBrowserDialog(_oProject,
+                _oEffective.SymbolLibrary, _oEffective.SymbolName,
+                _oEffective.VariantH, _oEffective.VariantV))
+            {
+                if (oBrowser.ShowDialog(this) != DialogResult.OK) return;
+                _oEffective.SymbolLibrary = oBrowser.Library;
+                _oEffective.SymbolName = oBrowser.Name;
+                _oEffective.VariantH = oBrowser.VariantH;
+                _oEffective.VariantV = oBrowser.VariantV;
+                UpdateSymbolLabels();
+            }
+        }
+
+        /// <summary>Подписи блока «Символ кабеля» из _oEffective — формат прежний
+        /// (контракт H-2: «биб/имя (вариант H/V h/v)» + отдельные подписи слотов).</summary>
+        private void UpdateSymbolLabels()
+        {
+            _lblSymbol.Text = _oEffective.SymbolLibrary + "/" + _oEffective.SymbolName +
+                " (вариант H/V " + _oEffective.VariantH.ToString() + "/" +
+                _oEffective.VariantV.ToString() + ")";
+            _lblVariantH.Text = "вариант H: " + _oEffective.VariantH.ToString();
+            _lblVariantV.Text = "вариант V: " + _oEffective.VariantV.ToString();
+        }
+
         /// <summary>Полное имя выбранного клеммника (null — не выбран).</summary>
         public string SelectedStripName
         {
@@ -187,6 +228,31 @@ namespace MyEplanActions
                 if (iIndex == 2) return SettingsOrientation.Vertical;
                 return SettingsOrientation.Auto;
             }
+        }
+
+        /// <summary>Библиотека символа (H-4): выбор браузера (без trim) либо
+        /// предвыбор из настроек, если браузер не открывался/отменён.</summary>
+        public string SelectedSymbolLibrary
+        {
+            get { return _oEffective.SymbolLibrary; }
+        }
+
+        /// <summary>Имя символа (H-4, без trim) — см. SelectedSymbolLibrary.</summary>
+        public string SelectedSymbolName
+        {
+            get { return _oEffective.SymbolName; }
+        }
+
+        /// <summary>Индекс варианта слота H (0-based; H-4).</summary>
+        public int SelectedVariantH
+        {
+            get { return _oEffective.VariantH; }
+        }
+
+        /// <summary>Индекс варианта слота V (0-based; H-4).</summary>
+        public int SelectedVariantV
+        {
+            get { return _oEffective.VariantV; }
         }
 
         // --- Хелперы построения/выбора (локальных функций в C#5 нет) ---

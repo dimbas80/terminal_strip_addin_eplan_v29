@@ -101,7 +101,10 @@ namespace MyEplanActions
 
         // Символ кабеля: библиотека SPECIAL, 16 / CABDCP2, вариант 0 (= «A»; решение
         // пользователя 22.09.2026). Индексация Symbol.Item 0-based (эмпирика rev.10.0:
-        // индекс 1 дал вариант B); вариант A = 0; в UI позже.
+        // индекс 1 дал вариант B); вариант A = 0. rev.13.1 (Этап 8, H-4): эти константы —
+        // ТОЛЬКО headless-путь (обёртки SymbolSizeMeasurer/CableSymbolCreator, ruling R8)
+        // и дефолты AddInSettings; UI-режим берёт символ из настроек
+        // (SymbolLibrary/SymbolName/VariantH/VariantV — браузер MainDialog/H-4).
         public const string SymbolLibrary = "SPECIAL";
         public const string SymbolName = "CABDCP2";
         public const int SymbolVariant = 0;

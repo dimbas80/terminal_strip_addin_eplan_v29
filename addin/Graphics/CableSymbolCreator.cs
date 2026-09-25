@@ -14,8 +14,10 @@ namespace MyEplanActions
     /// Этап 9). KB 2.9 (проверено 22.09.2026): SymbolLibrary(Project, String) →
     /// Symbol = oLibrary[имя] → SymbolVariant = oSymbol[индекс]; Create —
     /// ИНСТАНСНЫЙ (public virtual void Create(Page, SymbolVariant)); позиция —
-    /// Placement.Location (get/set). Библиотека/имя/вариант — из AddInConfiguration
-    /// (в Фазе H — выбор пользователя в UI). rev.11.1: символы вставляются как
+    /// Placement.Location (get/set). Библиотека/имя/вариант — полная перегрузка
+    /// параметрами (UI, Фаза H: из настроек); старая сигнатура — обёртка с
+    /// константами AddInConfiguration + компенсация (0;0) (headless без изменений).
+    /// rev.11.1: символы вставляются как
     /// Function (наследник SymbolReference), НЕ как голый SymbolReference —
     /// root cause S063113: DT-свойства функционального домена
     /// (1120/1220/1620/20000, класс «Base class for functions»/FunctionBase)
@@ -148,14 +150,36 @@ namespace MyEplanActions
     /// '=HII-1.1++М#3-K140' — норма).
     /// Поворот 0° (spec §7). Центр круга
     /// = точке вставки (rev.10.4: офсет п.47 опровергнут — замер был загрязнён
-    /// останцами старых прогонов). Отказ —
+    /// останцами старых прогонов). rev.13.1 (Этап 8, H-4): для символа с ненулевой
+    /// компенсацией центра (dx,dy) из замера [SYMSIZE-OFF] позиция вставки
+    /// скорректирована (SymbolPlacementMath.Compensate) — визуальный центр символа
+    /// на конце линии; offset (0;0) (CABDCP2, headless) — поведение прежнее. Отказ —
     /// WARN [SYMBOL]. НЕ идемпотентно (очистка — Фаза I).</summary>
     public static class CableSymbolCreator
     {
-        /// <summary>Символ на каждый CableSymbolPlacement. Возвращает число созданных.
-        /// Библиотека/символ/вариант недоступны — один WARN, 0 созданных.</summary>
+        /// <summary>Старая (headless) сигнатура — обёртка полной перегрузки с
+        /// константами AddInConfiguration и компенсацией центра (0;0) (ruling R8:
+        /// headless побайтно без изменений; CABDCP2 Δ=(0;0) доказан пробой п.49 —
+        /// поведение == rev.11.15+).</summary>
         public static int CreateSymbols(Page oPage, CableGeometryResult oGeom,
             DiagnosticLogger log)
+        {
+            return CreateSymbols(oPage, oGeom, log,
+                AddInConfiguration.SymbolLibrary, AddInConfiguration.SymbolName,
+                AddInConfiguration.SymbolVariant, 0.0, 0.0);
+        }
+
+        /// <summary>Символ на каждый CableSymbolPlacement. Возвращает число созданных.
+        /// Библиотека/символ/вариант недоступны — один WARN, 0 созданных.
+        /// rev.13.1 (Этап 8, H-4): тройка символа — параметрами (UI: из настроек,
+        /// индекс варианта ФАКТИЧЕСКОЙ ориентации); (dOffsetX, dOffsetY) — компенсация
+        /// визуального центра варианта (ruling R9): Location = desired − (dx,dy),
+        /// чистая арифметика — SymbolPlacementMath.Compensate (non-finite offset →
+        /// без компенсации). (0;0) — прежнее поведение (центр = точке вставки).</summary>
+        public static int CreateSymbols(Page oPage, CableGeometryResult oGeom,
+            DiagnosticLogger log,
+            string strLibrary, string strSymbolName, int nVariant,
+            double dOffsetX, double dOffsetY)
         {
             if (oPage == null || oGeom == null)
             {
@@ -168,14 +192,14 @@ namespace MyEplanActions
             SymbolVariant oVariant;
             try
             {
-                SymbolLibrary oLibrary = new SymbolLibrary(oPage.Project, AddInConfiguration.SymbolLibrary);
-                Symbol oSymbol = oLibrary[AddInConfiguration.SymbolName];
-                oVariant = oSymbol[AddInConfiguration.SymbolVariant];
+                SymbolLibrary oLibrary = new SymbolLibrary(oPage.Project, strLibrary);
+                Symbol oSymbol = oLibrary[strSymbolName];
+                oVariant = oSymbol[nVariant];
             }
             catch (Exception oEx)
             {
-                log.Warn("[SYMBOL] вариант '" + AddInConfiguration.SymbolLibrary + "'/" +
-                    AddInConfiguration.SymbolName + "/" + AddInConfiguration.SymbolVariant +
+                log.Warn("[SYMBOL] вариант '" + strLibrary + "'/" +
+                    strSymbolName + "/" + nVariant +
                     " недоступен: " + oEx.GetType().Name + ": " + oEx.Message);
                 log.Log("[INFO] [SYMBOL-SUM] символов 0 из " + nTotal + ".");
                 return 0;
@@ -222,10 +246,14 @@ namespace MyEplanActions
                     if (bMainFuncOffOk && bPlacementTypeOk)
                         log.Log("[INFO] [SYMFUNC] главная функция=false, вид представления=однополюсный (CircuitSingleLine)");
                     // rev.10.4: офсет центра CABDCP2 из п.47 ОПРОВЕРГНУТ прогоном rev.10.3
-                    // (круг ушёл 1:1 с точкой вставки): центр круга = точке вставки.
-                    // Пишем геометрическую позицию напрямую (замер п.47 был загрязнён
-                    // останцами старых прогонов — аддин неидемпотентен).
-                    oFunc.Location = new PointD(oSym.Position.X, oSym.Position.Y);
+                    // (круг ушёл 1:1 с точкой вставки): центр круга = точке вставки —
+                    // для offset (0;0) compensation ниже — идентичность (headless-путь).
+                    // rev.13.1 (H-4, ruling R9): Location = desired − (dx,dy) — визуальный
+                    // центр символа встаёт на конец линии; (dx,dy)=0 → прежнее поведение.
+                    double dLocX, dLocY;
+                    SymbolPlacementMath.Compensate(oSym.Position.X, oSym.Position.Y,
+                        dOffsetX, dOffsetY, out dLocX, out dLocY);
+                    oFunc.Location = new PointD(dLocX, dLocY);
                     nCreated++;
                     log.Log("[INFO] [SYMBOL] '" + (oSym.CableName ?? "<без имени>") + "' #" +
                         oSym.CableIndex.ToString(CultureInfo.InvariantCulture) + " @ (" +

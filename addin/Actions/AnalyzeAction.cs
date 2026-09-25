@@ -31,7 +31,11 @@ namespace MyEplanActions
         // rev.11.15-присваивание + шаг AdjustVisibleName (rev.12.9). rev.12.8
         // (3-арг, список с 1800) — прогон false×4; rev.12.9 (только AVN) —
         // см. summary. Арбитр — readback 20002 + Name.
-        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.0 (DT: NameService 2-arg + список без 1800; fallback 11.15+AVN; readback 20002)";
+        // rev.13.1 (Этап 8, H-4): UI-режим — символ из настроек (браузер
+        // SymbolBrowserDialog, слоты H/V), два пробных замера [SYMSIZE] (по слоту),
+        // компенсация визуального центра [SYMSIZE-OFF] dx,dy при вставке (R9);
+        // headless-Run() — побайтно без изменений (обёртки: константы + (0;0), R8).
+        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.1 (H-4: браузер символа + слоты H/V, два замера [SYMSIZE], компенсация центра [SYMSIZE-OFF]; headless — обёртки без изменений)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -50,9 +54,9 @@ namespace MyEplanActions
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            // rev.13.0: цепочка NameService (2-arg SetFullName → fallback 11.15 +
-            // AVN), арбитр — readback 20002 + Name.
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.0 (DT: NameService 2-arg без 1800, fallback 11.15+AVN, readback 20002)", BUILD_STAMP);
+            // rev.13.1: UI-символ из настроек (браузер, слоты H/V), два замера
+            // [SYMSIZE] + компенсация центра [SYMSIZE-OFF]; headless — обёртки (R8).
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.1 (H-4: браузер символа + слоты H/V, два замера [SYMSIZE], компенсация центра [SYMSIZE-OFF])", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -535,7 +539,9 @@ namespace MyEplanActions
             // --- 3. Цикл диалога: Отмена/закрытие — выход; «Создать» — пайплайн;
             //        провал создания отчёта — сообщение и заново диалог ---
             EmbeddedReportReader oReader = new EmbeddedReportReader(_logger);
-            MainDialog oDialog = new MainDialog(lstStripNames, lstFormNames, _oSettings);
+            // rev.13.1 (H-4, R10): проект — браузеру символа (кнопка активна);
+            // null — кнопка осталась бы выключенной (не наш проект — не наш случай).
+            MainDialog oDialog = new MainDialog(lstStripNames, lstFormNames, _oSettings, oProject);
             try
             {
                 while (true)
@@ -619,7 +625,9 @@ namespace MyEplanActions
                         if (RunPipeline(oProject, oPage, oReportRef, oReader, eMode, strStrip))
                         {
                             // --- Успешная генерация: сохранение настроек (спека §2 п.9).
-                            //     Символ/слоты варианта — без изменений до H-4 ---
+                            //     Символ/слоты варианта (H-4) применяются браузером
+                            //     MainDialog напрямую к _oSettings (он и есть
+                            //     внутренний settings-объект диалога) — здесь не трогаем. ---
                             _oSettings.TargetStrip = strStrip;
                             _oSettings.Form = strForm;
                             _oSettings.OrientationMode = eMode;
@@ -1111,10 +1119,40 @@ namespace MyEplanActions
             // [SYMSIZE]); из размера выводятся зазор (габарит по оси выноса /2:
             // H — A/2, V — B/2, rev.10.11) и расчётный шаг уровней
             // шин — по нему стоят и ряды символов (rev.10.8/10.10; расчёт в builder'е).
+            // rev.13.1 (Этап 8, H-4, ruling R8): UI-режим — символ и слоты варианта
+            // из настроек; ДВА пробных замера (слот H, слот V) + компенсация центра
+            // (dx,dy) по R9; конфиг геометрии получает A×B варианта ФАКТИЧЕСКОЙ
+            // ориентации (eOrientation разрешена выше — до секции, H-3); CreateSymbols
+            // — индекс варианта фактической ориентации и его (dx,dy).
             _logger.Log("[INFO] --- Фаза F: геометрия кабельной разводки ---");
-            double dSymW = AddInConfiguration.SymbolFallbackSizeMm;
-            double dSymH = AddInConfiguration.SymbolFallbackSizeMm;
-            SymbolSizeMeasurer.TryMeasure(oPage, _logger, out dSymW, out dSymH);
+            bool bVerticalSym = eOrientation == ReportOrientation.Vertical;
+            double dSizeWH, dSizeHH, dOffXH, dOffYH;
+            bool bMeasH = SymbolSizeMeasurer.TryMeasure(oPage, _logger,
+                _oSettings.SymbolLibrary, _oSettings.SymbolName, _oSettings.VariantH,
+                out dSizeWH, out dSizeHH, out dOffXH, out dOffYH);
+            double dSizeWV, dSizeHV, dOffXV, dOffYV;
+            bool bMeasV = SymbolSizeMeasurer.TryMeasure(oPage, _logger,
+                _oSettings.SymbolLibrary, _oSettings.SymbolName, _oSettings.VariantV,
+                out dSizeWV, out dSizeHV, out dOffXV, out dOffYV);
+            // [SYMSIZE-OFF] — новая INFO-строка замера (R8), только при успешном
+            // замере (отказ: offset (0;0) — компенсация нулевая, WARN уже в [SYMSIZE]).
+            if (bMeasH)
+                _logger.Log("[INFO] [SYMSIZE-OFF] '" + _oSettings.SymbolLibrary + "/" +
+                    _oSettings.SymbolName + "/" + _oSettings.VariantH.ToString(CultureInfo.InvariantCulture) +
+                    "': dx=" + dOffXH.ToString("F3", CultureInfo.InvariantCulture) + ", dy=" +
+                    dOffYH.ToString("F3", CultureInfo.InvariantCulture));
+            if (bMeasV)
+                _logger.Log("[INFO] [SYMSIZE-OFF] '" + _oSettings.SymbolLibrary + "/" +
+                    _oSettings.SymbolName + "/" + _oSettings.VariantV.ToString(CultureInfo.InvariantCulture) +
+                    "': dx=" + dOffXV.ToString("F3", CultureInfo.InvariantCulture) + ", dy=" +
+                    dOffYV.ToString("F3", CultureInfo.InvariantCulture));
+            double dSymW, dSymH;
+            SymbolPlacementMath.SizeForOrientation(dSizeWH, dSizeHH, dSizeWV, dSizeHV,
+                bVerticalSym, out dSymW, out dSymH);
+            double dSymOffX = bVerticalSym ? dOffXV : dOffXH;
+            double dSymOffY = bVerticalSym ? dOffYV : dOffYH;
+            int nSymbolVariant = SymbolPlacementMath.VariantForOrientation(
+                _oSettings.VariantH, _oSettings.VariantV, bVerticalSym);
             _logger.Log("[INFO] [SYMSIZE] конфиг: " + dSymW.ToString("F3", CultureInfo.InvariantCulture) +
                 "×" + dSymH.ToString("F3", CultureInfo.InvariantCulture) + " мм");
             CableGeometryConfig oGeomCfg = new CableGeometryConfig();
@@ -1185,7 +1223,11 @@ namespace MyEplanActions
             GraphicalLayer oCableLayer = GraphicLineCreator.ResolveLayerFromTree(
                 lstAll, AddInConfiguration.GraphicsLayerName, _logger);
             int nLines = GraphicLineCreator.CreateLines(oPage, oGeom, oCableLayer, _logger);
-            int nSymbols = CableSymbolCreator.CreateSymbols(oPage, oGeom, _logger);
+            // rev.13.1 (H-4, R8): UI-вставка — тройка из настроек, вариант фактической
+            // ориентации + его компенсация центра (dx,dy) из замера [SYMSIZE-OFF].
+            int nSymbols = CableSymbolCreator.CreateSymbols(oPage, oGeom, _logger,
+                _oSettings.SymbolLibrary, _oSettings.SymbolName, nSymbolVariant,
+                dSymOffX, dSymOffY);
             // rev.11.0: линии-ссылки от символов — линия + замкнутая
             // PolyLine-стрелка с заливкой (решение пользователя 23.09.2026);
             // слой и перо — как у линий разводки.
