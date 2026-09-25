@@ -145,6 +145,14 @@ namespace MyEplanActions
         public const bool SpikeNativeInsertSymbol = false;
         public const bool SpikeActionDump = false;
         public const bool SpikeSymbolPick = true;
+        // SPIKE-3 (rev.13.4, throwaway): какой из двух одновременно зарегистрированных
+        // PICK-интеракций запускать (только при SpikeSymbolPick=true):
+        // 1 = TERMINAL_STRIP_PICK_SPIKE  (база «XEGedIaInsertSymRef» — verbatim-пример
+        //     пользователя), 2 = TERMINAL_STRIP_PICK_SPIKE2 (база «XEGActionInsertSymRef» —
+        //     экшен, найденный/исполненный spike-1), 0 = спайк выключен.
+        // Одна гипотеза за прогон: при возврате False у варианта 1 — переключить константу
+        // и пересобрать. Удалить со всем spike-блоком.
+        public const int SpikePickVariant = 1;
 
         // Фаза H (rev.12.0, spec §6): рамка-призрак — записи GridPitch.<форма>
         // в настройках нет → фиксированный шаг 10 мм.

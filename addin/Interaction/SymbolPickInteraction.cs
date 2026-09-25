@@ -59,16 +59,28 @@ namespace MyEplanActions
         private const int DUMP_CAP = 400;
         private static int s_nSuppressed = 0;
 
-        /// <summary>Шаблон из KB-базы (EasyEPLANner InsertMacrosInteraction.cs, 2.9):
-        /// base.OnSuccess ПЕРВЫМ, весь свой код — под try/catch, сбои — строки в буфер.</summary>
+        /// <summary>SPIKE-3: логика захвата ВЫНЕСЕНА в общий статический CaptureOnSuccess
+        /// (её же использует SymbolPickInteraction2 с другим базовым экшеном). Шаблон из
+        /// KB-базы (EasyEPLANner InsertMacrosInteraction.cs, 2.9): base.OnSuccess ПЕРВЫМ.</summary>
         public override void OnSuccess(InteractionContext result)
         {
             base.OnSuccess(result);
+            CaptureOnSuccess(this, result);
+        }
+
+        /// <summary>Общий захватчик (SPIKE-3): весь свой код под try/catch, сбои — строки
+        /// в буфер; наружу исключений не выпускаем. Какой класс захватил — Buf-строка +
+        /// префикс CollectedVia (факт «1-й vs 2-й вариант базового имени»).</summary>
+        public static void CaptureOnSuccess(InsertInteraction oIa, InteractionContext result)
+        {
+            string strClass = oIa.GetType().Name;
             s_nSuppressed = 0;
+            CollectedVia = "класс " + strClass + " — коллекция не собрана";
+            Buf("OnSuccess от класса: " + strClass);
             try
             {
                 // (1) Коллекция размещённого — reflection-проба двух имён (KB vs пример).
-                System.Array arrInserted = ReadInsertedCollection();
+                System.Array arrInserted = ReadInsertedCollection(oIa);
                 if (arrInserted == null)
                 {
                     Buf("коллекция не получена ни по одному имени — см. пробы выше");
@@ -112,27 +124,29 @@ namespace MyEplanActions
         // --- пробы коллекции ---
 
         /// <summary>Reflection-проба «InsertedPlacements» → «InsertedItems» (порядок по
-        /// брифу) с this.GetType(): свойства НЕ доказаны согласованно (пример vs KB) —
+        /// брифу) с oIa.GetType() (SPIKE-3: метод статичен — общий для классов 1/2;
+        /// свойства НЕ доказаны согласованно (пример vs KB) —
         /// прямых обращений нет. SPIKE-2 fix-1 (Minor-correct): пример читает член из
         /// производного класса неквалифицированно — он может быть protected/protected
         /// internal, а дефолтный GetProperty — public-only (ложное «не найдено»). Поэтому:
-        /// сначала public-проба, при промахе — иерархия this.GetType()→BaseType (cap 5)
+        /// сначала public-проба, при промахе — иерархия oIa.GetType()→BaseType (cap 5)
         /// с Public|NonPublic|Instance; геттер — GetGetMethod(true) (открытый находит и
         /// public); владелец (DeclaringType) и binding — в CollectedVia
-        /// («&lt;имя&gt;@&lt;тип&gt; binding=Public|NonPublic») — факт того же вопроса 2.
+        /// («класс &lt;X&gt;: &lt;имя&gt;@&lt;тип&gt; binding=Public|NonPublic») — факт того же вопроса 2.
         /// Первый непустой не-null-массив — успех; отказы имён — строки в буфер.</summary>
-        private System.Array ReadInsertedCollection()
+        private static System.Array ReadInsertedCollection(InsertInteraction oIa)
         {
+            string strClass = oIa.GetType().Name;
             string[] arrNames = new string[] { "InsertedPlacements", "InsertedItems" };
             foreach (string strName in arrNames)
             {
                 try
                 {
                     bool bNonPublic = false;
-                    PropertyInfo oProp = this.GetType().GetProperty(strName);
+                    PropertyInfo oProp = oIa.GetType().GetProperty(strName);
                     if (oProp == null)
                     {
-                        Type oT = this.GetType();
+                        Type oT = oIa.GetType();
                         for (int iLevel = 0; oProp == null && oT != null && iLevel < 5; iLevel++)
                         {
                             oProp = oT.GetProperty(strName,
@@ -154,21 +168,23 @@ namespace MyEplanActions
                     }
                     string strOwner = (oProp.DeclaringType != null ? oProp.DeclaringType.Name : "?") +
                         " binding=" + (bNonPublic ? "NonPublic" : "Public");
-                    object oValue = oGet.Invoke(this, null);
+                    object oValue = oGet.Invoke(oIa, null);
                     if (oValue == null)
                     {
                         Buf("проба «" + strName + "» @" + strOwner + ": вернула null");
-                        CollectedVia = strName + "@" + strOwner + "=null";
+                        CollectedVia = "класс " + strClass + ": " + strName + "@" + strOwner + "=null";
                         continue;
                     }
                     System.Array arr = oValue as System.Array;
                     if (arr == null)
                     {
-                        CollectedVia = strName + "@" + strOwner + "=не-массив:" + oValue.GetType().FullName;
+                        CollectedVia = "класс " + strClass + ": " + strName + "@" + strOwner +
+                            "=не-массив:" + oValue.GetType().FullName;
                         Buf("проба «" + strName + "»: " + CollectedVia);
                         continue;
                     }
-                    CollectedVia = strName + "@" + strOwner + " (" + Idx(arr.Length) + " эл.)";
+                    CollectedVia = "класс " + strClass + ": " + strName + "@" + strOwner +
+                        " (" + Idx(arr.Length) + " эл.)";
                     Buf("проба «" + strName + "»: успех — " + Idx(arr.Length) + " эл. @" + strOwner);
                     return arr;
                 }
@@ -356,6 +372,31 @@ namespace MyEplanActions
         {
             try { return oTarget.ToString(); }
             catch (Exception oEx) { return "<ToString бросил " + oEx.GetType().Name + ">"; }
+        }
+    }
+
+    /// <summary>SPIKE-3 (throwaway), H-4v2: ВТОРОЙ вариант интеракции — та же гипотеза
+    /// запуска, другая база: [Interaction] над «XEGActionInsertSymRef» (именно этот экшен
+    /// spike-1 нашёл и выполнил с диалогом), тогда как класс 1 базируется на
+    /// «XEGedIaInsertSymRef» (имя из verbatim-примера пользователя). Оба класса
+    /// зарегистрированы ОДНОВРЕМЕННО (имена атрибута различны: ..._PICK_SPIKE /
+    /// ..._PICK_SPIKE2, Ordinal 50/51); AnalyzeAction запускает выбранный гейтом
+    /// AddInConfiguration.SpikePickVariant (1|2). Захват — общий статический
+    /// SymbolPickInteraction.CaptureOnSuccess; класс-захватчик различим в буфере
+    /// («OnSuccess от класса: …» + префикс CollectedVia).
+    /// УДАЛИТЬ вместе с SymbolPickInteraction.cs после вердикта
+    /// (brief .superpowers/sdd/plan_stage8/task-h4v2-spike2-brief.md + устная SPIKE-3).</summary>
+    [InteractionAttribute(Name = "TERMINAL_STRIP_PICK_SPIKE2",
+                          NameOfBaseInteraction = "XEGActionInsertSymRef",
+                          Ordinal = 51,
+                          Prio = 20)]
+    public class SymbolPickInteraction2 : InsertInteraction
+    {
+        /// <summary>Только base + общий захватчик (логика идентична классу 1).</summary>
+        public override void OnSuccess(InteractionContext result)
+        {
+            base.OnSuccess(result);
+            SymbolPickInteraction.CaptureOnSuccess(this, result);
         }
     }
 }

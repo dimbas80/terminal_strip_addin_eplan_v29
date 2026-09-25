@@ -45,7 +45,13 @@ namespace MyEplanActions
         // факты OnSuccess — статика-буфер → [PICK-EXEC]/[PICK-DUMP]/[PICK-ADAPT]/
         // [PICK-CLEAN]; гейт SpikeSymbolPick, spike-1 гейты выключены (факты 25.09);
         // InsertedPlacements vs InsertedItems — только reflection; уборка IsValid→Remove.
-        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.3 (H-4v2 SPIKE-2: InsertInteraction TERMINAL_STRIP_PICK_SPIKE + [PICK-*] дампы; spike-1 гейт off; H-4 production — без изменений; headless — обёртки)";
+        // rev.13.4 (Этап 8, H-4v2 SPIKE-3, throwaway): запуск интеракции по KB-канону —
+        // ActionManager.FindAction("XGedStartInteractionAction") + ctx.AddParameter("Name",
+        // <имя>) + Execute (reflection-проба возврата); лог [PICK-EXEC3]; вариант базового
+        // имени — SpikePickVariant (1=XEGedIaInsertSymRef, 2=XEGActionInsertSymRef; классы
+        // TERMINAL_STRIP_PICK_SPIKE/…2 зарегистрированы одновременно); legacy cli.Execute —
+        // fallback сравнения. Факт rev.13.3: cli.Execute(<имя>) вернул False без диалога.
+        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.4 (H-4v2 SPIKE-3: запуск через XGedStartInteractionAction(Name=...) + SpikePickVariant 1|2, [PICK-EXEC3]; spike-2 захват — общий статический; H-4 production — без изменений)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -64,9 +70,9 @@ namespace MyEplanActions
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            // rev.13.3: SPIKE-2 — производный InsertInteraction + [PICK-*] дампы
-            // (spike-1 закрыт фактами, гейт выключен); H-4 production — без изменений.
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.3 (H-4v2 SPIKE-2: TERMINAL_STRIP_PICK_SPIKE InsertInteraction + [PICK-EXEC]/[PICK-DUMP]/[PICK-ADAPT]/[PICK-CLEAN])", BUILD_STAMP);
+            // rev.13.4: SPIKE-3 — запуск PICK-интеракции через XGedStartInteractionAction
+            // (Name=..., SpikePickVariant 1|2, [PICK-EXEC3]); захват/дампы SPIKE-2 — общие.
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.4 (H-4v2 SPIKE-3: запуск XGedStartInteractionAction(Name=TERMINAL_STRIP_PICK_SPIKE/…2) + [PICK-EXEC3]; дампы [PICK-DUMP]/[PICK-ADAPT]/[PICK-CLEAN])", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -512,14 +518,14 @@ namespace MyEplanActions
             if (AddInConfiguration.SpikeNativeInsertSymbol)
                 NativeSymbolDialogSpike.Run(oProject, _logger);
 
-            // --- 1c. SPIKE-2 (throwaway, H-4v2, rev.13.3): запуск производного
-            //        InsertInteraction (TERMINAL_STRIP_PICK_SPIKE от
-            //        XEGedIaInsertSymRef) через CommandLineInterpreter — синхронно
-            //        «диалог+размещение» (факт spike-1), факты — из статики-буфера
+            // --- 1c. SPIKE-2/3 (throwaway, H-4v2, rev.13.4): запуск PICK-интеракции по
+            //        KB-канону — FindAction("XGedStartInteractionAction") +
+            //        AddParameter("Name", TERMINAL_STRIP_PICK_SPIKE|…2) (вариант базового
+            //        имени — SpikePickVariant); факты OnSuccess — общий статику-буфер
             //        SymbolPickInteraction. Строго до MainDialog; headless не затронут;
-            //        провал — INFO [PICK-EXEC], пайплайн жив. Размещённое убирается
+            //        провал — INFO [PICK-EXEC3], пайплайн жив; размещённое убирается
             //        [PICK-CLEAN]. Удалить вместе с addin/Interaction/
-            //        SymbolPickInteraction.cs и гейтом после вердикта. ---
+            //        SymbolPickInteraction.cs и гейтами после вердикта. ---
             if (AddInConfiguration.SpikeSymbolPick)
                 RunSymbolPickSpike(oProject);
 
@@ -690,15 +696,19 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>SPIKE-2 (throwaway, H-4v2, rev.13.3; brief task-h4v2-spike2-brief.md):
-        /// запуск зарегистрированного производного InsertInteraction
-        /// TERMINAL_STRIP_PICK_SPIKE (от XEGedIaInsertSymRef) через CommandLineInterpreter.
-        /// Execute синхронен полному циклу «диалог+размещение» — факт spike-1; факты
-        /// читаются из статики-буфера SymbolPickInteraction после возврата. Провал (нет
-        /// интеракции/исключение) — INFO [PICK-EXEC], пайплайн и настройки не трогает
-        /// (ruling: Warn не фейлит). Размещённое убирается по IsValid ([PICK-CLEAN],
-        /// урок п.48). Удалить вместе с addin/Interaction/SymbolPickInteraction.cs,
-        /// блоком 1c в RunUi и гейтом SpikeSymbolPick после вердикта.</summary>
+        /// <summary>SPIKE-2/3 (throwaway, H-4v2, rev.13.4; brief task-h4v2-spike2-brief.md
+        /// + устная SPIKE-3): запуск PICK-интеракции по KB-канону —
+        /// ActionManager.FindAction("XGedStartInteractionAction") + ActionCallingContext.
+        /// AddParameter("Name", &lt;имя по SpikePickVariant&gt;) + Execute (reflection-проба,
+        /// фактический возврат в [PICK-EXEC3]). Факт rev.13.3: прямой cli.Execute(<имя>)
+        /// возвращал False без диалога — при недоступности канона вызывается и он
+        /// (TryLegacyCliLaunch) для сравнения. Execute синхронен полному циклу
+        /// «диалог+размещение» — факт spike-1; факты читаются из статики-буфера
+        /// SymbolPickInteraction после возврата (класс-захватчик различим в дампе).
+        /// Провал — INFO [PICK-EXEC3], пайплайн и настройки не трогает (ruling: Warn не
+        /// фейлит). Размещённое убирается по IsValid ([PICK-CLEAN], урок п.48). Удалить
+        /// вместе с addin/Interaction/SymbolPickInteraction.cs, блоком 1c в RunUi и
+        /// гейтами SpikeSymbolPick/SpikePickVariant после вердикта.</summary>
         private void RunSymbolPickSpike(Project oProject)
         {
             // Сброс статики-буфера: OnSuccess «вернуть» нечего, контракт — статика.
@@ -707,43 +717,51 @@ namespace MyEplanActions
             SymbolPickInteraction.PlacedCount = 0;
             SymbolPickInteraction.CollectedVia = "<не собрано>";
 
-            _logger.Log("[INFO] [PICK-EXEC] --- SPIKE-2: запуск интеракции TERMINAL_STRIP_PICK_SPIKE ---");
+            // SPIKE-3 (rev.13.4): гипотеза запуска — KB-канон: интеракции стартуют НЕ
+            // cli.Execute(<имя интеракции>), а экшеном XGedStartInteractionAction с
+            // параметром Name (KB-пример: acc.AddParameter("Name","XGedIaFormatText")).
+            // Факт rev.13.3: cli.Execute("<имя>",ctx) существует (2-арг, bool), но вернул
+            // False без диалога — проверяем канон. Вариант базового имени — гейт
+            // SpikePickVariant (1=TERMINAL_STRIP_PICK_SPIKE на XEGedIaInsertSymRef —
+            // пример пользователя; 2=TERMINAL_STRIP_PICK_SPIKE2 на XEGActionInsertSymRef —
+            // имя, доказанное spike-1). Fallback при недоступности канона: прежний прямой
+            // cli.Execute (TryLegacyCliLaunch) для сравнения. Провал — INFO, пайплайн жив.
+            string strIaName = AddInConfiguration.SpikePickVariant == 2
+                ? "TERMINAL_STRIP_PICK_SPIKE2" : "TERMINAL_STRIP_PICK_SPIKE";
+            _logger.Log("[INFO] [PICK-EXEC3] --- SPIKE-3: запуск через XGedStartInteractionAction, " +
+                "Name='" + strIaName + "' (SpikePickVariant=" +
+                AddInConfiguration.SpikePickVariant.ToString(CultureInfo.InvariantCulture) + ") ---");
             try
             {
-                // SPIKE-2 fix-1 (ревью Important): «True/False» без исключения — синтетика,
-                // реальный boolean-результат Execute (= факт вопроса 1 «зарегистрировалась
-                // ли интеракция») глушился не-присваиванием. Сигнатура Execute на 2.9 не
-                // доказана — reflection-проба: 2-арг (string, ActionCallingContext) как в
-                // примере, иначе 1-арг (string); ни одна — INFO + дамп public-методов
-                // интерпретатора в буфер (кап 30, имена+арность). Побочный выигрыш:
-                // CS1501 прямого вызова перегрузки исключён полностью.
-                CommandLineInterpreter oInterpreter = new CommandLineInterpreter();
-                Type oCliType = typeof(CommandLineInterpreter);
-                MethodInfo oExec2 = oCliType.GetMethod("Execute",
-                    new Type[] { typeof(string), typeof(ActionCallingContext) });
-                if (oExec2 != null)
+                // ActionManager/FindAction — паттерн доказан spike-1 (NativeSymbolDialogSpike).
+                ActionManager oManager = new ActionManager();
+                var oStartAction = oManager.FindAction("XGedStartInteractionAction");
+                if (oStartAction == null)
                 {
-                    object oRes = oExec2.Invoke(oInterpreter,
-                        new object[] { "TERMINAL_STRIP_PICK_SPIKE", new ActionCallingContext() });
-                    _logger.Log("[INFO] [PICK-EXEC] Execute(TERMINAL_STRIP_PICK_SPIKE, 2 арг.) " +
-                        "возврат=" + DescribeCliReturn(oRes) + ", исключений нет");
+                    _logger.Log("[INFO] [PICK-EXEC3] экшен XGedStartInteractionAction не найден — " +
+                        "fallback: прежний прямой cli.Execute для сравнения");
+                    TryLegacyCliLaunch(strIaName);
                 }
                 else
                 {
-                    MethodInfo oExec1 = oCliType.GetMethod("Execute", new Type[] { typeof(string) });
-                    if (oExec1 != null)
+                    var oAcc = new ActionCallingContext();
+                    // AddParameter(string,string) — KB-канон (параметр Name интеракции).
+                    oAcc.AddParameter("Name", strIaName);
+                    // Возврат Execute по сигнатуре не доказан — reflection-проба (стиль
+                    // SPIKE-2 fix-1): логируем фактический boolean запуска.
+                    MethodInfo oExecStart = oStartAction.GetType().GetMethod("Execute",
+                        new Type[] { typeof(ActionCallingContext) });
+                    if (oExecStart == null)
                     {
-                        object oRes = oExec1.Invoke(oInterpreter,
-                            new object[] { "TERMINAL_STRIP_PICK_SPIKE" });
-                        _logger.Log("[INFO] [PICK-EXEC] Execute(TERMINAL_STRIP_PICK_SPIKE, 1 арг.) " +
-                            "возврат=" + DescribeCliReturn(oRes) + ", исключений нет");
+                        _logger.Log("[INFO] [PICK-EXEC3] Execute(ActionCallingContext) не найден у " +
+                            "XGedStartInteractionAction (reflection) — fallback: прямой cli.Execute");
+                        TryLegacyCliLaunch(strIaName);
                     }
                     else
                     {
-                        _logger.Log("[INFO] [PICK-EXEC] Execute-сигнатура не найдена (ни " +
-                            "(string,ActionCallingContext), ни (string)) — интеракция НЕ запускалась; " +
-                            "public-методы CommandLineInterpreter — в [PICK-DUMP]");
-                        DumpCliMethods(oInterpreter);
+                        object oRes = oExecStart.Invoke(oStartAction, new object[] { oAcc });
+                        _logger.Log("[INFO] [PICK-EXEC3] Name='" + strIaName + "' возврат=" +
+                            DescribeCliReturn(oRes));
                     }
                 }
             }
@@ -754,8 +772,8 @@ namespace MyEplanActions
                 Exception oReal = oException;
                 TargetInvocationException oTie = oException as TargetInvocationException;
                 if (oTie != null && oTie.InnerException != null) oReal = oTie.InnerException;
-                // Провал/не-найдено-интеракции — INFO (ruling: Warn не фейлит).
-                _logger.Log("[INFO] [PICK-EXEC] исключение: " + oReal.GetType().Name + ": " + oReal.Message);
+                // Провал/не-найдено — INFO (ruling: Warn не фейлит).
+                _logger.Log("[INFO] [PICK-EXEC3] исключение: " + oReal.GetType().Name + ": " + oReal.Message);
             }
 
             // [PICK-DUMP] — слив буфера OnSuccess, кап 200 строк (ruling).
@@ -802,6 +820,54 @@ namespace MyEplanActions
                 nRemoved.ToString(CultureInfo.InvariantCulture) + "/" +
                 SymbolPickInteraction.PlacedObjects.Count.ToString(CultureInfo.InvariantCulture) +
                 ", отказов " + nCleanFailed.ToString(CultureInfo.InvariantCulture) + ".");
+        }
+
+        /// <summary>SPIKE-3: legacy-дорожка — прежний прямой запуск cli.Execute(<имя
+        /// интеракции>) (reflection-проба сигнатур из SPIKE-2 fix-1: 2-арг
+        /// (string,ActionCallingContext), иначе 1-арг (string), иначе дамп public-методов
+        /// интерпретатора в буфер). Вызывается только когда XGedStartInteractionAction
+        /// недоступен — «для сравнения» двух механизмов запуска в одном прогоне.</summary>
+        private void TryLegacyCliLaunch(string strIaName)
+        {
+            try
+            {
+                CommandLineInterpreter oInterpreter = new CommandLineInterpreter();
+                Type oCliType = typeof(CommandLineInterpreter);
+                MethodInfo oExec2 = oCliType.GetMethod("Execute",
+                    new Type[] { typeof(string), typeof(ActionCallingContext) });
+                if (oExec2 != null)
+                {
+                    object oRes = oExec2.Invoke(oInterpreter,
+                        new object[] { strIaName, new ActionCallingContext() });
+                    _logger.Log("[INFO] [PICK-EXEC] fallback cli.Execute('" + strIaName +
+                        "', 2 арг.) возврат=" + DescribeCliReturn(oRes));
+                }
+                else
+                {
+                    MethodInfo oExec1 = oCliType.GetMethod("Execute", new Type[] { typeof(string) });
+                    if (oExec1 != null)
+                    {
+                        object oRes = oExec1.Invoke(oInterpreter, new object[] { strIaName });
+                        _logger.Log("[INFO] [PICK-EXEC] fallback cli.Execute('" + strIaName +
+                            "', 1 арг.) возврат=" + DescribeCliReturn(oRes));
+                    }
+                    else
+                    {
+                        _logger.Log("[INFO] [PICK-EXEC] fallback: Execute-сигнатура не найдена (ни " +
+                            "(string,ActionCallingContext), ни (string)) — интеракция НЕ запускалась; " +
+                            "public-методы CommandLineInterpreter — в [PICK-DUMP]");
+                        DumpCliMethods(oInterpreter);
+                    }
+                }
+            }
+            catch (Exception oException)
+            {
+                Exception oReal = oException;
+                TargetInvocationException oTie = oException as TargetInvocationException;
+                if (oTie != null && oTie.InnerException != null) oReal = oTie.InnerException;
+                _logger.Log("[INFO] [PICK-EXEC] fallback исключение: " + oReal.GetType().Name + ": " +
+                    oReal.Message);
+            }
         }
 
         /// <summary>SPIKE-2 fix-1: описание фактического возврата Execute — bool как
