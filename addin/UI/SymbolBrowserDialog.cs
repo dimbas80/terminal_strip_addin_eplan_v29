@@ -35,7 +35,10 @@ namespace MyEplanActions
     /// пути у DataModel SymbolLibrary, его перечислители — ТОЛЬКО reflection-пробы
     /// с graceful-деградацией (урок rev.7: имена членов не угадываем — CS1061 на
     /// первой стендовой сборке; отказы проб — Console-дамп + статусная строка
-    /// диалога, ручной ввод имени не запрещаем).</summary>
+    /// диалога, ручной ввод имени не запрещаем). Fix-1 (ревью 09fb80d): ПУТЬ для
+    /// цепочки B — свои кандидаты LocationInfo→Name→IdentifyingName
+    /// (EnumeratePathCandidates), отдельно от отображаемого имени/возвращаемого
+    /// Library (ResolveDisplayPath, Name-first).</summary>
     public class SymbolBrowserDialog : Form
     {
         private readonly Project _oProject;
@@ -316,9 +319,13 @@ namespace MyEplanActions
                 return;
             }
 
-            // Цепочка B: MDSymbolLibrary.Symbols по пути/имени библиотеки.
-            string strPath = ResolveDisplayPath(oLib);
-            if (!string.IsNullOrEmpty(strPath) && TryEnumerateViaMasterData(strPath))
+            // Цепочка B: MDSymbolLibrary.Symbols. FIX-1 (review 09fb80d Important):
+            // путь библиотеки — СВОИ кандидаты (EnumeratePathCandidates внутри
+            // TryCreateMdLibrary), НЕ одно и то же значение, что отображаемое имя:
+            // ResolveDisplayPath отдаёт Name первым и остаётся только отображением/
+            // возвращаемым Library (бриф разделяет: «MDSymbolLibrary(path)» — про путь,
+            // «резолв имён библиотек — свойство Name» — про имя).
+            if (TryEnumerateViaMasterData(oLib))
             {
                 SetStatus("Символы перечислены через MDSymbolLibrary.Symbols (KB), " +
                     _lstAllSymbols.Count.ToString(CultureInfo.InvariantCulture) + " шт.");
@@ -382,15 +389,16 @@ namespace MyEplanActions
             return false;
         }
 
-        /// <summary>Цепочка B: MDSymbolLibrary по пути (конструктор НЕ доказан KB —
-        /// Activator-проба форм (string) и (Project, string)), затем Symbols —
+        /// <summary>Цепочка B: MDSymbolLibrary по кандидатам ПУТИ библиотеки
+        /// (конструктор НЕ доказан KB — Activator-проба форм (string) и
+        /// (Project, string) для каждого кандидата, fix-1), затем Symbols —
         /// KB-доказанное свойство «public MDSymbol[] Symbols { get; }» (прямое
         /// типизированное обращение; сборка Eplan.EplApi.MasterDatau — добавлена
         /// в build_addin.bat). Имена: MDSymbol.Name НЕ доказан — reflection-проба.
         /// Число вариантов: MDSymbol.Variants KB-доказано (TryGetVariantCount).</summary>
-        private bool TryEnumerateViaMasterData(string strPath)
+        private bool TryEnumerateViaMasterData(SymbolLibrary oLib)
         {
-            object oMdLib = TryCreateMdLibrary(strPath);
+            object oMdLib = TryCreateMdLibrary(oLib);
             if (oMdLib == null) return false;
             try
             {
@@ -415,36 +423,79 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Activator-проба конструкторов MDSymbolLibrary: (string path),
-        /// затем (Project, string path). Класс доказан KB-страницами, сигнатуры
-        /// кторов — нет; ни одна форма не подошла/бросила — null (отказ — статус
-        /// диалога, первый прогон на стенде уточнит поверхность по Console).</summary>
-        private object TryCreateMdLibrary(string strPath)
+        /// <summary>Activator-проба конструкторов MDSymbolLibrary (сигнатуры кторов
+        /// KB НЕ доказал; класс — да): для каждого кандидата пути (порядок ниже)
+        /// формы (string path), затем (Project, string path); первая вернувшая
+        /// экземпляр — успех. MissingMethodException формы запоминается ( перегрузки
+        /// нет — повтор с другим путём бессмысленен, лог не шумим), прочие отказы
+        /// формы — Console-дамп и следующий кандидат. Ни одна комбинация — null:
+        /// цепочка B деградирует в INFO-статус диалога, ручной ввод имени не
+        /// запрещаем (первый прогон на стенде уточнит поверхность по Console).</summary>
+        private object TryCreateMdLibrary(SymbolLibrary oLib)
         {
             Type oType = typeof(Eplan.EplApi.MasterData.MDSymbolLibrary);
-            try
+            bool bStringFormMissing = false;
+            bool bProjectFormMissing = false;
+            foreach (string strPath in EnumeratePathCandidates(oLib))
             {
-                return Activator.CreateInstance(oType, new object[] { strPath });
-            }
-            catch (MissingMethodException oEx)
-            {
-                Console.WriteLine("SymbolBrowserDialog: ctor(string) не найден — " + oEx.Message);
-            }
-            catch (Exception oEx)
-            {
-                Console.WriteLine("SymbolBrowserDialog: ctor(string) бросил — " +
-                    oEx.GetType().Name + ": " + oEx.Message);
-            }
-            try
-            {
-                return Activator.CreateInstance(oType, new object[] { _oProject, strPath });
-            }
-            catch (Exception oEx)
-            {
-                Console.WriteLine("SymbolBrowserDialog: ctor(Project,string) бросил — " +
-                    oEx.GetType().Name + ": " + oEx.Message);
+                if (!bStringFormMissing)
+                {
+                    try
+                    {
+                        object oCandidate = Activator.CreateInstance(oType, new object[] { strPath });
+                        if (oCandidate != null) return oCandidate;
+                    }
+                    catch (MissingMethodException oEx)
+                    {
+                        bStringFormMissing = true;
+                        Console.WriteLine("SymbolBrowserDialog: ctor(string) не найден — " + oEx.Message);
+                    }
+                    catch (Exception oEx)
+                    {
+                        Console.WriteLine("SymbolBrowserDialog: ctor(string) «" + strPath +
+                            "» бросил — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                }
+                if (!bProjectFormMissing)
+                {
+                    try
+                    {
+                        object oCandidate = Activator.CreateInstance(oType,
+                            new object[] { _oProject, strPath });
+                        if (oCandidate != null) return oCandidate;
+                    }
+                    catch (MissingMethodException oEx)
+                    {
+                        bProjectFormMissing = true;
+                        Console.WriteLine("SymbolBrowserDialog: ctor(Project,string) не найден — " + oEx.Message);
+                    }
+                    catch (Exception oEx)
+                    {
+                        Console.WriteLine("SymbolBrowserDialog: ctor(Project,string) «" + strPath +
+                            "» бросил — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                }
             }
             return null;
+        }
+
+        /// <summary>Кандидаты ПУТИ к библиотеке (fix-1: ОТДЕЛЬНО от отображаемого
+        /// имени ResolveDisplayPath). Порядок path-first: LocationInfo (полный путь —
+        /// основной кандидат для MDSymbolLibrary(path)), затем Name, IdentifyingName
+        /// (ctor мог принимать и имя). Значения свойств НЕ доказаны KB — reflection-
+        /// проба TryGetStringProperty (graceful), пустые пропуск, дубли не зондируем.</summary>
+        private static List<string> EnumeratePathCandidates(SymbolLibrary oLib)
+        {
+            string[] arrPathProps = new string[] { "LocationInfo", "Name", "IdentifyingName" };
+            List<string> lstPaths = new List<string>();
+            foreach (string strProp in arrPathProps)
+            {
+                string strValue = TryGetStringProperty(oLib, strProp);
+                if (string.IsNullOrEmpty(strValue)) continue;
+                if (lstPaths.IndexOf(strValue) >= 0) continue;
+                lstPaths.Add(strValue);
+            }
+            return lstPaths;
         }
 
         /// <summary>Число вариантов MDSymbol: KB (цитата в шапке) «public
@@ -477,10 +528,10 @@ namespace MyEplanActions
             catch { return null; }
         }
 
-        /// <summary>Отображаемое имя/путь: кандидаты Name → IdentifyingName →
-        /// LocationInfo (свойства НЕ доказаны KB — reflection-проба; в цепочке B
-        /// первое непустое используется и как путь к библиотеке). Отказ всех —
-        /// ToString().</summary>
+        /// <summary>Отображаемое ИМЯ (он же возвращаемый Library): кандидаты Name →
+        /// IdentifyingName → LocationInfo (свойства НЕ доказаны KB — reflection-проба;
+        /// фикс-ревью 1: путь для цепочки B здесь НЕ берётся — EnumeratePathCandidates).
+        /// Отказ всех — ToString().</summary>
         private static string ResolveDisplayPath(object oTarget)
         {
             string[] arrCandidates = new string[] { "Name", "IdentifyingName", "LocationInfo" };
