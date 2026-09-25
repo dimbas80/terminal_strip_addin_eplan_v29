@@ -144,13 +144,21 @@ rev.6.2). Символ — один, два слота варианта (H/V), �
   детекция, H/V — override (`[ORIENT] manual`).
 
 **Steps:**
-- [ ] `DetectOrientation` + unit-кейсы (чистые PhRow-фактуры: ряд→Horizontal,
-      столбец→Vertical, ничья→null) в `tests/`.
-- [ ] Интеграция в UI-режим (headless — конфиг-ориентация без изменений).
+- [x] `DetectOrientation` + unit-кейсы (чистые PhRow-фактуры: ряд→Horizontal,
+      столбец→Vertical, ничья→null) в `tests/`. *(rev.12.2, тесты 24/0, summary п.64)*
+- [x] Интеграция в UI-режим (headless — конфиг-ориентация без изменений).
+      *(rev.12.2–12.4; токены `[ORIENT-AUTO]`/`[ORIENT] manual` в RunPipeline)*
 
 **Ожидание прогона:** UI-прогоны A (вертикальная форма → `[ORIENT-AUTO] Vertical`,
 evidence «столбец 60 vs ряд 1») и B (горизонтальная → `Horizontal`, «ряд 60 vs столбец 1»);
 счётчики == rev.11.15 в обоих; ручной override — `[ORIENT] manual`, работает.
+
+**ИТОГ (25.09.2026):** AUTO — ch1–ch3 + A/B (rev.12.4, summary п.65–66): Vertical
+(столбец X=99.0) / Horizontal (ряд Y=-81.0), счётчики == эталону; ручной override —
+`[ORIENT] manual Vertical` подтверждён прогоном XT1-вертикаль (сборка rev.13.0,
+summary п.71: `[CROSS]` 24==24, оверфлоу-слоты ×2 по Y, графика 14/14 + символ 1/1 +
+ссылка 1/1, DT/видимое ОК, save ✓, WARN 14 = environmental 12 + сироты-K4 2).
+**Task H-3 ЗАКРЫТ полностью.**
 
 ---
 
@@ -176,10 +184,24 @@ evidence «столбец 60 vs ряд 1») и B (горизонтальная �
   линии; зазор/лесенка — от A×B как в rev.10.7+ (габарит-по-оси).
 
 **Steps:**
-- [ ] `SymbolBrowserDialog` + проба перечисления символов (KB-цитаты в комментариях).
-- [ ] Замер (dx,dy) в `SymbolSizeMeasurer` (два варианта, `[SYMSIZE]` + `[SYMSIZE-OFF]`).
-- [ ] Выбор варианта по фактической ориентации (из H-3); компенсация в `CableSymbolCreator`.
-- [ ] Headless — без изменений (константный символ, CABDCP2 центр (0;0) — поведение ==).
+- [x] `SymbolBrowserDialog` + проба перечисления символов (KB-цитаты в комментариях).
+- [x] Замер (dx,dy) в `SymbolSizeMeasurer` (два варианта, `[SYMSIZE]` + `[SYMSIZE-OFF]`).
+- [x] Выбор варианта по фактической ориентации (из H-3); компенсация в `CableSymbolCreator`.
+- [x] Headless — без изменений (константный символ, CABDCP2 центр (0;0) — поведение ==).
+
+**ИТОГ (25.09.2026):** код+ревью готовы (rev.13.1, commits 09fb80d+9d6f2ee, ревью Approved,
+fix-1: путь библиотеки отделён от имени; fix-2: pragma-пары CS0618; fix-3 (74ff36b):
+pragma в форму «голый 618» для легаси-csc (CS1692), выход браузера `Name`→`SymbolName`
+(CS0108 vs Control.Name) — выход диалога: Library/SymbolName/VariantH/VariantV);
+**ЖДЁТ СТЕНДОВОГО ПРОГОНА** — ожидания ниже + заведомый CS-риск одной строки: имя
+`Eplan.EplApi.MasterDatau.dll` в build_addin.bat.
+
+**Дополнение (25.09, пост-прогон rev.13.1):** UX нашего браузера отвергнут пользователем —
+нужен нативный диалог «Вставить символ» (дерево+графика). Закрыто через **H-4v2 SPIKE**
+(throwaway, rev.13.2, коммит 63fe490, ревью Approved): вызов `XEGActionInsertSymRef`
+через `ActionManager`+`ActionCallingContext` (пустой ctx = полный диалог) до MainDialog,
+логи `[SYMDLG]`/`[ACTDUMP]`; продакшн-замена браузера — по фактам спайка
+(ledger «Task H-4v2 SPIKE», PARK-лист: ID→resolve, валидация ctx, режим размещения).
 
 **Ожидание прогона:** UI: выбор CABDCP2 (0/0) — вывод == rev.11.15 (компенсация нулевая);
 выбор GOST K (известно Δ(0;−4)) — символ смещён так, что визуальный центр на линии
