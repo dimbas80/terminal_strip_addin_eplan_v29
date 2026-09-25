@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;   // SPIKE-2 fix-1: reflection-проба сигнатуры/возврата Execute
 using System.Windows.Forms;
 using Eplan.EplApi.ApplicationFramework;
 using Eplan.EplApi.Base;
@@ -707,21 +708,55 @@ namespace MyEplanActions
             SymbolPickInteraction.CollectedVia = "<не собрано>";
 
             _logger.Log("[INFO] [PICK-EXEC] --- SPIKE-2: запуск интеракции TERMINAL_STRIP_PICK_SPIKE ---");
-            bool bDone = false;
             try
             {
+                // SPIKE-2 fix-1 (ревью Important): «True/False» без исключения — синтетика,
+                // реальный boolean-результат Execute (= факт вопроса 1 «зарегистрировалась
+                // ли интеракция») глушился не-присваиванием. Сигнатура Execute на 2.9 не
+                // доказана — reflection-проба: 2-арг (string, ActionCallingContext) как в
+                // примере, иначе 1-арг (string); ни одна — INFO + дамп public-методов
+                // интерпретатора в буфер (кап 30, имена+арность). Побочный выигрыш:
+                // CS1501 прямого вызова перегрузки исключён полностью.
                 CommandLineInterpreter oInterpreter = new CommandLineInterpreter();
-                // Возвращаемый тип Execute не доказан (bool/void) — результат не присваиваем
-                // (исключаем CS0029/CS0815 на легаси-csc); «True» = вызов прошёл без исключения.
-                oInterpreter.Execute("TERMINAL_STRIP_PICK_SPIKE", new ActionCallingContext());
-                bDone = true;
+                Type oCliType = typeof(CommandLineInterpreter);
+                MethodInfo oExec2 = oCliType.GetMethod("Execute",
+                    new Type[] { typeof(string), typeof(ActionCallingContext) });
+                if (oExec2 != null)
+                {
+                    object oRes = oExec2.Invoke(oInterpreter,
+                        new object[] { "TERMINAL_STRIP_PICK_SPIKE", new ActionCallingContext() });
+                    _logger.Log("[INFO] [PICK-EXEC] Execute(TERMINAL_STRIP_PICK_SPIKE, 2 арг.) " +
+                        "возврат=" + DescribeCliReturn(oRes) + ", исключений нет");
+                }
+                else
+                {
+                    MethodInfo oExec1 = oCliType.GetMethod("Execute", new Type[] { typeof(string) });
+                    if (oExec1 != null)
+                    {
+                        object oRes = oExec1.Invoke(oInterpreter,
+                            new object[] { "TERMINAL_STRIP_PICK_SPIKE" });
+                        _logger.Log("[INFO] [PICK-EXEC] Execute(TERMINAL_STRIP_PICK_SPIKE, 1 арг.) " +
+                            "возврат=" + DescribeCliReturn(oRes) + ", исключений нет");
+                    }
+                    else
+                    {
+                        _logger.Log("[INFO] [PICK-EXEC] Execute-сигнатура не найдена (ни " +
+                            "(string,ActionCallingContext), ни (string)) — интеракция НЕ запускалась; " +
+                            "public-методы CommandLineInterpreter — в [PICK-DUMP]");
+                        DumpCliMethods(oInterpreter);
+                    }
+                }
             }
             catch (Exception oException)
             {
-                _logger.Log("[INFO] [PICK-EXEC] исключение: " + oException.GetType().Name + ": " +
-                    oException.Message);
+                // Invoke оборачивает исключениеcallee в TargetInvocationException —
+                // разворачиваем (C#6 exception-filters нет, разворот ручной).
+                Exception oReal = oException;
+                TargetInvocationException oTie = oException as TargetInvocationException;
+                if (oTie != null && oTie.InnerException != null) oReal = oTie.InnerException;
+                // Провал/не-найдено-интеракции — INFO (ruling: Warn не фейлит).
+                _logger.Log("[INFO] [PICK-EXEC] исключение: " + oReal.GetType().Name + ": " + oReal.Message);
             }
-            _logger.Log("[INFO] [PICK-EXEC] " + (bDone ? "True" : "False"));
 
             // [PICK-DUMP] — слив буфера OnSuccess, кап 200 строк (ruling).
             int nDumped = 0;
@@ -767,6 +802,49 @@ namespace MyEplanActions
                 nRemoved.ToString(CultureInfo.InvariantCulture) + "/" +
                 SymbolPickInteraction.PlacedObjects.Count.ToString(CultureInfo.InvariantCulture) +
                 ", отказов " + nCleanFailed.ToString(CultureInfo.InvariantCulture) + ".");
+        }
+
+        /// <summary>SPIKE-2 fix-1: описание фактического возврата Execute — bool как
+        /// True/False, не-bool/null — «возврат &lt;тип&gt;» (+ToString скаляра безопасно).</summary>
+        private static string DescribeCliReturn(object oRes)
+        {
+            if (oRes == null) return "<null>";
+            if (oRes is bool) return ((bool)oRes) ? "True" : "False";
+            string strValue;
+            try { strValue = " '" + oRes.ToString() + "'"; }
+            catch { strValue = ""; }
+            return "возврат <" + oRes.GetType().Name + ">" + strValue;
+        }
+
+        /// <summary>SPIKE-2 fix-1: дамп public instance-методов CommandLineInterpreter
+        /// (имена+арность+тип возврата, кап 30) в статику-буфер — сольётся в [PICK-DUMP]
+        /// общим циклом (PickDump-стиль). Только чтение reflection, без вызовов.</summary>
+        private static void DumpCliMethods(CommandLineInterpreter oInterpreter)
+        {
+            try
+            {
+                MethodInfo[] arrMethods = oInterpreter.GetType().GetMethods(
+                    BindingFlags.Public | BindingFlags.Instance);
+                int n = 0;
+                for (int i = 0; i < arrMethods.Length; i++)
+                {
+                    if (n >= 30)
+                    {
+                        SymbolPickInteraction.PickDump.Add("cli.method: кап 30 — дальше обрезано по капу (" +
+                            (arrMethods.Length - 30).ToString(CultureInfo.InvariantCulture) + " не показаны)");
+                        break;
+                    }
+                    n++;
+                    SymbolPickInteraction.PickDump.Add("cli.method " + arrMethods[i].Name + "(" +
+                        arrMethods[i].GetParameters().Length.ToString(CultureInfo.InvariantCulture) +
+                        " арг.) : " + arrMethods[i].ReturnType.Name);
+                }
+            }
+            catch (Exception oException)
+            {
+                SymbolPickInteraction.PickDump.Add("cli.method дамп бросил " +
+                    oException.GetType().Name + ": " + oException.Message);
+            }
         }
 
         /// <summary>SPIKE-2 [PICK-ADAPT]: сверка SymbolVariant размещённого с каталогом —

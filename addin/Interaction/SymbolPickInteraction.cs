@@ -113,8 +113,14 @@ namespace MyEplanActions
 
         /// <summary>Reflection-проба «InsertedPlacements» → «InsertedItems» (порядок по
         /// брифу) с this.GetType(): свойства НЕ доказаны согласованно (пример vs KB) —
-        /// прямых обращений нет. Первое существующее/не-null-массив — успех (CollectedVia
-        /// фиксирует имя и число). Отказ каждого — строка в буфер, проба следующей.</summary>
+        /// прямых обращений нет. SPIKE-2 fix-1 (Minor-correct): пример читает член из
+        /// производного класса неквалифицированно — он может быть protected/protected
+        /// internal, а дефолтный GetProperty — public-only (ложное «не найдено»). Поэтому:
+        /// сначала public-проба, при промахе — иерархия this.GetType()→BaseType (cap 5)
+        /// с Public|NonPublic|Instance; геттер — GetGetMethod(true) (открытый находит и
+        /// public); владелец (DeclaringType) и binding — в CollectedVia
+        /// («&lt;имя&gt;@&lt;тип&gt; binding=Public|NonPublic») — факт того же вопроса 2.
+        /// Первый непустой не-null-массив — успех; отказы имён — строки в буфер.</summary>
         private System.Array ReadInsertedCollection()
         {
             string[] arrNames = new string[] { "InsertedPlacements", "InsertedItems" };
@@ -122,34 +128,48 @@ namespace MyEplanActions
             {
                 try
                 {
+                    bool bNonPublic = false;
                     PropertyInfo oProp = this.GetType().GetProperty(strName);
                     if (oProp == null)
                     {
-                        Buf("проба «" + strName + "»: свойство не найдено (reflection)");
+                        Type oT = this.GetType();
+                        for (int iLevel = 0; oProp == null && oT != null && iLevel < 5; iLevel++)
+                        {
+                            oProp = oT.GetProperty(strName,
+                                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                            if (oProp != null) bNonPublic = true;
+                            else oT = oT.BaseType;
+                        }
+                    }
+                    if (oProp == null)
+                    {
+                        Buf("проба «" + strName + "»: свойство не найдено (public и иерархия NonPublic, cap 5)");
                         continue;
                     }
-                    MethodInfo oGet = oProp.GetGetMethod();
+                    MethodInfo oGet = oProp.GetGetMethod(true);
                     if (oGet == null)
                     {
-                        Buf("проба «" + strName + "»: нет открытого геттера");
+                        Buf("проба «" + strName + "»: геттер недоступен (и NonPublic)");
                         continue;
                     }
+                    string strOwner = (oProp.DeclaringType != null ? oProp.DeclaringType.Name : "?") +
+                        " binding=" + (bNonPublic ? "NonPublic" : "Public");
                     object oValue = oGet.Invoke(this, null);
                     if (oValue == null)
                     {
-                        Buf("проба «" + strName + "»: вернула null");
-                        CollectedVia = strName + "=null";
+                        Buf("проба «" + strName + "» @" + strOwner + ": вернула null");
+                        CollectedVia = strName + "@" + strOwner + "=null";
                         continue;
                     }
                     System.Array arr = oValue as System.Array;
                     if (arr == null)
                     {
-                        CollectedVia = strName + "=не-массив:" + oValue.GetType().FullName;
+                        CollectedVia = strName + "@" + strOwner + "=не-массив:" + oValue.GetType().FullName;
                         Buf("проба «" + strName + "»: " + CollectedVia);
                         continue;
                     }
-                    CollectedVia = strName + " (" + Idx(arr.Length) + " эл.)";
-                    Buf("проба «" + strName + "»: успех — " + Idx(arr.Length) + " эл.");
+                    CollectedVia = strName + "@" + strOwner + " (" + Idx(arr.Length) + " эл.)";
+                    Buf("проба «" + strName + "»: успех — " + Idx(arr.Length) + " эл. @" + strOwner);
                     return arr;
                 }
                 catch (Exception oEx)
@@ -264,11 +284,22 @@ namespace MyEplanActions
                     Buf("ctx.method " + oM.Name + "(" + Idx(oM.GetParameters().Length) + " арг.) : " + oM.ReturnType.Name);
                 }
                 // Пробы GetContextParameter: типовые имена + из дампа (уникальные).
+                // SPIKE-2 fix-1 (hygiene): кап 30 проб, обрезание — пометкой в дампе.
                 string[] arrTyped = new string[] { "Name", "SymbolLibName", "SymbolId", "VariantId" };
                 foreach (string strName in arrTyped)
                     if (lstProbeNames.IndexOf(strName) < 0) lstProbeNames.Add(strName);
+                int nProbed = 0;
                 foreach (string strName in lstProbeNames)
+                {
+                    if (nProbed >= 30)
+                    {
+                        Buf("ctx: кап 30 проб GetContextParameter — " +
+                            Idx(lstProbeNames.Count - 30) + " имён обрезано по капу");
+                        break;
+                    }
+                    nProbed++;
                     Buf("ctx.GetParameter('" + strName + "') → " + ReadContextParam(result, strName));
+                }
             }
             catch (Exception oEx)
             {
