@@ -39,7 +39,12 @@ namespace MyEplanActions
         // вызов нативного диалога «Вставить символ» (XEGActionInsertSymRef) + [ACTDUMP];
         // логи [SYMDLG]; гейты AddInConfiguration.Spike*; провал спайка пайплайн не
         // останавливает; H-4-браузер/замеры/DT — не тронуты (fallback до вердикта).
-        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.2 (H-4v2 SPIKE: нативный диалог XEGActionInsertSymRef до MainDialog + [ACTDUMP]; H-4 браузер/замеры/компенсация — без изменений; headless — обёртки)";
+        // rev.13.3 (Этап 8, H-4v2 SPIKE-2, throwaway): производный InsertInteraction
+        // TERMINAL_STRIP_PICK_SPIKE (от XEGedIaInsertSymRef) через CommandLineInterpreter;
+        // факты OnSuccess — статика-буфер → [PICK-EXEC]/[PICK-DUMP]/[PICK-ADAPT]/
+        // [PICK-CLEAN]; гейт SpikeSymbolPick, spike-1 гейты выключены (факты 25.09);
+        // InsertedPlacements vs InsertedItems — только reflection; уборка IsValid→Remove.
+        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.3 (H-4v2 SPIKE-2: InsertInteraction TERMINAL_STRIP_PICK_SPIKE + [PICK-*] дампы; spike-1 гейт off; H-4 production — без изменений; headless — обёртки)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -58,9 +63,9 @@ namespace MyEplanActions
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            // rev.13.2: SPIKE H-4v2 — нативный диалог выбора символа до MainDialog +
-            // [ACTDUMP] (UI-ветка); H-4: браузер+два замера+компенсация — без изменений.
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.2 (H-4v2 SPIKE: нативный диалог XEGActionInsertSymRef + [ACTDUMP]; H-4: браузер, замеры [SYMSIZE], компенсация [SYMSIZE-OFF])", BUILD_STAMP);
+            // rev.13.3: SPIKE-2 — производный InsertInteraction + [PICK-*] дампы
+            // (spike-1 закрыт фактами, гейт выключен); H-4 production — без изменений.
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.3 (H-4v2 SPIKE-2: TERMINAL_STRIP_PICK_SPIKE InsertInteraction + [PICK-EXEC]/[PICK-DUMP]/[PICK-ADAPT]/[PICK-CLEAN])", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -506,6 +511,17 @@ namespace MyEplanActions
             if (AddInConfiguration.SpikeNativeInsertSymbol)
                 NativeSymbolDialogSpike.Run(oProject, _logger);
 
+            // --- 1c. SPIKE-2 (throwaway, H-4v2, rev.13.3): запуск производного
+            //        InsertInteraction (TERMINAL_STRIP_PICK_SPIKE от
+            //        XEGedIaInsertSymRef) через CommandLineInterpreter — синхронно
+            //        «диалог+размещение» (факт spike-1), факты — из статики-буфера
+            //        SymbolPickInteraction. Строго до MainDialog; headless не затронут;
+            //        провал — INFO [PICK-EXEC], пайплайн жив. Размещённое убирается
+            //        [PICK-CLEAN]. Удалить вместе с addin/Interaction/
+            //        SymbolPickInteraction.cs и гейтом после вердикта. ---
+            if (AddInConfiguration.SpikeSymbolPick)
+                RunSymbolPickSpike(oProject);
+
             // --- 2. Данные для диалога: (а) клеммники ВСЕГО ПРОЕКТА (rev.12.3: клеммники
             //        размещены на многополюсных страницах, активная под прогон —
             //        однополюсная, постраничный список блокировал диалог; защита от
@@ -670,6 +686,179 @@ namespace MyEplanActions
             finally
             {
                 oDialog.Dispose();
+            }
+        }
+
+        /// <summary>SPIKE-2 (throwaway, H-4v2, rev.13.3; brief task-h4v2-spike2-brief.md):
+        /// запуск зарегистрированного производного InsertInteraction
+        /// TERMINAL_STRIP_PICK_SPIKE (от XEGedIaInsertSymRef) через CommandLineInterpreter.
+        /// Execute синхронен полному циклу «диалог+размещение» — факт spike-1; факты
+        /// читаются из статики-буфера SymbolPickInteraction после возврата. Провал (нет
+        /// интеракции/исключение) — INFO [PICK-EXEC], пайплайн и настройки не трогает
+        /// (ruling: Warn не фейлит). Размещённое убирается по IsValid ([PICK-CLEAN],
+        /// урок п.48). Удалить вместе с addin/Interaction/SymbolPickInteraction.cs,
+        /// блоком 1c в RunUi и гейтом SpikeSymbolPick после вердикта.</summary>
+        private void RunSymbolPickSpike(Project oProject)
+        {
+            // Сброс статики-буфера: OnSuccess «вернуть» нечего, контракт — статика.
+            SymbolPickInteraction.PickDump.Clear();
+            SymbolPickInteraction.PlacedObjects.Clear();
+            SymbolPickInteraction.PlacedCount = 0;
+            SymbolPickInteraction.CollectedVia = "<не собрано>";
+
+            _logger.Log("[INFO] [PICK-EXEC] --- SPIKE-2: запуск интеракции TERMINAL_STRIP_PICK_SPIKE ---");
+            bool bDone = false;
+            try
+            {
+                CommandLineInterpreter oInterpreter = new CommandLineInterpreter();
+                // Возвращаемый тип Execute не доказан (bool/void) — результат не присваиваем
+                // (исключаем CS0029/CS0815 на легаси-csc); «True» = вызов прошёл без исключения.
+                oInterpreter.Execute("TERMINAL_STRIP_PICK_SPIKE", new ActionCallingContext());
+                bDone = true;
+            }
+            catch (Exception oException)
+            {
+                _logger.Log("[INFO] [PICK-EXEC] исключение: " + oException.GetType().Name + ": " +
+                    oException.Message);
+            }
+            _logger.Log("[INFO] [PICK-EXEC] " + (bDone ? "True" : "False"));
+
+            // [PICK-DUMP] — слив буфера OnSuccess, кап 200 строк (ruling).
+            int nDumped = 0;
+            foreach (string strLine in SymbolPickInteraction.PickDump)
+            {
+                nDumped++;
+                if (nDumped > 200)
+                {
+                    _logger.Log("[INFO] [PICK-DUMP] кап 200 — опущено строк буфера: " +
+                        (SymbolPickInteraction.PickDump.Count - 200).ToString(CultureInfo.InvariantCulture));
+                    break;
+                }
+                _logger.Log("[INFO] [PICK-DUMP] " + strLine);
+            }
+            _logger.Log("[INFO] [PICK-DUMP] коллекция: '" + SymbolPickInteraction.CollectedVia +
+                "', размещено " + SymbolPickInteraction.PlacedCount.ToString(CultureInfo.InvariantCulture) +
+                ", буфер " + SymbolPickInteraction.PickDump.Count.ToString(CultureInfo.InvariantCulture) + ".");
+
+            // [PICK-ADAPT] — попытка восстановить (библиотека/имя/вариант) сверкой каталогом.
+            PickAdaptDump(oProject);
+
+            // [PICK-CLEAN] — уборка пробы: страница не засоряется (урок п.48).
+            int nRemoved = 0;
+            int nCleanFailed = 0;
+            foreach (Placement oPlaced in SymbolPickInteraction.PlacedObjects)
+            {
+                try
+                {
+                    if (oPlaced != null && oPlaced.IsValid)
+                    {
+                        oPlaced.Remove();
+                        nRemoved++;
+                    }
+                }
+                catch (Exception oException)
+                {
+                    nCleanFailed++;
+                    _logger.Log("[INFO] [PICK-CLEAN] Remove бросил " + oException.GetType().Name + ": " +
+                        oException.Message + " — возможен останец (урок п.48)");
+                }
+            }
+            _logger.Log("[INFO] [PICK-CLEAN] удалено " +
+                nRemoved.ToString(CultureInfo.InvariantCulture) + "/" +
+                SymbolPickInteraction.PlacedObjects.Count.ToString(CultureInfo.InvariantCulture) +
+                ", отказов " + nCleanFailed.ToString(CultureInfo.InvariantCulture) + ".");
+        }
+
+        /// <summary>SPIKE-2 [PICK-ADAPT]: сверка SymbolVariant размещённого с каталогом —
+        /// доказанный паттерн SymbolLibrary(project, lib) → library[name] → symbol[idx]
+        /// (0-based) и сравнение ToString() Ordinal (бриф, п.«Каталог сверки»). Кандидаты —
+        /// текущие настройки + probe-константы конфигу (не полное перечисление — спайк);
+        /// нечитаемые индексы — штатный пропуск. Ничего в настройки НЕ пишем: сначала
+        /// facts (критерий — [PICK-ADAPT] строки в логе).</summary>
+        private void PickAdaptDump(Project oProject)
+        {
+            if (SymbolPickInteraction.PlacedObjects.Count == 0)
+            {
+                _logger.Log("[INFO] [PICK-ADAPT] размещённого нет — сверка не нужна");
+                return;
+            }
+            if (oProject == null)
+            {
+                _logger.Log("[INFO] [PICK-ADAPT] проект null — сверка пропущена");
+                return;
+            }
+            List<string> lstLibs = new List<string>();
+            if (!string.IsNullOrEmpty(_oSettings.SymbolLibrary)) lstLibs.Add(_oSettings.SymbolLibrary);
+            if (!string.IsNullOrEmpty(AddInConfiguration.SymbolProbeLibrary) &&
+                lstLibs.IndexOf(AddInConfiguration.SymbolProbeLibrary) < 0)
+                lstLibs.Add(AddInConfiguration.SymbolProbeLibrary);
+            List<string> lstNames = new List<string>();
+            if (!string.IsNullOrEmpty(_oSettings.SymbolName)) lstNames.Add(_oSettings.SymbolName);
+            if (!string.IsNullOrEmpty(AddInConfiguration.SymbolProbeName) &&
+                lstNames.IndexOf(AddInConfiguration.SymbolProbeName) < 0)
+                lstNames.Add(AddInConfiguration.SymbolProbeName);
+
+            int nPlaced = 0;
+            foreach (Placement oPlaced in SymbolPickInteraction.PlacedObjects)
+            {
+                nPlaced++;
+                string strPl = nPlaced.ToString(CultureInfo.InvariantCulture);
+                Function oFunc = oPlaced as Function;
+                if (oFunc == null)
+                {
+                    _logger.Log("[INFO] [PICK-ADAPT] placed#" + strPl + " — не Function, сверка пропущена");
+                    continue;
+                }
+                string strVariant;
+                try
+                {
+                    var oVariant = oFunc.SymbolVariant;   // KB-доказан (бриф); тип не именуем
+                    strVariant = oVariant == null ? null : oVariant.ToString();
+                }
+                catch (Exception oException)
+                {
+                    _logger.Log("[INFO] [PICK-ADAPT] placed#" + strPl + ": чтение SymbolVariant бросило " +
+                        oException.GetType().Name + " — сверка пропущена");
+                    continue;
+                }
+                if (string.IsNullOrEmpty(strVariant))
+                {
+                    _logger.Log("[INFO] [PICK-ADAPT] placed#" + strPl + ": SymbolVariant пуст — сверка пропущена");
+                    continue;
+                }
+                bool bFound = false;
+                for (int iLib = 0; iLib < lstLibs.Count && !bFound; iLib++)
+                {
+                    for (int iName = 0; iName < lstNames.Count && !bFound; iName++)
+                    {
+                        for (int iVar = 0; iVar <= 3 && !bFound; iVar++)
+                        {
+                            try
+                            {
+                                var oLibrary = new Eplan.EplApi.DataModel.MasterData.SymbolLibrary(oProject, lstLibs[iLib]);
+                                var oSymbol = oLibrary[lstNames[iName]];
+                                var oCandidate = oSymbol[iVar];
+                                if (oCandidate == null) continue;
+                                if (string.Equals(oCandidate.ToString(), strVariant, StringComparison.Ordinal))
+                                {
+                                    _logger.Log("[INFO] [PICK-ADAPT] placed#" + strPl + " → '" + lstLibs[iLib] +
+                                        "/" + lstNames[iName] + "/" +
+                                        iVar.ToString(CultureInfo.InvariantCulture) +
+                                        "' (ToString совпал с каталогом)");
+                                    bFound = true;
+                                }
+                            }
+                            catch
+                            {
+                                // Библиотека/имя/индекс недоступны — штатный пробы-пропуск (спайк).
+                            }
+                        }
+                    }
+                }
+                if (!bFound)
+                    _logger.Log("[INFO] [PICK-ADAPT] placed#" + strPl +
+                        ": отображение среди кандидатов (настройки+константы, варианты 0..3) не найдено" +
+                        " — ToString-факт уже в [PICK-DUMP]");
             }
         }
 
