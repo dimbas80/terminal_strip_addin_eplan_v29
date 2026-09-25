@@ -25,11 +25,13 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        // rev.12.7 (Этап 8, H-3c-2, прогон XT1 25.09.2026 15:04): оверфлоу-точка
-        // вирт-колонки (следствие 12.6) получала TerminalSide.Unknown (у вирт-колонки
-        // нет стубов → ColumnPerpRef = NaN) → [CABGROUP]OtherConnections → шина по
-        // верхнему краю. Фикс: сторона от ближайшей соседней точки той же клеммы.
-        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.12.7 (H-3c-2: сторона оверфлоу-точки от соседней точки клеммы)";
+        // rev.13.0 (Этап 8): видимое ОУ — по примеру пользователя первичным путём
+        // 2-арг NameService.SetFullNameAndAdjustVisibleName(oFunc, oParts) с
+        // предварительным oNames.Page (список без 1800); false → fallback
+        // rev.11.15-присваивание + шаг AdjustVisibleName (rev.12.9). rev.12.8
+        // (3-арг, список с 1800) — прогон false×4; rev.12.9 (только AVN) —
+        // см. summary. Арбитр — readback 20002 + Name.
+        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.0 (DT: NameService 2-arg + список без 1800; fallback 11.15+AVN; readback 20002)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -48,9 +50,9 @@ namespace MyEplanActions
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            // rev.12.7 (H-3c-2): заголовок прогона — сторона оверфлоу-точки от
-            // соседней точки клеммы, прогон XT1 25.09.2026 15:04.
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.12.7 (H-3c-2: сторона оверфлоу-точки от соседней точки клеммы)", BUILD_STAMP);
+            // rev.13.0: цепочка NameService (2-arg SetFullName → fallback 11.15 +
+            // AVN), арбитр — readback 20002 + Name.
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.0 (DT: NameService 2-arg без 1800, fallback 11.15+AVN, readback 20002)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,

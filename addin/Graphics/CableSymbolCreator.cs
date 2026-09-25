@@ -5,6 +5,7 @@ using System.Reflection;
 using Eplan.EplApi.Base;
 using Eplan.EplApi.DataModel;
 using Eplan.EplApi.DataModel.MasterData;
+using Eplan.EplApi.HEServices;
 
 namespace MyEplanActions
 {
@@ -110,6 +111,41 @@ namespace MyEplanActions
     /// подчинённых = базовый+1..9. WritePlantSegments →
     /// WriteStructureSegments (базовый номер — параметр), вызовы ×4 в
     /// обоих путях; readback первых подчинённых ×4 (1101/1401/1201/1601).
+    /// rev.12.8: пустое «Видимое ОУ» после NameParts-присваивания → символ
+    /// терял ОУ при обновлении листа/перемещении графики (visible не
+    /// вычисляется; FUNC_VISIBLENAME #20002 read-only). Пробованный путь —
+    /// HEServices.NameService.SetFullNameAndAdjustVisibleName(Page,
+    /// FunctionBase, UniversalPropertyList) (KB topic2727: «sets the full
+    /// name ... and adjusts the visible name»; false — объект НЕ изменён,
+    /// атомарно); offline-список FunctionBasePropertyList наследует
+    /// UniversalPropertyList. Ветка УДАЛЕНА в rev.12.9 (см. ниже).
+    /// Readback [SYMDT-RD] 20002 — критерий успеха в логе (INFO): видимое
+    /// заполнено и равно источнику.
+    /// rev.12.8 ПРОГОН (25.09): SetFullNameAndAdjustVisibleName вернул false на
+    /// ВСЕХ 4 символах (без исключения; docs: false = «visible name cannot be
+    /// evaluated», объект не тронут — откат отработал, полное ОУ как в rev.11.15,
+    /// 20002=''). rev.12.9: первичная запись возвращена к rev.11.15 (проверенный
+    /// offline-путь), ветка SetFullName... удалена; видимое ОУ — отдельным шагом
+    /// ПОСЛЕ записанного полного имени: NameService.AdjustVisibleName(Page,
+    /// FunctionBase) (KB: «evaluates the visible name and visible name format
+    /// FROM THE FULLNAME of the functionbase and sets these evaluated values at
+    /// the functionbase-object»; false — «instance name could not be evaluated
+    /// and set due to nesting»). Отличная от 12.8 временна́я точка: полное имя
+    /// уже на объекте (не внутри атомарной установки). Отказ — WARN [SYMDT-AVN],
+    /// не прерывает; критерий успеха — readback 20002.
+    /// rev.13.0: по примеру пользователя — первичный путь 2-арг.
+    /// SetFullNameAndAdjustVisibleName(oFunc, oParts) с ПРЕДВАРИТЕЛЬНО
+    /// выставленным NameService.Page (docs: ApplicationException «when page is
+    /// not set»), offline-список БЕЗ 1800 (платформа его отбрасывает; в примере
+    /// его нет — подозреваемый в false rev.12.8). true — сервис поставил
+    /// полное+видимое (присваивание/AVN пропускаются); false/исключение — WARN
+    /// [SYMDT-NSS] → rev.11.15-присваивание + AVN. Цепочка различима по токенам;
+    /// арбитр — [SYMDT-RD] 20002 + Name.
+    /// rev.13.0 ПРОГОН (25.09, п.70 summary) — ЗАКРЫТА: сервис 2-arg ok на всех
+    /// 4 символах (fallback/AVN не понадобились), 20002 заполнено, Name==источнику,
+    /// ОУ не теряется при обновлении листа/перемещении (визуально). Visible
+    /// вычислен по схеме EPLAN (маркер пустого блока «место установки» опущен:
+    /// '=HII-1.1++М#3-K140' — норма).
     /// Поворот 0° (spec §7). Центр круга
     /// = точке вставки (rev.10.4: офсет п.47 опровергнут — замер был загрязнён
     /// останцами старых прогонов). Отказ —
@@ -204,7 +240,7 @@ namespace MyEplanActions
                     // rev.11.13). Отказы — WARN [SYMDT] внутри,
                     // счётчик и остальные символы не страдают.
                     if (!string.IsNullOrEmpty(oSym.CableName))
-                        WriteDeviceTagProperties(oFunc, oSym, log);
+                        WriteDeviceTagProperties(oPage, oFunc, oSym, log);
                 }
                 catch (Exception oEx)
                 {
@@ -236,15 +272,25 @@ namespace MyEplanActions
         /// FunctionBasePropertyList (отказ — WARN [SYMDT]) +
         /// WriteStructureSegments×4 (главный + подчинённые по точкам:
         /// 1100←установка, 1400←место сборки, 1200←место установки,
-        /// 1600←структура) + SetNamePart×3
-        /// (1800←имя, 20013←буква, 20014←счётчик; пустая
-        /// часть — без записи) → присваивание oFunc.NameParts = oParts
-        /// (INFO; отказ — WARN + fallback) → fallback get-modify-set на
-        /// живом NameParts (все непустые части, счётчик, INFO «дописано
-        /// частей: N») → [SYMDT-RD] readback ReadBackNamePart×7 + первые
+        /// 1600←структура) + SetNamePart×2
+        /// (20013←буква, 20014←счётчик; пустая
+        /// часть — без записи; 1800 исключён из списка rev.13.0 — платформа
+        /// его отбрасывает, имя несут 20013/20014) →
+        /// [SYMDT-RD] readback ReadBackNamePart×6 + первые
         /// подчинённые ×4 (1101/1401/1201/1601; пустые не читаются) →
-        /// финальный Name-readback [SYMDT-RD] — арбитр успеха.</summary>
-        private static void WriteDeviceTagProperties(Function oFunc,
+        /// финальный Name-readback [SYMDT-RD] — арбитр успеха → rev.12.8 (проба
+        /// SetFullNameAndAdjustVisibleName 3-арг=false на всех символах)
+        /// → rev.12.9: шаг NameService.AdjustVisibleName(oPage, oFunc) ПОСЛЕ
+        /// записи полного (ok — INFO [SYMDT-AVN], false/исключение —
+        /// WARN [SYMDT-AVN]) → rev.13.0 (пример пользователя): ПЕРВИЧНЫМ путём
+        /// — 2-арг SetFullNameAndAdjustVisibleName(oFunc, oParts) с
+        /// предварительным oNames.Page = oPage, список БЕЗ 1800; true —
+        /// полное+видимое поставлены сервисом (присваивание/AVN пропускаются);
+        /// false/исключение — WARN [SYMDT-NSS] → rev.11.15-присваивание + AVN →
+        /// readback + [SYMDT-RD] 20002 (видимое). Цепочка механизмов различима
+        /// по токенам: [SYMDT] запись ОУ: NameService 2-arg / запись NameParts:
+        /// offline-список / [SYMDT-AVN].</summary>
+        private static void WriteDeviceTagProperties(Page oPage, Function oFunc,
             CableSymbolPlacement oSym, DiagnosticLogger log)
         {
             string[] arrParts = ParseDeviceTag(oSym.CableName);
@@ -290,11 +336,16 @@ namespace MyEplanActions
                 log.Warn("[SYMDT] offline-список NameParts: " +
                     oEx.GetType().Name + ": " + oEx.Message);
             }
+            // rev.13.0: 1800 (PRODUCT) из offline-списка ИСКЛЮЧЁН — платформа
+            // его отбрасывает (p.58), имя несут 20013/20014; в списке для
+            // NameService это подозреваемый «problem» (пример-референс:
+            // DESIGNATION_PLANT/LOCATION + FUNC_CODE/COUNTER, без 1800).
+            // Заодно и для fallback-присваивания: rev.11.15 Name собирается
+            // без 1800 (readback 1800 и так был недоступен).
             bool bPlant = false;
             bool bLocation = false;
             bool bPlace = false;
             bool bUserStruct = false;
-            bool bProduct = false;
             bool bCode = false;
             bool bCounter = false;
             if (oParts != null)
@@ -307,33 +358,88 @@ namespace MyEplanActions
                     arrPlaceSegs, strPlaceOfInstallation, log);
                 bUserStruct = WriteStructureSegments(oParts, 1600,
                     arrUserSegs, strUserStruct, log);
-                bProduct = SetNamePart(oParts, 1800, strName, log);
                 bCode = SetNamePart(oParts, 20013, strCode, log);
                 bCounter = SetNamePart(oParts, 20014, strCounter, log);
             }
             bool bOfflineOk = bPlant && bLocation && bPlace && bUserStruct &&
-                bProduct && bCode && bCounter && oParts != null;
+                bCode && bCounter && oParts != null;
+            // rev.13.0 (пример пользователя, KB topic2726): первичный путь —
+            // 2-арг. перегрузка SetFullNameAndAdjustVisibleName(FunctionBase,
+            // UniversalPropertyList) с ПРЕДВАРИТЕЛЬНО выставленным oNames.Page
+            // (docs: ApplicationException «when page is not set»). Отличия от
+            // провалившейся rev.12.8 (3-арг, false×4): список без 1800, вызов
+            // 2-арг + Page сервиса. true — сервис сам поставил полное+видимое
+            // (присваивание и AVN НЕ выполняются); false/исключение — WARN
+            // [SYMDT-NSS] → rev.11.15-присваивание (fallback) → AVN-шаг.
+            bool bServiceOk = false;
+            bool bServiceThrew = false;
             if (bOfflineOk)
             {
                 try
                 {
-                    oFunc.NameParts = oParts;
-                    log.Log("[INFO] [SYMDT] запись NameParts: offline-список");
+                    NameService oNamesSvc = new NameService();
+                    oNamesSvc.Page = oPage;
+                    bServiceOk = oNamesSvc.SetFullNameAndAdjustVisibleName(oFunc, oParts);
                 }
                 catch (Exception oEx)
                 {
-                    log.Warn("[SYMDT] NameParts (offline-список): " +
+                    bServiceThrew = true;
+                    // throw: «no changes» документирован только для false; fail-safe —
+                    // следующий шаг oFunc.NameParts = oParts заменяет список целиком.
+                    log.Warn("[SYMDT-NSS] SetFullNameAndAdjustVisibleName(2-arg) бросил " +
                         oEx.GetType().Name + ": " + oEx.Message);
+                }
+                if (bServiceOk)
+                    log.Log("[INFO] [SYMDT] запись ОУ: NameService 2-arg (полное + видимое)");
+                else if (!bServiceThrew)
+                    log.Warn("[SYMDT-NSS] SetFullNameAndAdjustVisibleName(2-arg) вернул " +
+                        "false — откат: присваивание NameParts (rev.11.15)");
+            }
+            if (!bServiceOk)
+            {
+                if (bOfflineOk)
+                {
+                    try
+                    {
+                        oFunc.NameParts = oParts;
+                        log.Log("[INFO] [SYMDT] запись NameParts: offline-список");
+                    }
+                    catch (Exception oEx)
+                    {
+                        log.Warn("[SYMDT] NameParts (offline-список): " +
+                            oEx.GetType().Name + ": " + oEx.Message);
+                        NamePartsGetModifySet(oFunc, strInstallation, strMountingSite,
+                            strPlaceOfInstallation, strUserStruct, strCode,
+                            strCounter, log);
+                    }
+                }
+                else
+                {
                     NamePartsGetModifySet(oFunc, strInstallation, strMountingSite,
-                        strPlaceOfInstallation, strUserStruct, strName, strCode,
+                        strPlaceOfInstallation, strUserStruct, strCode,
                         strCounter, log);
                 }
-            }
-            else
-            {
-                NamePartsGetModifySet(oFunc, strInstallation, strMountingSite,
-                    strPlaceOfInstallation, strUserStruct, strName, strCode,
-                    strCounter, log);
+
+                // rev.12.9: видимое ОУ — NameService.AdjustVisibleName из уже
+                // сохранённого полного имени (KB: «evaluates the visible name ...
+                // from the fullname ... and sets these evaluated values»; false —
+                // «could not be evaluated and set due to nesting»). Отказ — WARN
+                // [SYMDT-AVN], не прерывает (полное ОУ уже записано); критерий —
+                // readback [SYMDT-RD] 20002.
+                try
+                {
+                    NameService oNames = new NameService();
+                    if (oNames.AdjustVisibleName(oPage, oFunc))
+                        log.Log("[INFO] [SYMDT-AVN] AdjustVisibleName ok (видимое вычислено из полного)");
+                    else
+                        log.Warn("[SYMDT-AVN] AdjustVisibleName вернул false (docs: «could not be evaluated" +
+                            " and set due to nesting»; символ не-главный 20122=false — кандидат на nesting)");
+                }
+                catch (Exception oEx)
+                {
+                    log.Warn("[SYMDT-AVN] AdjustVisibleName бросил " +
+                        oEx.GetType().Name + ": " + oEx.Message);
+                }
             }
 
             // Readback [SYMDT-RD]: свежий get NameParts, по одной части
@@ -346,7 +452,6 @@ namespace MyEplanActions
                 ReadBackNamePart(oRd, log, 1400, strMountingSite);
                 ReadBackNamePart(oRd, log, 1200, strPlaceOfInstallation);
                 ReadBackNamePart(oRd, log, 1600, strUserStruct);
-                ReadBackNamePart(oRd, log, 1800, strName);
                 ReadBackNamePart(oRd, log, 20013, strCode);
                 ReadBackNamePart(oRd, log, 20014, strCounter);
                 if (arrInstallSegs.Length > 1)
@@ -373,6 +478,22 @@ namespace MyEplanActions
             catch (Exception oEx)
             {
                 log.Log("[INFO] [SYMDT-RD] Name недоступен (" + oEx.GetType().Name + ")");
+            }
+
+            // rev.12.8: видимое ОУ #20002 (FUNC_VISIBLENAME, read-only) — online
+            // чтение; пустое видимое → EmptyPropertyException («недоступен») =
+            // критерий провала adjust.
+            try
+            {
+                AnyPropertyId oIdVis = CreateAnyPropertyIdFromNumber(20002);
+                if (oIdVis == null)
+                    throw new InvalidOperationException("CreateAnyPropertyIdFromNumber(20002) вернул null");
+                string strVis = oFunc.Properties[oIdVis];
+                log.Log("[INFO] [SYMDT-RD] 20002='" + (strVis ?? "—") + "'");
+            }
+            catch (Exception oEx)
+            {
+                log.Log("[INFO] [SYMDT-RD] 20002 недоступен (" + oEx.GetType().Name + ")");
             }
         }
 
@@ -406,7 +527,7 @@ namespace MyEplanActions
         private static void NamePartsGetModifySet(Function oFunc,
             string strInstallation, string strMountingSite,
             string strPlaceOfInstallation, string strUserStruct,
-            string strName, string strCode, string strCounter,
+            string strCode, string strCounter,
             DiagnosticLogger log)
         {
             try
@@ -423,7 +544,8 @@ namespace MyEplanActions
                         SplitSegments(strPlaceOfInstallation), strPlaceOfInstallation, log)) nSet++;
                     if (WriteStructureSegments(oLive, 1600,
                         SplitSegments(strUserStruct), strUserStruct, log)) nSet++;
-                    if (SetNamePart(oLive, 1800, strName, log)) nSet++;
+                    // rev.13.0: 1800 (имя) не пишем — платформа отбрасывает,
+                    // имя несут 20013/20014.
                     if (SetNamePart(oLive, 20013, strCode, log)) nSet++;
                     if (SetNamePart(oLive, 20014, strCounter, log)) nSet++;
                 }
