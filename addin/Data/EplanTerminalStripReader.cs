@@ -491,6 +491,11 @@ namespace MyEplanActions
                     oDump.Append(" NP1801='" + SafeNamePartText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1801)) + "'");
                     oDump.Append(" NP1820='" + SafeNamePartText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1820)) + "'");
                     oDump.Append(" NP1829='" + SafeNamePartText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1829)) + "'");
+                    // rev.11.14: подчинённый идентификатор установки эталона
+                    // (SUBPLANT1 #1101) — подтверждение хранения по точкам
+                    // ('HII-1.1' = 1100='HII-1' + 1101='1').
+                    oDump.Append(" 1100='" + SafePropText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1100)) + "'");
+                    oDump.Append(" 1101='" + SafePropText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(1101)) + "'");
                     oDump.Append(" P20095='" + SafePropText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(20095)) + "'");
                     oDump.Append(" P20096='" + SafePropText(oCable, CableSymbolCreator.CreateAnyPropertyIdFromNumber(20096)) + "'");
                     _log.Log(oDump.ToString());

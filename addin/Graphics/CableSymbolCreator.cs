@@ -79,7 +79,38 @@ namespace MyEplanActions
     /// синтаксиса (EnableSyntaxCheck был False и с разрешённым '-' парсер
     /// рвёт так же); откат к NameParts-структурам; имя устройства —
     /// ограничение API 2.9 (см. rev.11.9).
-/// Поворот 0° (spec §7). Центр круга
+    /// rev.11.12: попытка внешнего сервиса полного ОУ («sets the given
+    /// full name as the new full name ... and adjusts the visible
+    /// name»; false = объект НЕ изменён) — в rev.11.13 удалена как
+    /// лишний слой.
+    /// rev.11.13: ПРОРЫВ (KB API 2.9, авторитетные Remarks): имя
+    /// устройства ('K140') — НЕ структурный блок, а ДВЕ части имени
+    /// в NameParts: FUNC_CODE #20013 (буква 'K') и FUNC_COUNTER
+    /// #20014 (счётчик '140'); Remarks обоих: «This property is used
+    /// as part of a name. In order to set it, member NameParts must
+    /// be used on object which name will be changed.» — запись тем же
+    /// индексатором Property(AnyPropertyId) {set}, что и структуры.
+    /// Это объясняет все прошлые неудачи: в NameParts писались только
+    /// DESIGNATION_* (структуры), а имя — не структурный блок. Разбор
+    /// 'K140' → 'K'+'140': буква — ведущие нецифровые, счётчик —
+    /// хвост-цифры; без цифр — всё в букву, счётчик пропускается.
+    /// rev.11.14: установка — не одна строка в 1100, а ГЛАВНЫЙ
+    /// идентификатор 'HII-1' (PLANT #1100) + цепочка подчинённых
+    /// '1' (SUBPLANT1..9 = 1101..1109), разбор по точкам; строку
+    /// '=HII-1.1' собирает платформа. Запись 'HII-1.1' одной строкой
+    /// в 1100 давала отдельные узлы-двойники в дереве структуры (не
+    /// прикреплялись к существующим кабелям); разбор по точкам —
+    /// слияние с деревом идентификаторов (пишет WritePlantSegments
+    /// в обоих путях: offline + fallback).
+    /// rev.11.15: разбивка по точкам — обобщение rev.11.14 на ВСЕ
+    /// структурные блоки (в других проектах точки могут быть в любом
+    /// блоке): слот '++' (место сборки, KB-имя PLACEOFINSTALLATION)
+    /// 1400 → 1401..1409; слот '+' (место установки, KB-имя LOCATION)
+    /// 1200 → 1201..1209; опред.польз. 1600 → 1601..1609; номера
+    /// подчинённых = базовый+1..9. WritePlantSegments →
+    /// WriteStructureSegments (базовый номер — параметр), вызовы ×4 в
+    /// обоих путях; readback первых подчинённых ×4 (1101/1401/1201/1601).
+    /// Поворот 0° (spec §7). Центр круга
     /// = точке вставки (rev.10.4: офсет п.47 опровергнут — замер был загрязнён
     /// останцами старых прогонов). Отказ —
     /// WARN [SYMBOL]. НЕ идемпотентно (очистка — Фаза I).</summary>
@@ -165,11 +196,12 @@ namespace MyEplanActions
                         oSym.Position.X.ToString("F3", CultureInfo.InvariantCulture) + ";" +
                         oSym.Position.Y.ToString("F3", CultureInfo.InvariantCulture) + ")");
 
-                    // rev.11.11: ОУ символа — структуры через
+                    // rev.11.13: ОУ символа — структуры через
                     // FunctionBase.NameParts (offline-список →
-                    // присваивание, fallback get-modify-set); имя
-                    // устройства — ограничение API 2.9 (шапка
-                    // rev.11.9/11.11). Отказы — WARN [SYMDT] внутри,
+                    // присваивание, fallback get-modify-set) плюс имя
+                    // устройства — теперь ТОЖЕ через NameParts как
+                    // FUNC_CODE #20013 + FUNC_COUNTER #20014 (шапка
+                    // rev.11.13). Отказы — WARN [SYMDT] внутри,
                     // счётчик и остальные символы не страдают.
                     if (!string.IsNullOrEmpty(oSym.CableName))
                         WriteDeviceTagProperties(oFunc, oSym, log);
@@ -185,25 +217,33 @@ namespace MyEplanActions
             return nCreated;
         }
 
-        /// <summary>Запись ОУ символа — rev.11.11 (откат к стабильному
-        /// NameParts-пути rev.11.4–11.9). Эксперимент rev.11.10 «полный DT
-        /// одной строкой Name при временном разрешении '-'» опровергнут
-        /// прогоном: разбиение по '-' в парсере DT не зависит от настроек
-        /// синтаксиса (EnableSyntaxCheck был False и с разрешённым '-'
-        /// парсер рвёт 'HII-1.1' так же). Имя устройства через API 2.9
-        /// недостижимо (сеттеры Name/NameParts взаимно исключающи — факты
-        /// rev.11.6/11.7; 1800 read-only S063113; имя ∉ NameParts — эталон
-        /// [SRC-DT]) — записываем структуры.
-        /// Поток: [SYMDT] дамп источника (ParseDeviceTag; отсутствующая
-        /// часть — «—») → offline-список FunctionBasePropertyList (отказ —
-        /// WARN [SYMDT]) + SetNamePart×5 (1100←установка, 1400←место
-        /// сборки, 1200←место установки, 1600←структура, 1800←имя; пустая
+        /// <summary>Запись ОУ символа — rev.11.15: NameParts-структуры
+        /// (стабильный путь rev.11.4–11.11) плюс имя устройства как ДВЕ
+        /// части имени; структурные блоки — через WriteStructureSegments
+        /// ×4 (главный + подчинённые base+1..base+9 по точкам:
+        /// 1100/1400/1200/1600, обобщение rev.11.14). KB API 2.9, авторитетные Remarks: FUNC_CODE
+        /// #20013 (буква) и FUNC_COUNTER #20014 (счётчик) — «This
+        /// property is used as part of a name. In order to set it, member
+        /// NameParts must be used» — запись тем же индексатором
+        /// Property(AnyPropertyId) {set}, что и структуры. Это объясняет
+        /// прошлые неудачи: имя — не структурный блок, в NameParts
+        /// писались только DESIGNATION_*; эксперимент rev.11.10 «полный
+        /// DT одной строкой Name» рвал структуры на '-' (откат
+        /// rev.11.11), 1800 read-only S063113 (rev.11.6). Поток: [SYMDT]
+        /// дамп источника (ParseDeviceTag; отсутствующая часть — «—») →
+        /// разбор имени SplitDeviceTagLetterCounter ('K140' → 'K'+'140';
+        /// без цифр — всё в букву) → offline-список
+        /// FunctionBasePropertyList (отказ — WARN [SYMDT]) +
+        /// WriteStructureSegments×4 (главный + подчинённые по точкам:
+        /// 1100←установка, 1400←место сборки, 1200←место установки,
+        /// 1600←структура) + SetNamePart×3
+        /// (1800←имя, 20013←буква, 20014←счётчик; пустая
         /// часть — без записи) → присваивание oFunc.NameParts = oParts
         /// (INFO; отказ — WARN + fallback) → fallback get-modify-set на
         /// живом NameParts (все непустые части, счётчик, INFO «дописано
-        /// частей: N») → [SYMDT-RD] readback ReadBackNamePart×5
-        /// (1100/1400/1200/1600/1800; пустые не читаются) → финальный
-        /// Name-readback [SYMDT-RD] — арбитр успеха.</summary>
+        /// частей: N») → [SYMDT-RD] readback ReadBackNamePart×7 + первые
+        /// подчинённые ×4 (1101/1401/1201/1601; пустые не читаются) →
+        /// финальный Name-readback [SYMDT-RD] — арбитр успеха.</summary>
         private static void WriteDeviceTagProperties(Function oFunc,
             CableSymbolPlacement oSym, DiagnosticLogger log)
         {
@@ -219,6 +259,22 @@ namespace MyEplanActions
                 (strInstallation ?? "—") + " ++" + (strMountingSite ?? "—") + " +" +
                 (strPlaceOfInstallation ?? "—") + " #" + (strUserStruct ?? "—") +
                 " имя=" + (strName ?? "—"));
+
+            // rev.11.13: имя устройства ('K140') — НЕ структурный блок, а ДВЕ части
+            // имени в NameParts: FUNC_CODE #20013 (буква 'K') и FUNC_COUNTER #20014
+            // (счётчик '140'). KB Remarks: «In order to set it, member NameParts
+            // must be used». Разбор: буква — ведущие нецифровые, счётчик — хвост
+            // (цифры). Без цифр — всё в букву, счётчик пропускается.
+            string strCode, strCounter;
+            SplitDeviceTagLetterCounter(strName, out strCode, out strCounter);
+
+            // rev.11.15: сегменты всех структурных блоков (главный +
+            // подчинённые по точкам) — для записи WriteStructureSegments
+            // и readback первых подчинённых (1101/1401/1201/1601).
+            string[] arrInstallSegs = SplitSegments(strInstallation);
+            string[] arrMountSegs = SplitSegments(strMountingSite);
+            string[] arrPlaceSegs = SplitSegments(strPlaceOfInstallation);
+            string[] arrUserSegs = SplitSegments(strUserStruct);
 
             // rev.11.11: структуры ОУ — offline-список NameParts +
             // присваивание (стабильный путь rev.11.4–11.9). Пустая/null
@@ -239,16 +295,24 @@ namespace MyEplanActions
             bool bPlace = false;
             bool bUserStruct = false;
             bool bProduct = false;
+            bool bCode = false;
+            bool bCounter = false;
             if (oParts != null)
             {
-                bPlant = SetNamePart(oParts, 1100, strInstallation, log);
-                bLocation = SetNamePart(oParts, 1400, strMountingSite, log);
-                bPlace = SetNamePart(oParts, 1200, strPlaceOfInstallation, log);
-                bUserStruct = SetNamePart(oParts, 1600, strUserStruct, log);
+                bPlant = WriteStructureSegments(oParts, 1100,
+                    arrInstallSegs, strInstallation, log);
+                bLocation = WriteStructureSegments(oParts, 1400,
+                    arrMountSegs, strMountingSite, log);
+                bPlace = WriteStructureSegments(oParts, 1200,
+                    arrPlaceSegs, strPlaceOfInstallation, log);
+                bUserStruct = WriteStructureSegments(oParts, 1600,
+                    arrUserSegs, strUserStruct, log);
                 bProduct = SetNamePart(oParts, 1800, strName, log);
+                bCode = SetNamePart(oParts, 20013, strCode, log);
+                bCounter = SetNamePart(oParts, 20014, strCounter, log);
             }
             bool bOfflineOk = bPlant && bLocation && bPlace && bUserStruct &&
-                bProduct && oParts != null;
+                bProduct && bCode && bCounter && oParts != null;
             if (bOfflineOk)
             {
                 try
@@ -261,13 +325,15 @@ namespace MyEplanActions
                     log.Warn("[SYMDT] NameParts (offline-список): " +
                         oEx.GetType().Name + ": " + oEx.Message);
                     NamePartsGetModifySet(oFunc, strInstallation, strMountingSite,
-                        strPlaceOfInstallation, strUserStruct, strName, log);
+                        strPlaceOfInstallation, strUserStruct, strName, strCode,
+                        strCounter, log);
                 }
             }
             else
             {
                 NamePartsGetModifySet(oFunc, strInstallation, strMountingSite,
-                    strPlaceOfInstallation, strUserStruct, strName, log);
+                    strPlaceOfInstallation, strUserStruct, strName, strCode,
+                    strCounter, log);
             }
 
             // Readback [SYMDT-RD]: свежий get NameParts, по одной части
@@ -281,6 +347,16 @@ namespace MyEplanActions
                 ReadBackNamePart(oRd, log, 1200, strPlaceOfInstallation);
                 ReadBackNamePart(oRd, log, 1600, strUserStruct);
                 ReadBackNamePart(oRd, log, 1800, strName);
+                ReadBackNamePart(oRd, log, 20013, strCode);
+                ReadBackNamePart(oRd, log, 20014, strCounter);
+                if (arrInstallSegs.Length > 1)
+                    ReadBackNamePart(oRd, log, 1101, arrInstallSegs[1]);
+                if (arrMountSegs.Length > 1)
+                    ReadBackNamePart(oRd, log, 1401, arrMountSegs[1]);
+                if (arrPlaceSegs.Length > 1)
+                    ReadBackNamePart(oRd, log, 1201, arrPlaceSegs[1]);
+                if (arrUserSegs.Length > 1)
+                    ReadBackNamePart(oRd, log, 1601, arrUserSegs[1]);
             }
             catch (Exception oEx)
             {
@@ -288,7 +364,8 @@ namespace MyEplanActions
             }
 
             // Финальный readback Name — собранное EPLAN полное ОУ
-            // (главный критерий успеха: платформа пере-собирает части).
+            // (главный критерий успеха: платформа пере-собирает части,
+            // включая имя устройства rev.11.13).
             try
             {
                 log.Log("[INFO] [SYMDT-RD] Name='" + oFunc.Name + "'");
@@ -299,16 +376,38 @@ namespace MyEplanActions
             }
         }
 
+        /// <summary>Разбор имени устройства на букву и счётчик (rev.11.13):
+        /// FUNC_CODE #20013 — ведущие нецифровые символы ('K' из 'K140'),
+        /// FUNC_COUNTER #20014 — хвост из цифр ('140'). Без цифр — всё в
+        /// букву, счётчик пропускается (null). Пустое/null имя — обе
+        /// части null.</summary>
+        private static void SplitDeviceTagLetterCounter(string strName, out string strCode, out string strCounter)
+        {
+            strCode = null; strCounter = null;
+            if (string.IsNullOrEmpty(strName)) return;
+            int i = 0;
+            while (i < strName.Length && !char.IsDigit(strName[i])) i++;
+            strCode = i > 0 ? strName.Substring(0, i) : null;
+            strCounter = i < strName.Length ? strName.Substring(i) : null;
+            if (string.IsNullOrEmpty(strCode)) strCode = null;
+            if (string.IsNullOrEmpty(strCounter)) strCounter = null;
+        }
+
         /// <summary>Fallback get-modify-set на живом oFunc.NameParts
-        /// (rev.11.4–11.9; возвращён rev.11.11): get, допись всех НЕпустых
-        /// частей поверх прочитанного (безусловно — независимо от
-        /// результата offline-списка), счётчик nSet, INFO «get-modify-set
-        /// (дописано частей: N)». Каждая часть — SetNamePart (отказ —
-        /// WARN [SYMDT], остальные продолжают писаться).</summary>
+        /// (rev.11.4–11.9; возвращён rev.11.11; rev.11.13 — плюс части
+        /// имени 20013/20014; rev.11.15 — четыре структурных блока через
+        /// WriteStructureSegments: главный + подчинённые по точкам;
+        /// сигнатура — на сырых строках, сплит внутри): get, допись всех
+        /// НЕпустых частей поверх прочитанного (безусловно — независимо
+        /// от результата offline-списка), счётчик nSet, INFO
+        /// «get-modify-set (дописано частей: N)». Каждая часть —
+        /// SetNamePart (отказ — WARN [SYMDT], остальные продолжают
+        /// писаться).</summary>
         private static void NamePartsGetModifySet(Function oFunc,
             string strInstallation, string strMountingSite,
             string strPlaceOfInstallation, string strUserStruct,
-            string strName, DiagnosticLogger log)
+            string strName, string strCode, string strCounter,
+            DiagnosticLogger log)
         {
             try
             {
@@ -316,11 +415,17 @@ namespace MyEplanActions
                 int nSet = 0;
                 if (oLive != null)
                 {
-                    if (SetNamePart(oLive, 1100, strInstallation, log)) nSet++;
-                    if (SetNamePart(oLive, 1400, strMountingSite, log)) nSet++;
-                    if (SetNamePart(oLive, 1200, strPlaceOfInstallation, log)) nSet++;
-                    if (SetNamePart(oLive, 1600, strUserStruct, log)) nSet++;
+                    if (WriteStructureSegments(oLive, 1100,
+                        SplitSegments(strInstallation), strInstallation, log)) nSet++;
+                    if (WriteStructureSegments(oLive, 1400,
+                        SplitSegments(strMountingSite), strMountingSite, log)) nSet++;
+                    if (WriteStructureSegments(oLive, 1200,
+                        SplitSegments(strPlaceOfInstallation), strPlaceOfInstallation, log)) nSet++;
+                    if (WriteStructureSegments(oLive, 1600,
+                        SplitSegments(strUserStruct), strUserStruct, log)) nSet++;
                     if (SetNamePart(oLive, 1800, strName, log)) nSet++;
+                    if (SetNamePart(oLive, 20013, strCode, log)) nSet++;
+                    if (SetNamePart(oLive, 20014, strCounter, log)) nSet++;
                 }
                 log.Log("[INFO] [SYMDT] get-modify-set (дописано частей: " +
                     nSet.ToString(CultureInfo.InvariantCulture) + ")");
@@ -363,6 +468,40 @@ namespace MyEplanActions
                     oEx.GetType().Name + ": " + oEx.Message);
                 return false;
             }
+        }
+
+        /// <summary>Разбор структурного значения на сегменты по точкам
+        /// (rev.11.15): 'HII-1.1' → 'HII-1' + '1'. Пустое/null —
+        /// пустой массив.</summary>
+        private static string[] SplitSegments(string strValue)
+        {
+            if (string.IsNullOrEmpty(strValue)) return new string[0];
+            return strValue.Split('.');
+        }
+
+        /// <summary>Запись структурного блока (rev.11.15, обобщение rev.11.14):
+        /// 'HII-1.1' / 'М1.2' / '3.1' — это ГЛАВНЫЙ идентификатор (nBaseId:
+        /// 1100/1400/1200/1600) + цепочка подчинённых (nBaseId+1..nBaseId+9),
+        /// разбор по точкам. Эталон [SRC-DT]: 1100='HII-1'. Запись одной строкой
+        /// в главный давала другой узел дерева структуры. Пустое значение — true
+        /// без записи. >10 сегментов — WARN, лишние пропускаются
+        /// (strValue — исходная строка для WARN-текста).</summary>
+        private static bool WriteStructureSegments(FunctionBasePropertyList oParts,
+            int nBaseId, string[] arrSegments, string strValue, DiagnosticLogger log)
+        {
+            bool bOk = true;
+            if (arrSegments == null || arrSegments.Length == 0) return true;
+            for (int i = 0; i < arrSegments.Length && i < 10; i++)
+            {
+                bool bSeg = SetNamePart(oParts, nBaseId + i, arrSegments[i], log);
+                bOk = bOk && bSeg;
+            }
+            if (arrSegments.Length > 10)
+                log.Warn("[SYMDT] '" + strValue + "' (базовый " +
+                    nBaseId.ToString(CultureInfo.InvariantCulture) + "): сегментов " +
+                    arrSegments.Length.ToString(CultureInfo.InvariantCulture) +
+                    " (>10: главный + 9 подчинённых) — лишние пропущены");
+            return bOk;
         }
 
         /// <summary>Readback записанной части DT через NameParts (rev.11.4,
