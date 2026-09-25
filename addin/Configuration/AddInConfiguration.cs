@@ -123,5 +123,15 @@ namespace MyEplanActions
         // Точка вставки отчёта на странице.
         public const double InsertX = 20.0;
         public const double InsertY = 20.0;
+
+        // Фаза H (rev.12.1, H-2; spec 2026-09-25-fase-h-ui-design.md §2 п.10):
+        // UI-режим диалога вставки. Переключается вручную: true — UI-режим
+        // (стенд H-2), false — headless-регресс A/B (счётчики == rev.11.15
+        // обязательны на каждом шаге).
+        public const bool UseUi = true;
+
+        // Фаза H (rev.12.0, spec §6): рамка-призрак — записи GridPitch.<форма>
+        // в настройках нет → фиксированный шаг 10 мм.
+        public const double GhostPitchFallbackMm = 10.0;
     }
 }

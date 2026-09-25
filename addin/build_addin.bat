@@ -14,6 +14,7 @@ cd /d "%~dp0"
   /reference:"%EPLAN_BIN%\Eplan.EplApi.DataModelu.dll" ^
   /reference:"%EPLAN_BIN%\Eplan.EplApi.HEServicesu.dll" ^
   /reference:System.Windows.Forms.dll ^
+  /reference:System.Drawing.dll ^
   /recurse:*.cs
 
 pause

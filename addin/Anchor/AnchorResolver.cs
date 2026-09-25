@@ -4,6 +4,21 @@ using System.Globalization;
 
 namespace MyEplanActions
 {
+    /// <summary>Дескриптор строки формы — PlaceHolderText (rev.5.3): текст + позиция.
+    /// Якорь соответствия «номер клеммы ↔ колонка»: порядковое сопоставление колонок
+    /// и клемм неверно, когда нумерация клеммника не совпадает с раскладкой по X
+    /// (урок rev.5.2: мосты 7-8/8-9 стоят под перемычкой колонок 8/9/10).
+    /// rev.12.2 (H-3): перенесён из Data/MatchBuilder.cs — AnchorResolver компилируется
+    /// в чистый тест-раннер tests/ (MatchBuilder тянет EPLAN-типы DmRow/DmReport);
+    /// сам класс чистый: Pt (LeadGeometry) + строки. Поле SourceTerminalName — ""
+    /// если данных нет (rev.6.1).</summary>
+    public sealed class PhRow
+    {
+        public Pt Location;
+        public string Text;
+        public string SourceTerminalName; // rev.6.1: полное имя Terminal-источника (SourceObject) или "" — запасной якорь
+    }
+
     /// <summary>Якорь соответствия «номер клеммы ↔ колонка»: номер, распознанный из
     /// текста дескриптора, и его позиция. Порядковое сопоставление колонок и клемм
     /// неверно, когда нумерация клеммника не совпадает с раскладкой (урок rev.5.2:
@@ -34,7 +49,9 @@ namespace MyEplanActions
     /// без изменения поведения; rev.6.1 — NumberToTerminalKey (номер -> имя клеммы
     /// из DM) и запасной якорь [PHFB] из SourceObject=Terminal. От геометрии К4 не
     /// зависит — работает только с дескрипторами PhRow. Проверки «дальше
-    /// шага»/«конфликт» [PHCOL] остаются в MatchBuilder: им нужны колонки К4.</summary>
+    /// шага»/«конфликт» [PHCOL] остаются в MatchBuilder: им нужны колонки К4.
+    /// rev.12.2 (H-3): DetectOrientation — авто-детекция ориентации отчёта по
+    /// раскладке числовых дескрипторов (спека §5); чистый PhRow перенесён сюда.</summary>
     public static class AnchorResolver
     {
         /// <summary>Разбор дескрипторов формы: (а) доминирующий ряд номеров (бакет
@@ -122,6 +139,75 @@ namespace MyEplanActions
             if (int.TryParse(SuffixAfterColon(strName).Trim(), NumberStyles.Integer,
                 CultureInfo.InvariantCulture, out nNumber)) return nNumber;
             return -1;
+        }
+
+        /// <summary>H-3 (rev.12.2, спека §5): авто-детекция ориентации отчёта по
+        /// раскладке числовых дескрипторов (те же, что якорят ряд: текст парсится
+        /// ParseTerminalNumber). Бакеты 0.1 мм по обеим осям — как доминирующий ряд
+        /// (FindDominantAnchorRow); nRow = максимум по Y-бакетам, nCol = максимум по
+        /// X-бакетам. Порог ≥2 по лучшей оси (спека §5 п.1; фикс-волна MINOR-3):
+        /// max(nRow,nCol) &lt; 2 — обе оси неубедительны → null (иначе одиночный
+        /// дескриптор с NaN-координатой по одной оси давал ложный Horizontal 1&gt;0).
+        /// nRow &gt; nCol — Horizontal (ряд номеров вдоль X), nCol &gt; nRow —
+        /// Vertical (номера в столбец), равенство (в т.ч. оба 0 — числовых нет) —
+        /// null: вызывающий идёт на bbox-fallback. NaN-координаты пропускаются по
+        /// каждой оси отдельно (урок rev.12.1: дескриптор с NaN в локации).
+        /// strEvidence — всегда обе стороны: «числовых дескрипторов: ряд(Y) максимум
+        /// N на Y=..., столбец(X) максимум M на X=...» (без «на ...» при нулевом
+        /// максимуме — координаты нет).</summary>
+        public static ReportOrientation? DetectOrientation(List<PhRow> lstPh, out string strEvidence)
+        {
+            Dictionary<long, int> dicYCount = new Dictionary<long, int>();
+            Dictionary<long, double> dicYCoord = new Dictionary<long, double>();
+            Dictionary<long, int> dicXCount = new Dictionary<long, int>();
+            Dictionary<long, double> dicXCoord = new Dictionary<long, double>();
+            if (lstPh != null)
+            {
+                foreach (PhRow oPh in lstPh)
+                {
+                    if (oPh == null) continue;
+                    if (ParseTerminalNumber(oPh.Text) < 0) continue;
+                    if (!double.IsNaN(oPh.Location.Y))
+                    {
+                        long nKeyY = (long)Math.Round(oPh.Location.Y * 10.0);
+                        if (!dicYCount.ContainsKey(nKeyY))
+                        {
+                            dicYCount[nKeyY] = 0;
+                            dicYCoord[nKeyY] = oPh.Location.Y;
+                        }
+                        dicYCount[nKeyY]++;
+                    }
+                    if (!double.IsNaN(oPh.Location.X))
+                    {
+                        long nKeyX = (long)Math.Round(oPh.Location.X * 10.0);
+                        if (!dicXCount.ContainsKey(nKeyX))
+                        {
+                            dicXCount[nKeyX] = 0;
+                            dicXCoord[nKeyX] = oPh.Location.X;
+                        }
+                        dicXCount[nKeyX]++;
+                    }
+                }
+            }
+            int nRow = 0, nCol = 0;
+            double dRowY = double.NaN, dColX = double.NaN;
+            foreach (KeyValuePair<long, int> oPair in dicYCount)
+                if (oPair.Value > nRow) { nRow = oPair.Value; dRowY = dicYCoord[oPair.Key]; }
+            foreach (KeyValuePair<long, int> oPair in dicXCount)
+                if (oPair.Value > nCol) { nCol = oPair.Value; dColX = dicXCoord[oPair.Key]; }
+            strEvidence = "числовых дескрипторов: ряд(Y) максимум " + nRow.ToString(CultureInfo.InvariantCulture) +
+                (nRow > 0 ? " на Y=" + dRowY.ToString("F1", CultureInfo.InvariantCulture) : "") +
+                ", столбец(X) максимум " + nCol.ToString(CultureInfo.InvariantCulture) +
+                (nCol > 0 ? " на X=" + dColX.ToString("F1", CultureInfo.InvariantCulture) : "");
+            // Порог ≥2 по лучшей оси (спека §5 п.1, фикс-волна MINOR-3): один
+            // числовой дескриптор — ни ряд, ни столбец (тот же порог, что
+            // FindDominantAnchorRow: nBest старует с 1). Без него одиночный
+            // дескриптор с NaN по одной оси давал ложный Horizontal (1 > 0).
+            if (nRow < 2 && nCol < 2)
+                return null; // обе оси неубедительны → bbox-fallback у вызывающего
+            if (nRow > nCol) return ReportOrientation.Horizontal;
+            if (nCol > nRow) return ReportOrientation.Vertical;
+            return null; // ничья (в т.ч. 0/0 — числовых дескрипторов нет)
         }
 
         /// <summary>Координата доминирующего ряда номеров формы (rev.5.6): бакет

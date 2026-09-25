@@ -220,8 +220,10 @@ namespace MyEplanActions
         /// ОБА её листа — точки подключения. У одиночного (коллинеарного) вывода точка
         /// подключения = внешний конец — лист, ДАЛЬНИЙ от ближайшего маркера клеммы
         /// (стуб/перемычка). Длины отрезков не используются. Порт DetectLeads rev.13.</summary>
+        // rev.12.1 (Фаза H, H-2): ориентация — параметр (UI-выбор диалога);
+        // default — константа конфига, headless-вызовы прежние.
         public static LeadAnalysis DetectLeads(List<LineComponent> lstComponents, List<Seg> lstLines,
-            DiagnosticLogger log)
+            DiagnosticLogger log, ReportOrientation eOrientation = AddInConfiguration.Orientation)
         {
             LeadAnalysis oResult = new LeadAnalysis();
             try
@@ -327,7 +329,7 @@ namespace MyEplanActions
                     log.Log("[INFO] [RESULT] стубы-маркеры клемм не найдены — контроль К4 пропущен");
                 else
                     oResult.K4 = CheckK4Report(lstPoints, lstStubs, lstJumpers,
-                        AddInConfiguration.Orientation, log);
+                        eOrientation, log);
                 log.Summarize("Выводов: " + nLeads + ", точек подключения (кабель+провод): " +
                     lstPoints.Count + ".");
             }

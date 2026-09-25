@@ -18,8 +18,11 @@ namespace MyEplanActions
         private const string LOG_DIR_OVERRIDE = "";
 
         // Папка Add-in'а внутри «Сценарии» и корневая «Сценарии» на машине
-        // пользователя (пути подтверждены прогонами Этапа 1).
-        private static readonly string[] LOG_DIR_CANDIDATES = new string[]
+        // пользователя (пути подтверждены прогонами Этапа 1). rev.12.0 (Фаза H):
+        // public static readonly — ЕДИНЫЙ источник кандидатов каталога для лога
+        // И файла настроек AddInSettings (ruling R1; НЕ Assembly.Location —
+        // ShadowCopy, урок п.10).
+        public static readonly string[] LOG_DIR_CANDIDATES = new string[]
         {
             @"D:\YandexDisk\!EPLAN\Сценарии\terminal_strip_addin",
             @"D:\YandexDisk\!EPLAN\Сценарии"

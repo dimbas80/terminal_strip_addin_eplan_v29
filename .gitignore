@@ -6,7 +6,9 @@ obj/
 
 # Прогоны и разовая диагностика (выводы зафиксированы в summary.md)
 *.log
+*.settings
 err.csv
+node_modules/
 
 # Служебное и локальное
 .scratch/

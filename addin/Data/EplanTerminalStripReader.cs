@@ -95,9 +95,37 @@ namespace MyEplanActions
     {
         private readonly DiagnosticLogger _log;
 
-        public EplanTerminalStripReader(DiagnosticLogger oLogger)
+        // rev.12.1 (Фаза H, H-2): целевой клеммник (фильтр пробы [CBLPROP]) —
+        // параметр конструктора: UI — выбор диалога, headless — константа
+        // AddInConfiguration (явный аргумент в месте вызова).
+        private readonly string _strTargetStripName;
+
+        // rev.12.2 (H-2c, фикс-волна MAJOR-2): полное имя клеммника -> список страниц,
+        // где оно встречено при агрегации PerStrip. Сверка [CROSS] и гейт [CROSSGATE]
+        // ПОЛНОГО ИМЕНИ работают с допущением «полное имя уникально в проекте»;
+        // имя на 2+ страницах ломает допущение (PerStrip/StripTerminalNames суммируют
+        // дубликаты) — первый дуплет логируется WARN [DMSTRIPDUP], гейт смягчается
+        // (TargetNameMultiPage). Заполняется в Read(), читается после.
+        private readonly Dictionary<string, List<string>> _dicStripPages =
+            new Dictionary<string, List<string>>();
+
+        public EplanTerminalStripReader(DiagnosticLogger oLogger, string strTargetStripName)
         {
             _log = oLogger;
+            _strTargetStripName = strTargetStripName;
+        }
+
+        /// <summary>rev.12.2 (H-2c, фикс-волна MAJOR-2): встречается ли полное имя
+        /// клеммника на НЕСКОЛЬКИХ страницах проекта ([DMSTRIPDUP] при агрегации
+        /// PerStrip в Read()). true — сверка [CROSS] и гейт [CROSSGATE] по имени
+        /// ненадёжны (счётчики суммируют дубликаты страниц): расходиться может не
+        /// «чужая активная страница», а сам двойник имени — UI-гейт обязан
+        /// смягчиться. Читается только после Read() того же экземпляра.</summary>
+        public bool TargetNameMultiPage(string strStripName)
+        {
+            List<string> lstPages;
+            return !string.IsNullOrEmpty(strStripName) &&
+                _dicStripPages.TryGetValue(strStripName, out lstPages) && lstPages.Count > 1;
         }
 
         public DmReport Read(Project oProject)
@@ -138,6 +166,25 @@ namespace MyEplanActions
                         "': клемм " + arrTerminals.Length +
                         (strDeclared.Length > 0 ? " (№35006=" + strDeclared + ")" : ""));
                     oReport.TerminalCount += arrTerminals.Length;
+
+                    // rev.12.2 (H-2c, MAJOR-2): учёт страниц у полного имени — базовое
+                    // допущение сверки/гейта «полное имя уникально». Первое появление
+                    // имени на второй странице — WARN [DMSTRIPDUP] (один раз на имя,
+                    // чтобы не спамить при 3+ страницах).
+                    string strPageName = SafeText("<n/a>", () => oPage.IdentifyingName);
+                    List<string> lstPages;
+                    if (!_dicStripPages.TryGetValue(strStripName, out lstPages))
+                    {
+                        lstPages = new List<string>();
+                        _dicStripPages[strStripName] = lstPages;
+                    }
+                    if (!lstPages.Contains(strPageName))
+                    {
+                        lstPages.Add(strPageName);
+                        if (lstPages.Count == 2)
+                            _log.Warn("[DMSTRIPDUP] имя '" + strStripName + "' встречается на страницах " +
+                                lstPages[0] + ", " + lstPages[1] + " — сверка/гейт по имени ненадёжны");
+                    }
 
                     DmStripStats oStats;
                     if (!oReport.PerStrip.TryGetValue(strStripName, out oStats))
@@ -334,7 +381,7 @@ namespace MyEplanActions
                 // клеммника (№31058=true) — ищем, где живёт имя кабеля: K-кабели не
                 // спарены (CableConnections=0, проба [CBL] rev.9.3), связь ищем в
                 // свойствах соединения.
-                if (oInfo.IsCableConn == true && oRow.StripName == AddInConfiguration.TargetStripName)
+                if (oInfo.IsCableConn == true && oRow.StripName == _strTargetStripName)
                     ProbeCableProperties(oRow, oConn);
             }
             oRow.CableName = oInfo.CableName;

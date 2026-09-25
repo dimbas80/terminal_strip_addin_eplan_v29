@@ -180,19 +180,155 @@ namespace MyEplanActions
             return lstResult;
         }
 
+        /// <summary>Все имена форм (*.f11) проекта и системы БЕЗ фильтра «addin»
+        /// (Фаза H, H-2; спека 2026-09-25-fase-h-ui-design.md §2 п.3) — список для
+        /// диалога UI-режима. Источники — Masterdata.get_ProjectEntries и свойство
+        /// Masterdata.SystemEntries (KB API 2.9: StringCollection — свойство, не
+        /// метод). Элемент — имя файла: путь отбрасывается Path.GetFileName
+        /// (безопасно и для полных путей — паттерн [FORMP], и для голых имён),
+        /// расширение .f11 отбрасывается, БЕЗ trim (хвостовой пробел имени формы
+        /// значим — урок п.33). Дубликаты имени: первый побеждает; сортировка
+        /// OrdinalIgnoreCase — стабильный список для диалога. Исключения каждого
+        /// источника наружу не выходят: WARN по источнику + частично собранный
+        /// список (отказ SystemEntries не теряет формы проекта); пустой результат —
+        /// WARN. Маркер [FORMLIST] с числом найденных; вызывается ОДИН раз перед
+        /// циклом диалога — в цикле прогона логов не дублирует.</summary>
+        public static List<string> CollectAvailableFormNames(Project oProject, DiagnosticLogger log)
+        {
+            List<string> lstResult = new List<string>();
+            try
+            {
+                CollectFormNamesFrom(new Masterdata().get_ProjectEntries(oProject), lstResult);
+            }
+            catch (Exception oException)
+            {
+                log.Warn("[FORMLIST] проектные формы: перечисление не удалось: " +
+                    oException.GetType().Name + ": " + oException.Message);
+            }
+            try
+            {
+                CollectFormNamesFrom(new Masterdata().SystemEntries, lstResult);
+            }
+            catch (Exception oException)
+            {
+                log.Warn("[FORMLIST] системные формы: перечисление не удалось: " +
+                    oException.GetType().Name + ": " + oException.Message);
+            }
+            if (lstResult.Count == 0)
+                log.Warn("[FORMLIST] формы (*.f11) не найдены ни в проекте, ни в системе");
+            lstResult.Sort(StringComparer.OrdinalIgnoreCase);
+            log.Log("[FORMLIST] форм (*.f11, проект+система, без фильтра): " + lstResult.Count);
+            return lstResult;
+        }
+
+        /// <summary>Складывает в lstResult имена *.f11 из одной выдачи мастер-данных:
+        /// путь отбрасывается Path.GetFileName, расширение .f11 отбрасывается,
+        /// БЕЗ trim (урок п.33), дубликаты — первый побеждает.</summary>
+        private static void CollectFormNamesFrom(IEnumerable oEntries, List<string> lstResult)
+        {
+            if (oEntries == null) return;
+            foreach (object oEntry in oEntries)
+            {
+                string strEntry = oEntry as string;
+                if (strEntry == null) continue;
+                if (!strEntry.EndsWith(".f11", StringComparison.OrdinalIgnoreCase)) continue;
+                string strFile = System.IO.Path.GetFileName(strEntry);
+                if (strFile.Length <= 4) continue;   // вырожденная запись '.f11' без имени
+                string strName = strFile.Substring(0, strFile.Length - 4);   // минус ".f11"
+                if (!lstResult.Contains(strName)) lstResult.Add(strName);
+            }
+        }
+
+        /// <summary>UI-ветка (H-2): AddToProjectEx для имени формы, выбранного в
+        /// диалоге (план plan_stage8.md H-2). Отказ не фатален: форма могла уже
+        /// быть в проекте (список CollectAvailableFormNames включает и проектные,
+        /// и системные) — каждая ошибка в лог, попытка продолжается. Кандидаты
+        /// имени файла — без и с хвостовым пробелом (паттерн FormFileCandidates).</summary>
+        private void TryAddFormFileToProject(Project oProject, string strFormName)
+        {
+            string[] arrFileCandidates = new string[]
+            {
+                strFormName + ".f11",
+                strFormName + " .f11"
+            };
+            foreach (string strFormFile in arrFileCandidates)
+            {
+                if (TryAddOneFormFile(oProject, strFormFile)) break;
+            }
+        }
+
+        /// <summary>Одна попытка AddToProjectEx (тот же шаг цикла, что в
+        /// TryAddFormToProject): true — добавлено без ошибок. AddToProjectEx НЕ
+        /// бросает исключение при ошибке отдельного файла — ошибка возвращается
+        /// в Hashtable (урок rev.4).</summary>
+        private bool TryAddOneFormFile(Project oProject, string strFormFile)
+        {
+            try
+            {
+                StringCollection oEntries = new StringCollection();
+                oEntries.Add(strFormFile);
+                Hashtable oAdded = new Masterdata().AddToProjectEx(oProject, oEntries);
+                if (oAdded == null)
+                {
+                    _log.Warn("AddToProjectEx вернул null для '" + strFormFile + "'.");
+                    return false;
+                }
+                bool bError = false;
+                foreach (DictionaryEntry oEntry in oAdded)
+                {
+                    Exception oAddError = oEntry.Value as Exception;
+                    if (oAddError != null)
+                    {
+                        _log.Log("[ERROR] AddToProjectEx: '" + oEntry.Key + "' -> " + oAddError.Message);
+                        bError = true;
+                    }
+                    else
+                    {
+                        _log.Log("[INFO] AddToProjectEx: '" + oEntry.Key + "' -> " + oEntry.Value);
+                    }
+                }
+                return !bError;
+            }
+            catch (Exception oException)
+            {
+                _log.Warn("AddToProjectEx не удался для '" + strFormFile + "': " +
+                    oException.GetType().Name + ": " + oException.Message);
+                return false;
+            }
+        }
+
         /// <summary>Создаёт встроенный отчёт, перебирая комбинации имён форм и схем фильтра.
         /// Имена: статические кандидаты + имена форм, фактически найденные в проекте.
         /// На каждую комбинацию — свежий ReportBlock, чтобы свойства не «залипали» между
-        /// попытками. Неиспользованные описатели уходят при сохранении/сжатии проекта.</summary>
+        /// попытками. Неиспользованные описатели уходят при сохранении/сжатии проекта.
+        /// rev.12.1 (Фаза H, H-2): strFormNameOverride — имя формы, выбранное в диалоге
+        /// UI-режима: список кандидатов FormName = ровно оно + вариант с хвостовым
+        /// пробелом (существующий паттерн FormNameCandidates), плюс AddToProjectEx
+        /// выбранного имени (TryAddFormFileToProject). null — headless-поведение
+        /// байт-в-байт прежнее (кандидаты из конфига + lstExtraFormNames).
+        /// bCheckForeignForm — WARN «чужой формы» (FormNameFilter): в UI-режиме НЕ
+        /// проверяется (пользователь осознанно выбирает любую форму, спека §2 п.3);
+        /// headless — true (как сейчас).</summary>
         public ReportBlockReference TryCreateEmbeddedReport(Project oProject, Page oPage,
-            List<string> lstExtraFormNames)
+            List<string> lstExtraFormNames, string strFormNameOverride = null,
+            bool bCheckForeignForm = true)
         {
             List<string> lstFormNames = new List<string>();
-            foreach (string strName in FormNameCandidates())
-                if (!lstFormNames.Contains(strName)) lstFormNames.Add(strName);
-            if (lstExtraFormNames != null)
-                foreach (string strName in lstExtraFormNames)
+            if (!string.IsNullOrEmpty(strFormNameOverride))
+            {
+                lstFormNames.Add(strFormNameOverride);
+                if (!lstFormNames.Contains(strFormNameOverride + " "))
+                    lstFormNames.Add(strFormNameOverride + " ");
+                TryAddFormFileToProject(oProject, strFormNameOverride);
+            }
+            else
+            {
+                foreach (string strName in FormNameCandidates())
                     if (!lstFormNames.Contains(strName)) lstFormNames.Add(strName);
+                if (lstExtraFormNames != null)
+                    foreach (string strName in lstExtraFormNames)
+                        if (!lstFormNames.Contains(strName)) lstFormNames.Add(strName);
+            }
 
             DocumentTypeManager.DocumentType[] arrTypes = GetReportTypeCandidates();
             List<string> lstTypeNames = new List<string>();
@@ -223,7 +359,10 @@ namespace MyEplanActions
                             _log.Log("[SUCCESS-TYPE] " + eReportType + " (FormName='" + strFormName +
                                 "', FilterSchemaName='" + strSchema + "').");
                             DumpReportProperties(oReportRef);
-                            if (strFormName.IndexOf(AddInConfiguration.FormNameFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                            // bCheckForeignForm=false (UI): пользователь осознанно
+                            // выбирает любую форму — WARN «чужая форма» не выполняется.
+                            if (bCheckForeignForm &&
+                                strFormName.IndexOf(AddInConfiguration.FormNameFilter, StringComparison.OrdinalIgnoreCase) < 0)
                             {
                                 _log.Warn("ОТЧЁТ СОЗДАН НА ЧУЖОЙ ФОРМЕ '" + strFormName +
                                     "' (нет подстроки '" + AddInConfiguration.FormNameFilter + "') — результат невалиден!");

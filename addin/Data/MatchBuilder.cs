@@ -19,16 +19,9 @@ namespace MyEplanActions
         public readonly List<string> CableNames = new List<string>();
     }
 
-    /// <summary>Дескриптор строки формы — PlaceHolderText (rev.5.3): текст + позиция.
-    /// Якорь соответствия «номер клеммы ↔ колонка»: порядковое сопоставление колонок
-    /// и клемм неверно, когда нумерация клеммника не совпадает с раскладкой по X
-    /// (урок rev.5.2: мосты 7-8/8-9 стоят под перемычкой колонок 8/9/10).</summary>
-    public sealed class PhRow
-    {
-        public Pt Location;
-        public string Text;
-        public string SourceTerminalName; // rev.6.1: полное имя Terminal-источника (SourceObject) или "" — запасной якорь
-    }
+    // Класс PhRow (дескриптор строки формы) перенесён в Anchor/AnchorResolver.cs
+    // (rev.12.2, H-3): AnchorResolver с DetectOrientation компилируется в чистый
+    // тест-раннер tests/, а MatchBuilder тянет EPLAN-типы DmRow/DmReport.
 
     /// <summary>Группа [DM]-строк одной клеммы целевого клеммника (Ext+Int, без Bridge).</summary>
     public sealed class DmTerminalGroup
@@ -75,8 +68,12 @@ namespace MyEplanActions
             return oRow.CableName != null || oRow.IsCableConn == true || oRow.IsCableCdp == true;
         }
 
+        // rev.12.1 (Фаза H, H-2): ориентация и целевой клеммник — параметры
+        // (UI-выбор диалога); в headless-вызовах — явная константа
+        // AddInConfiguration.TargetStripName (то же значение, логи прежние).
         public static List<MatchRow> Build(LeadAnalysis oAnalysis, DmReport oDm, List<PhRow> lstPh,
-            DiagnosticLogger log)
+            DiagnosticLogger log, string strTargetStripName,
+            ReportOrientation eOrientation = AddInConfiguration.Orientation)
         {
             List<MatchRow> lstRows = new List<MatchRow>();
             K4Report oK4 = oAnalysis == null ? null : oAnalysis.K4;
@@ -93,7 +90,7 @@ namespace MyEplanActions
                     + oAnalysis.Points.Count + " точек остались без сопоставления клеммам — свод пропущен");
                 return lstRows;
             }
-            string strTarget = AddInConfiguration.TargetStripName;
+            string strTarget = strTargetStripName;
 
             // --- 1. Строки [DM] целевого клеммника ---
             List<DmRow> lstConnRows = new List<DmRow>();
@@ -160,7 +157,7 @@ namespace MyEplanActions
             // ориентация из AddInConfiguration вместо хардкода Horizontal, ось —
             // внутри AnchorResolver).
             // Проверки «дальше шага»/«конфликт» [PHCOL] остались здесь — нужна геометрия К4.
-            AnchorMap oMap = AnchorResolver.Build(lstPh, AddInConfiguration.Orientation,
+            AnchorMap oMap = AnchorResolver.Build(lstPh, eOrientation,
                 oDm.StripTerminalNames, strTarget, log);
 
             int nAnchors = 0, nAnchorCollisions = 0, nAnchorFar = 0;
