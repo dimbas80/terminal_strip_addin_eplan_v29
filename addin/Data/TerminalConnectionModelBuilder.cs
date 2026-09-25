@@ -44,6 +44,10 @@ namespace MyEplanActions
         /// исправлено по данным пользователя — «верх ↔ Int, низ ↔ Ext»);
         /// Unknown/переполнение пула — по порядку из оставшихся DmRow; сироты (клемма
         /// не сопоставлена) — модель с пустым Connection. Валидируется дампом [TCM].
+        /// rev.12.7 (H-3c-2): точка колонки без стубов (NaN-ссылка: оверфлоу-слот
+        /// rev.12.6 и вирт-колонки под перемычками) получает сторону от ближайшей
+        /// соседней точки ЭТОЙ ЖЕ клеммы на том же ряду (Δ по перпендикуляру ≤ Half);
+        /// сироты шага 4 fallback НЕ получают (соседей по клемме нет).
         /// КОНТРАКТ ПОРЯДКА: список группируется по клеммам (сироты — в конце), НЕ в
         /// порядке Points/lstMatch — потребители Фазы E/F не должны полагаться на
         /// lstTcm[i] ↔ Points[i].</summary>
@@ -90,14 +94,75 @@ namespace MyEplanActions
                 if (lstRows == null) lstRows = new List<DmRow>();
 
                 List<TerminalSide> lstSides = new List<TerminalSide>();
+                // rev.12.7 (H-3c-2): параллельно сторонам храним перпендикулярные
+                // ссылки колонок точек группы — NaN-ссылка триггер fallback-прохода
+                // (колонка без стубов: оверфлоу 12.6 / вирт-колонки под перемычками).
+                List<double> lstRefs = new List<double>();
                 foreach (int nIdx in oEntry.Value)
                 {
                     MatchRow oRow = lstMatch[nIdx];
                     double dRef = oRow.ColumnIndex >= 0
                         ? ColumnPerpRef(oAnalysis, oK4, oRow.ColumnIndex, dicPerpCache) : double.NaN;
+                    lstRefs.Add(dRef);
                     lstSides.Add(double.IsNaN(dRef)
                         ? TerminalSide.Unknown
                         : TerminalGeometry.PointSide(bV, oRow.Point, dRef));
+                }
+
+                // rev.12.7 (H-3c-2, прогон XT1 15:04; ревью-переделка): у точки из
+                // колонки БЕЗ стубов ColumnPerpRef = NaN → сторона Unknown →
+                // CableLayoutBuilder ([CABGROUP]) кладёт кабель в OtherConnections,
+                // шина идёт «по верхнему краю» (Horizontal) / правому (Vertical) —
+                // кабельные грабли нижнего вывода уезжают вверх/вправо. Такие колонки:
+                // оверфлоу-слоты rev.12.6 И вирт-колонки CheckK4Report под перемычками
+                // (триггер намеренно шире — любая NaN-ссылка).
+                // Первый вариант фика (метрика — ближайшая не-NaN ссылка ColumnPerpRef
+                // группы) мёртв: ref лежит на ОСИ РЯДА клемм (горизонтальные стубы-
+                // тики 0.5 мм, в прогонах XT1/X2 Y≈−74.5), а оверфлоу-точка — на строке
+                // подключения Y=−111.875; Δ≈37 > Pitch 7 → ветка не срабатывала.
+                // Метрика — СОСЕДНЯЯ ТОЧКА ЭТОЙ ЖЕ клеммы (не ref): среди точек группы
+                // со стороной != Unknown берётся ближайшая по перпендикуляру
+                // (bV ? X : Y); допуск — полушаг Half (ряды разделены ≫ полушага,
+                // на одном ряду Δ≈0; ровно в ряду Δ≈0 → сторона соседа честнее
+                // перевызова PointSide — row-based правило). Проигрыш минимума по
+                // Δ — кандидат первый при равенстве (строгий <).
+                // oK4 null или Half ≤ 0 — fallback пропускаем; кандидатов нет или
+                // минимальный Δ > Half — остаётся Unknown. Проход трогает ТОЛЬКО
+                // точки с NaN-ссылкой: реальная колонка в допуске ряда (non-NaN ref,
+                // |Δ| ≤ TolPerpMm) остаётся Unknown (регресс rev.8.1/12.6 не меняется).
+                // Fallback выполнен ДО формирования lstOrder: восстановленная точка
+                // перестаёт быть Unknown и потребляет пул в общем порядке rev.8.1
+                // (сначала известные стороны — не меняется).
+                // Прогноз поведения: XT1 оверфлоу (59.85;−111.875) ← сосед той же
+                // клеммы (52.85;−111.875), Δ=0 → Bottom → CableLayout кладёт кабель
+                // на нижнюю (Left-)шину — грабли уходят вниз (фикс визуала).
+                // X2 (66.85;−111.875) Unknown ← сосед Bottom, Δ=0 → Bottom; связка
+                // conn↔точка НЕ меняется: Unknown тянула remain[0]-провод pin1
+                // последней после Top/Bottom, Bottom вторым в entry тянет тот же
+                // Ext-ряд; смена СТОРОНЫ на визуал провода не влияет — провод без
+                // кабеля (NoCable), шины строятся только по кабелям.
+                if (oK4 != null && oK4.Half > 0)
+                {
+                    for (int k = 0; k < lstSides.Count; k++)
+                    {
+                        if (lstSides[k] != TerminalSide.Unknown || !double.IsNaN(lstRefs[k])) continue;
+                        Pt oPtK = lstMatch[oEntry.Value[k]].Point;
+                        double dPerpK = bV ? oPtK.X : oPtK.Y;
+                        TerminalSide oNeighborSide = TerminalSide.Unknown;
+                        double dBest = double.MaxValue;
+                        for (int j = 0; j < lstSides.Count; j++)
+                        {
+                            if (j == k || lstSides[j] == TerminalSide.Unknown) continue;
+                            Pt oPtJ = lstMatch[oEntry.Value[j]].Point;
+                            double dDist = System.Math.Abs(dPerpK - (bV ? oPtJ.X : oPtJ.Y));
+                            if (dDist < dBest) { dBest = dDist; oNeighborSide = lstSides[j]; }
+                        }
+                        if (oNeighborSide == TerminalSide.Unknown || dBest > oK4.Half) continue;
+                        lstSides[k] = oNeighborSide;
+                        log.Log("[INFO] [TCM] сторона точки (" + FmtPt(oPtK) +
+                            ") взята от соседней точки клеммы (" + oNeighborSide +
+                            ", Δ=" + Fmt(dBest) + ")");
+                    }
                 }
 
                 // rev.8.1: выбор строго из lstRemain (единый пул потребления) —
@@ -169,6 +234,17 @@ namespace MyEplanActions
                 ": без сопоставления Connection " + nNoConn + ", листьев моста " + nBridgeLeaves +
                 " (связка точка↔Connection — эвристика по стороне, см. [TCM])");
             return lstModels;
+        }
+
+        /// <summary>rev.12.7: координаты точки для лога [TCM] ("X=..;Y=..", F3).</summary>
+        private static string FmtPt(Pt oPt)
+        {
+            return "X=" + Fmt(oPt.X) + ";Y=" + Fmt(oPt.Y);
+        }
+
+        private static string Fmt(double dValue)
+        {
+            return dValue.ToString("F3", CultureInfo.InvariantCulture);
         }
 
         private static bool IsBridge(LeadAnalysis oAnalysis, int nIdx)

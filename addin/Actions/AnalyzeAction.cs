@@ -25,7 +25,11 @@ namespace MyEplanActions
     {
         // Штамп сборки: должен совпадать в логе с ожидаемой версией кода.
         // Меняется при каждой правке логики — так видно, что исполняется не старый DLL.
-        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.12.4 (Фаза H: авто-ориентация H-3, список=проект, гейт CROSS с кандидатами)";
+        // rev.12.7 (Этап 8, H-3c-2, прогон XT1 25.09.2026 15:04): оверфлоу-точка
+        // вирт-колонки (следствие 12.6) получала TerminalSide.Unknown (у вирт-колонки
+        // нет стубов → ColumnPerpRef = NaN) → [CABGROUP]OtherConnections → шина по
+        // верхнему краю. Фикс: сторона от ближайшей соседней точки той же клеммы.
+        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.12.7 (H-3c-2: сторона оверфлоу-точки от соседней точки клеммы)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -44,7 +48,9 @@ namespace MyEplanActions
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.12.4 (Фаза H: авто-ориентация H-3, список=проект, гейт CROSS с кандидатами)", BUILD_STAMP);
+            // rev.12.7 (H-3c-2): заголовок прогона — сторона оверфлоу-точки от
+            // соседней точки клеммы, прогон XT1 25.09.2026 15:04.
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.12.7 (H-3c-2: сторона оверфлоу-точки от соседней точки клеммы)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -552,12 +558,49 @@ namespace MyEplanActions
                     // требует.
                     _logger.Log("[INFO] Выбор: клеммник '" + strStrip + "', форма '" + strForm + "'.");
 
+                    // --- 3b. rev.12.5 (H-3b): разрешение ЦЕЛИ отчёта — выбранного
+                    //        TerminalStrip. Без целей EPLAN строит встроенный отчёт по
+                    //        умолчанию (контекст активной страницы) — геометрия выходила
+                    //        по клеммнику X2, а не по выбранному. Обход — тот же, что в
+                    //        CollectStripNames. Не найден/исключение — повторный показ
+                    //        диалога (тот же приём, что при oReportRef == null ниже). ---
+                    _logger.Log("[REPORT-TARGET] поиск цели отчёта: клеммник '" + strStrip + "'");
+                    TerminalStrip oTargetStrip;
+                    try
+                    {
+                        oTargetStrip = ResolveTargetStrip(oProject, strStrip);
+                    }
+                    catch (Exception oException)
+                    {
+                        _logger.Log("[UIERR] Разрешение цели отчёта не удалось: " +
+                            oException.GetType().Name + ": " + oException.Message);
+                        MessageBox.Show(oDialog, "Не удалось разрешить выбранный клеммник '" + strStrip +
+                            "' в объекте проекта:\n" + oException.Message +
+                            "\n\nВыберите другой клеммник либо отмените генерацию.",
+                            UI_CAPTION, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        continue;   // заново показать диалог
+                    }
+                    if (oTargetStrip == null)
+                    {
+                        // null — не только «не найден», но и сбои чтения страниц/клеммников
+                        // (детали уже в [UIERR]-логах выше внутри ResolveTargetStrip).
+                        _logger.Log("[UIERR] Цель отчёта не разрешена для клеммника '" + strStrip +
+                            "' (не найден или доступ к страницам неудачен — см. [UIERR] выше)");
+                        MessageBox.Show(oDialog, "Не удалось сопоставить выбранный клеммник '" + strStrip +
+                            "' с объектом проекта (см. [UIERR]/[REPORT-TARGET] в логе).\n\n" +
+                            "Выберите другой клеммник либо отмените генерацию.",
+                            UI_CAPTION, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        continue;   // заново показать диалог
+                    }
+
                     try
                     {
                         // --- 4. Отчёт на ВЫБРАННОЙ форме (override; «чужая форма»
-                        //        в UI-режиме не проверяется) ---
+                        //        в UI-режиме не проверяется); rev.12.5 (H-3b): цель —
+                        //        выбранный TerminalStrip (4-арг. CreateEmbeddedReport) ---
                         ReportBlockReference oReportRef =
-                            oReader.TryCreateEmbeddedReport(oProject, oPage, null, strForm, false);
+                            oReader.TryCreateEmbeddedReport(oProject, oPage, null, strForm, false,
+                                new StorableObject[] { oTargetStrip });
                         if (oReportRef == null)
                         {
                             _logger.Log("[UIERR] Не удалось создать отчёт для формы '" + strForm +
@@ -663,6 +706,52 @@ namespace MyEplanActions
             _logger.Log("[INFO] клеммников в проекте: " + lstResult.Count +
                 " (обход " + arrPages.Length + " стр.)");
             return lstResult;
+        }
+
+        /// <summary>rev.12.5 (H-3b, «отчёт по выбранному клеммнику»): разрешение имени
+        /// из диалога в объект TerminalStrip — цель 4-арг. перегрузки
+        /// Reports.CreateEmbeddedReport(..., StorableObject[]). Обход — тот же, что в
+        /// CollectStripNames: Project.Pages → Page.TerminalStrips; нечитаемые чтения —
+        /// [UIERR] и пропуск (обход не прерывается). Сравнение через Trim() с обеих
+        /// сторон: имя клеммника в EPLAN может нести хвостовой пробел (урок п.33),
+        /// а ComboBox отдаёт текст как есть. Найден — лог [REPORT-TARGET] со страницей;
+        /// null — клеммник не найден ИЛИ доступ к страницам/клеммникам нечитаем
+        /// (детали — [UIERR]-логи внутри метода); вызывающий показывает диалог
+        /// повторно нейтральной формулировкой.</summary>
+        private TerminalStrip ResolveTargetStrip(Project oProject, string strStrip)
+        {
+            string strWant = (strStrip ?? "").Trim();
+            Page[] arrPages;
+            try { arrPages = oProject.Pages; }
+            catch (Exception oException)
+            {
+                _logger.Log("[UIERR] Project.Pages (цель отчёта): " +
+                    oException.GetType().Name + ": " + oException.Message);
+                return null;
+            }
+            if (arrPages == null) return null;
+            foreach (Page oPage in arrPages)
+            {
+                string strPageName = SafeText("<нет имени>", () => oPage.IdentifyingName);
+                TerminalStrip[] arrStrips;
+                try { arrStrips = oPage.TerminalStrips; }
+                catch (Exception oException)
+                {
+                    _logger.Log("[UIERR] Page.TerminalStrips (цель отчёта, '" + strPageName + "'): " +
+                        oException.GetType().Name + ": " + oException.Message);
+                    continue;
+                }
+                if (arrStrips == null) continue;
+                foreach (TerminalStrip oStrip in arrStrips)
+                {
+                    string strStripName = SafeText("<n/a>", () => oStrip.Name);
+                    if (strStripName == null || strStripName.Trim() != strWant) continue;
+                    _logger.Log("[REPORT-TARGET] TerminalStrip найден, страница '" +
+                        strPageName + "'");
+                    return oStrip;
+                }
+            }
+            return null;
         }
 
         /// <summary>Пайплайн после создания отчёта — КОПИЯ headless-Run() (шаги 4–15)

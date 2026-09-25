@@ -21,7 +21,9 @@ namespace MyEplanActions
 
     // Класс PhRow (дескриптор строки формы) перенесён в Anchor/AnchorResolver.cs
     // (rev.12.2, H-3): AnchorResolver с DetectOrientation компилируется в чистый
-    // тест-раннер tests/, а MatchBuilder тянет EPLAN-типы DmRow/DmReport.
+    // тест-раннер tests/. rev.12.6 (H-3c): DmRow/DmReport — чистые data-классы,
+    // вынесены из EplanTerminalStripReader.cs в Data/DmModels.cs; сам MatchBuilder
+    // EPLAN не тянет и компилируется в тест-раннер (кейсы оверфлоу — MatchBuilderTests).
 
     /// <summary>Группа [DM]-строк одной клеммы целевого клеммника (Ext+Int, без Bridge).</summary>
     public sealed class DmTerminalGroup
@@ -58,7 +60,20 @@ namespace MyEplanActions
     /// (в) Bridge 11==11 (п.21в закрыт, п.24);
     /// (г) rev.5.6 (п.26): якорим только доминирующий ряд номеров формы; раздвоение
     /// вывода на свободный слот (мост К2 с листом в колонке без якоря) привязывается
-    /// к клемме якоренного листа — встречается и сверху, и снизу.</summary>
+    /// к клемме якоренного листа — встречается и сверху, и снизу;
+    /// (д) rev.12.6 (Этап 8, H-3c, прогон XT1 25.09.2026 14:08, summary п.65):
+    /// оверфлоу-точка второго кабельного пина — у клеммы с двумя кабельными
+    /// подключениями одного кабеля (Ext pin0+pin1) EPLAN рисует вторую точку в
+    /// свободном слоте со смещением +1 шаг от колонки, без стуба; такой лист моста
+    /// не привязывается ни к одной колонке К4 и терялся (WARN «раздвоение не
+    /// обрабатывалось», модель [TCM] не строилась). Теперь над ним создаётся
+    /// ВИРТУАЛЬНАЯ КОЛОНКА (оверфлоу-слот) с привязкой к той же клемме-владельцу:
+    /// oK4.Columns/Counts и параллельные массивы дополняются ДО секций 4/5
+    /// (WHY — на месте дополнения), точка привязывается через BindIndex сама.
+    /// Доработка по ревью rev.12.6: слот создаётся только при ≥2 Dm-подключений
+    /// у клеммы-владельца (sanity) и если ни одна посторонняя точка не попадает
+    /// в полушаговое окно слота (гард перехвата привязки); [MATCH-SUM] печатает
+    /// «сирот N (закрыто оверфлоу M)».</summary>
     public static class MatchBuilder
     {
         /// <summary>Кабельное ли подключение: имя кабеля из CDP-пробы ИЛИ №31058
@@ -205,10 +220,20 @@ namespace MyEplanActions
             //         Встречается и сверху, и снизу — правило общее.
             int[] arrColTerminal = new int[nColumns];
             bool[] arrSplitCol = new bool[nColumns];
+            // rev.12.6 (H-3c): колонки-оверфлоу (вирт-слот второго кабельного пина) —
+            // параллельно arrSplitCol; после цикла мостов массивы ДОРАЩИВАЮТСЯ под
+            // вирт-колонки, поэтому читаются по индексу, ограниченному новым nColumns.
+            bool[] arrOverflowCol = new bool[nColumns];
             for (int i = 0; i < nColumns; i++) arrColTerminal[i] = arrColNumber[i];
             int nSplits = 0;
+            int nOverflow = 0;    // rev.12.6: сводка [MATCH-SUM]; nSplits НЕ инкрементируется
+            int nOverflowPts = 0; // rev.12.6 review: закрытые оверфлоу листья (с аннотацией «сирот»)
             if (bUseAnchors)
             {
+                // rev.12.6 (H-3c): кандидаты в оверфлоу-слоты; вирт-колонки создаются
+                // ОДНИМ проходом после цикла — внутри цикла BindIndex обязан видеть
+                // исходные колонки (иначе второй мост привязался бы к слоту первого).
+                List<OverflowSlot> lstOverflow = new List<OverflowSlot>();
                 Dictionary<int, List<int>> dicBridgePoints = new Dictionary<int, List<int>>();
                 for (int i = 0; i < oAnalysis.Points.Count; i++)
                 {
@@ -224,6 +249,90 @@ namespace MyEplanActions
                     int nCol2 = oK4.BindIndex(oAnalysis.Points[oEntry.Value[1]]);
                     if (nCol1 < 0 || nCol2 < 0)
                     {
+                        // rev.12.6 (Этап 8, H-3c, прогон XT1 25.09.2026 14:08, summary
+                        // п.65): ОВЕРФЛОУ-ТОЧКА ВТОРОГО ПИНА КАБЕЛЯ. Ровно один лист
+                        // сирота (XOR), второй биндится на ЯКОРЕННУЮ колонку, |Δ по оси|
+                        // от сироты до колонки-владельца в [0.75·pitch, 1.5·pitch] —
+                        // EPLAN нарисовал второй вывод кабеля в свободном слоте со
+                        // смещением ±1 шаг (направление НЕ значимо, только |Δ|; ось —
+                        // oK4.Orientation, единый источник как в LeadDetector). Создаём
+                        // кандидат в вирт-колонки (материализация — после цикла).
+                        // Тому, что в слоте стоит реальная колонка с ДРУГИМ анкором,
+                        // создание не мешает, если до неё > полушага — иначе точка уже
+                        // привязалась бы к ней (BindIndex перебирает ВСЕ колонки;
+                        // сиротство ⟹ до любой колонки > Half, проверка автоматична).
+                        if ((nCol1 < 0) != (nCol2 < 0))
+                        {
+                            int nOwnerCol = nCol1 < 0 ? nCol2 : nCol1;
+                            int nOrphanPt = nCol1 < 0 ? oEntry.Value[0] : oEntry.Value[1];
+                            double dOrphanAxis = AxisOf(oK4, oAnalysis.Points[nOrphanPt]);
+                            double dDelta = Math.Abs(dOrphanAxis - oK4.Columns[nOwnerCol]);
+                            if (arrColNumber[nOwnerCol] >= 0 && dDelta >= 0.75 * oK4.Pitch &&
+                                dDelta <= 1.5 * oK4.Pitch)
+                            {
+                                // rev.12.6 review (MINOR) sanity-guard: оверфлоу-слот
+                                // оправдан только когда у клеммы-владельца ≥2 Dm-
+                                // подключений (оба листа моста их «закрывают»). Обычный
+                                // дальний мост при единичном подключении (рассинхрон
+                                // геометрии и DM) не должен молча получать чужую клемму —
+                                // проваливаемся в прежний общий WARN.
+                                DmTerminalGroup oOwnerGrp = FindGroupByAnchorNumber(
+                                    oMap, arrColNumber[nOwnerCol], dicGroups, dicByNumber);
+                                if (oOwnerGrp != null && oOwnerGrp.ConnCount >= 2)
+                                {
+                                    // rev.12.6 review (MAJOR) гард перехвата: после
+                                    // дополнения oK4 Columns BindIndex не должен увести
+                                    // привязку ни одной точки, кроме двух листьев этого
+                                    // моста (перехват = точка ближе к слоту, чем к своей
+                                    // колонке). При ровном шаге
+                                    // окно слота (±Half от оси сироты) территории реальных
+                                    // колонок не пересекает; гард — на случай неровных
+                                    // колонок (вирт-колонки К4 под перемычками, сбойный
+                                    // медианный шаг). Проверка по точкам, не по колонкам.
+                                    bool bSteal = false;
+                                    for (int nPt = 0; nPt < oAnalysis.Points.Count; nPt++)
+                                    {
+                                        if (nPt == oEntry.Value[0] || nPt == oEntry.Value[1]) continue;
+                                        if (Math.Abs(AxisOf(oK4, oAnalysis.Points[nPt]) - dOrphanAxis) <= oK4.Half)
+                                        { bSteal = true; break; }
+                                    }
+                                    if (bSteal)
+                                    {
+                                        log.Warn("[SPLIT] оверфлоу: слот " + strAxis + "=" + FmtX(dOrphanAxis) +
+                                            " потенциально перехватил бы привязку другой точки — вирт-колонка не создана");
+                                        continue;
+                                    }
+                                    // два моста в один слот (один верх, один низ) — общая
+                                    // вирт-колонка; конфликт владельцев — как в [SPLIT]
+                                    // ниже: оставлен первый. Страховка: после MAJOR-гарда
+                                    // второй лист того же слота отсекается проверкой
+                                    // перехвата (первый лист — в его окне), дедуп остаётся
+                                    // на случай эволюции допусков.
+                                    OverflowSlot oHit = null;
+                                    foreach (OverflowSlot oSlot in lstOverflow)
+                                        if (Math.Abs(oSlot.AxisPos - dOrphanAxis) < 0.001) { oHit = oSlot; break; }
+                                    if (oHit != null)
+                                    {
+                                        if (oHit.OwnerNumber == arrColNumber[nOwnerCol]) oHit.Leaves++;
+                                        else
+                                            log.Warn("[SPLIT] оверфлоу-слот " + strAxis + "=" + FmtX(oHit.AxisPos) +
+                                                ": уже привязан к №" + oHit.OwnerNumber + ", оверфлоу к №" +
+                                                arrColNumber[nOwnerCol] + " отброшен (оставлен первый)");
+                                        continue;
+                                    }
+                                    OverflowSlot oSlotNew = new OverflowSlot();
+                                    oSlotNew.AxisPos = dOrphanAxis;
+                                    oSlotNew.OwnerNumber = arrColNumber[nOwnerCol];
+                                    oSlotNew.Leaves = 1;
+                                    lstOverflow.Add(oSlotNew);
+                                    log.Log("[SPLIT] оверфлоу: лист моста в " + strAxis + "=" + FmtX(dOrphanAxis) +
+                                        " — Δ" + strAxis + "=" + FmtX(dDelta) + " от колонки-владельца №" +
+                                        arrColNumber[nOwnerCol] + " в [0.75;1.5]·pitch — вирт-колонка (клемма №" +
+                                        arrColNumber[nOwnerCol] + ")");
+                                    continue;
+                                }
+                            }
+                        }
                         log.Warn("[SPLIT] мост: лист не привязался к колонке К4 — раздвоение не обрабатывалось");
                         continue;
                     }
@@ -267,6 +376,61 @@ namespace MyEplanActions
                         " и " + strAxis + "=" + FmtX(oK4.Columns[nCol2]) + " — колонка " + strAxis + "=" + FmtX(oK4.Columns[nFreeCol]) +
                         " привязана к клемме №" + nOwner + " (К2: мост = 2 вывода одной клеммы)");
                 }
+
+                // rev.12.6 (H-3c): материализация оверфлоу-слотов — ДОПОЛНЯЕМ
+                // oK4.Columns/Counts и параллельные массивы ДО построения секций 4/5.
+                // WHY именно мутация oK4 (а не локальные списки-клоны): к этому месту
+                // потребители K4-логики уже отработали (CheckK4Report посчитал
+                // Orphans/Over и напечатал свои WARN — MatchBuilder вызывается после
+                // детектора), а оставшимся потребителям вирт-колонка ПОЛЕЗНА:
+                //  - oK4.BindIndex в секции 5 привязывает orphan-точку сам (её ось ==
+                //    координата слота, Δ=0 ≤ Half) — MatchRow.ColumnIndex/ColumnX/
+                //    TerminalName получают привязку без отдельного пути биндинга;
+                //  - [MATCHCOL] (секция 4) печатает слот в общем цикле по колонкам;
+                //  - TerminalConnectionModelBuilder.ColumnPerpRef у колонки без стубов
+                //    даёт NaN (стуб в полушаге от слота означал бы колонку, к которой
+                //    точка уже привязалась бы) → TerminalSide.Unknown → безопасный
+                //    remain-путь rev.8.1; dStripEndAxis в AnalyzeAction учитывает
+                //    реально нарисованную точку.
+                // Локальные списки потребовали бы параллельных путей биндинга в двух
+                // секциях и разошлись бы с MatchRow.ColumnIndex у потребителей.
+                // Счёт oK4.Orphans остаётся детекторным (точка была сиротой на момент
+                // К4) — поле [MATCH-SUM] не меняется; порядок колонок не сортируем —
+                // вирт-слоты дописываются в хвост, индексы реальных колонок стабильны.
+                nOverflow = lstOverflow.Count;
+                if (nOverflow > 0)
+                {
+                    int nOld = nColumns;
+                    nColumns = nOld + nOverflow;
+                    int[] arrNumNew = new int[nColumns];
+                    int[] arrTermNew = new int[nColumns];
+                    bool[] arrSplitNew = new bool[nColumns];
+                    bool[] arrOverfNew = new bool[nColumns];
+                    Array.Copy(arrColNumber, arrNumNew, nOld);
+                    Array.Copy(arrColTerminal, arrTermNew, nOld);
+                    Array.Copy(arrSplitCol, arrSplitNew, nOld);
+                    Array.Copy(arrOverflowCol, arrOverfNew, nOld);
+                    // якорей у вирт-колонок нет (-1 — дефолт массива не подходит,
+                    // заполняем явно), клемма-владелец — из кандидата.
+                    int[] arrCountsNew = new int[nColumns];
+                    int[] arrCountsOld = oK4.Counts != null ? oK4.Counts : new int[nOld];
+                    Array.Copy(arrCountsOld, arrCountsNew,
+                        Math.Min(arrCountsOld.Length, nOld));
+                    for (int k = 0; k < nOverflow; k++)
+                    {
+                        arrNumNew[nOld + k] = -1;
+                        arrTermNew[nOld + k] = lstOverflow[k].OwnerNumber;
+                        arrOverfNew[nOld + k] = true;
+                        arrCountsNew[nOld + k] = lstOverflow[k].Leaves;
+                        nOverflowPts += lstOverflow[k].Leaves;
+                        oK4.Columns.Add(lstOverflow[k].AxisPos);
+                    }
+                    arrColNumber = arrNumNew;
+                    arrColTerminal = arrTermNew;
+                    arrSplitCol = arrSplitNew;
+                    arrOverflowCol = arrOverfNew;
+                    oK4.Counts = arrCountsNew;
+                }
             }
 
             // --- 4. Таблица [MATCHCOL]: колонка ↔ (якорь/раздвоение) ↔ клемма (только
@@ -297,6 +461,7 @@ namespace MyEplanActions
                     int nNumber = arrColNumber[i];
                     int nTerm = arrColTerminal[i];
                     bool bSplit = arrSplitCol[i];
+                    bool bOverflow = arrOverflowCol[i]; // rev.12.6 (H-3c)
                     DmTerminalGroup oGroup = nTerm >= 0
                         ? FindGroupByAnchorNumber(oMap, nTerm, dicGroups, dicByNumber)
                         : null;
@@ -305,9 +470,13 @@ namespace MyEplanActions
                     int nOwnPts = dicOwnPts.TryGetValue(nTerm, out nDiscard) ? nDiscard : 0;
                     int nSplitPts = dicSplitPts.TryGetValue(nTerm, out nDiscard) ? nDiscard : 0;
                     int nTotal = nOwnPts + nSplitPts;
+                    // rev.12.6: оверфлоу-слот — свой маркер; в dicSplitPts он учтён уже
+                    // здесь (arrColNumber<0) — сверка чисел точек/подключений проходит
+                    // без ложного WARN «число точек != подключениям» на колонке-владельце.
                     string strLine = "[MATCHCOL] колонка " + strAxis + "=" + FmtX(oK4.Columns[i]) + " ↔ " +
                         (nNumber >= 0 ? "№" + nNumber :
-                            (bSplit ? "<якоря нет, раздвоение → №" + nTerm + ">" : "<якоря нет>")) +
+                            (bSplit ? "<якоря нет, раздвоение → №" + nTerm + ">" :
+                                (bOverflow ? "<оверфлоу-слот → №" + nTerm + ">" : "<якоря нет>"))) +
                         (oGroup == null
                             ? (nTerm >= 0 ? " — клеммы №" + nTerm + " нет в DM" : "")
                             : " клемма '" + oGroup.Name + "' (подключений " + oGroup.ConnCount +
@@ -349,10 +518,14 @@ namespace MyEplanActions
                 nIndex++;
                 MatchRow oMatchRow = new MatchRow();
                 oMatchRow.Point = oPoint;
+                // rev.12.6 (H-3c): BindIndex видит оверфлоу-колонки, дополненные в
+                // секции 3б, — orphan-точка второго пина привязывается сюда сама
+                // (её ось совпадает со слотом, Δ=0) и получает терминал-владелец.
                 oMatchRow.ColumnIndex = oK4.BindIndex(oPoint);
                 if (oMatchRow.ColumnIndex >= 0) oMatchRow.ColumnX = oK4.Columns[oMatchRow.ColumnIndex];
                 int nTerm = oMatchRow.ColumnIndex >= 0 ? arrColTerminal[oMatchRow.ColumnIndex] : -1;
                 bool bSplitPoint = oMatchRow.ColumnIndex >= 0 && arrSplitCol[oMatchRow.ColumnIndex];
+                bool bOverflowPoint = oMatchRow.ColumnIndex >= 0 && arrOverflowCol[oMatchRow.ColumnIndex];
                 DmTerminalGroup oGroup = nTerm >= 0
                     ? FindGroupByAnchorNumber(oMap, nTerm, dicGroups, dicByNumber)
                     : null;
@@ -373,7 +546,8 @@ namespace MyEplanActions
                     oPoint.Y.ToString("F3", CultureInfo.InvariantCulture) + ") -> колонка " +
                     (oMatchRow.ColumnIndex >= 0 ? FmtX(oMatchRow.ColumnX) : "СИРОТА") + " клемма " +
                     (oGroup != null ? "'" + oGroup.Name + "'" +
-                        (bSplitPoint ? " (раздвоение → №" + nTerm + ")" : "") : "-") + ": " +
+                        (bSplitPoint ? " (раздвоение → №" + nTerm + ")" : "") +
+                        (bOverflowPoint ? " (оверфлоу → №" + nTerm + ")" : "") : "-") + ": " +
                     (oGroup != null ? DescribeConns(oGroup) : "нет сопоставления");
                 if (oMatchRow.ColumnIndex < 0) log.Warn(strLine);
                 else log.Log(strLine);
@@ -409,13 +583,20 @@ namespace MyEplanActions
                 nCableConns += oGroup.CableCount;
                 nWireConns += oGroup.WireCount;
             }
+            // rev.12.6 (H-3c): «оверфлоу-слотов» — отдельный счётчик, nSplits не
+            // трогается; «колонок К4» — итоговое число с учётом вирт-слотов;
+            // «сирот» — детекторный счётчик К4 (засчитан ДО MatchBuilder), с
+            // ревью-доработки аннотируется числом закрытых оверфлоу-листьев
+            // «(закрыто оверфлоу N)» — N <= сирот, остальные сироты остаются честными.
             log.Log("[INFO] [MATCH-SUM] точек " + lstRows.Count + ", колонок К4 " + nColumns +
                 ", клемм в DM " + lstTerminals.Count + ", якорей " + nAnchors +
                 " (коллизий " + nAnchorCollisions + ", дальних " + nAnchorFar + "), раздвоений моста " + nSplits +
+                ", оверфлоу-слотов " + nOverflow +
                 "; подключений целевого клеммника: Ext+Int " + lstConnRows.Count +
                 " (кабельных " + nCableConns + " [по имени CDP " + nCableByName +
                 ", только №31058 " + nCableBy31058Only + "], проводных " + nWireConns +
-                "); сирот " + oK4.Orphans + ", перегруженных колонок " + oK4.Over +
+                "); сирот " + oK4.Orphans + " (закрыто оверфлоу " + nOverflowPts + ")" +
+                ", перегруженных колонок " + oK4.Over +
                 "; конфликтов классификации: " + nCabX);
 
             // --- 8. Bridge целевого клеммника: п.21в закрыт (п.24) ---
@@ -438,6 +619,24 @@ namespace MyEplanActions
                 ", якорей " + nAnchors + ", кабельных подключений " + nCableConns +
                 ", проводных " + nWireConns + ", Bridge-сегментов " + dicPairs.Count + ").");
             return lstRows;
+        }
+
+        /// <summary>Кандидат в оверфлоу-слот (rev.12.6, H-3c): координата на оси
+        /// ориентации (там, где EPLAN нарисовал orphan-лист второго кабельного пина),
+        /// номер клеммы-владельца (со второго листа моста) и число leaves в слоте.</summary>
+        private sealed class OverflowSlot
+        {
+            public double AxisPos;
+            public int OwnerNumber;
+            public int Leaves;
+        }
+
+        /// <summary>Координата точки НА ОСИ ориентации (rev.12.6, H-3c): единый
+        /// источник — oK4.Orientation (X для Horizontal, Y для Vertical) — как в
+        /// LeadDetector.CheckK4Report и K4Report.BindIndex.</summary>
+        private static double AxisOf(K4Report oK4, Pt oPoint)
+        {
+            return oK4.Orientation == ReportOrientation.Vertical ? oPoint.Y : oPoint.X;
         }
 
         private static int FindNearestColumn(K4Report oK4, double dX, out double dDist)

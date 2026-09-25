@@ -308,10 +308,19 @@ namespace MyEplanActions
         /// байт-в-байт прежнее (кандидаты из конфига + lstExtraFormNames).
         /// bCheckForeignForm — WARN «чужой формы» (FormNameFilter): в UI-режиме НЕ
         /// проверяется (пользователь осознанно выбирает любую форму, спека §2 п.3);
-        /// headless — true (как сейчас).</summary>
+        /// headless — true (как сейчас).
+        /// rev.12.5 (H-3b): arrTargets — цели отчёта (StorableObject[], например
+        /// выбранный TerminalStrip). Передача непустого массива включает режим
+        /// «отчёт по целям»: сначала пробывается документированная 4-аргументная
+        /// перегрузка API 2.9 CreateEmbeddedReport(ReportBlock, Page, PointD,
+        /// StorableObject[]) — без неё EPLAN строит встроенный отчёт по умолчанию
+        /// (по контексту активной страницы), и геометрия соответствует не выбранному
+        /// клеммнику. При исключении 4-арг. — фоллбэк на 3-арг. в той же попытке
+        /// ([REPORT-TARGET]-лог). null/пустой массив (headless-путь) — поведение и
+        /// вызовы без изменений.</summary>
         public ReportBlockReference TryCreateEmbeddedReport(Project oProject, Page oPage,
             List<string> lstExtraFormNames, string strFormNameOverride = null,
-            bool bCheckForeignForm = true)
+            bool bCheckForeignForm = true, StorableObject[] arrTargets = null)
         {
             List<string> lstFormNames = new List<string>();
             if (!string.IsNullOrEmpty(strFormNameOverride))
@@ -353,9 +362,48 @@ namespace MyEplanActions
 
                             _log.Log("[INFO] Попытка: FormName='" + strFormName + "', Type=" + eReportType +
                                 ", FilterSchemaName='" + strSchema + "' ...");
-                            ReportBlockReference oReportRef =
-                                new Reports().CreateEmbeddedReport(oReportBlock, oPage,
-                                    new PointD(AddInConfiguration.InsertX, AddInConfiguration.InsertY));
+                            PointD oLocation =
+                                new PointD(AddInConfiguration.InsertX, AddInConfiguration.InsertY);
+                            ReportBlockReference oReportRef;
+                            if (arrTargets != null && arrTargets.Length > 0)
+                            {
+                                // rev.12.5 (H-3b): отчёт по целям — 4-арг. перегрузка API 2.9
+                                // (Targets = выбранный TerminalStrip). При её исключении —
+                                // фоллбэк на 3-арг. в той же попытке (то, что делали всегда).
+                                try
+                                {
+                                    oReportRef = new Reports().CreateEmbeddedReport(oReportBlock,
+                                        oPage, oLocation, arrTargets);
+                                    _log.Log("[REPORT-TARGET] отчёт создан по целям: " +
+                                        arrTargets.Length + " шт");
+                                }
+                                catch (Exception oTargetsException)
+                                {
+                                    _log.Warn("[REPORT-TARGET] ВНИМАНИЕ: 4-арг. перегрузка (цели) не прошла (" +
+                                        oTargetsException.GetType().Name + ": " + oTargetsException.Message +
+                                        "; например MissingMethodException — сборка без 4-арг. перегрузки)" +
+                                        " — фоллбэк на 3-арг. вызов: отчёт строится БЕЗ целей, по контексту" +
+                                        " активной страницы; геометрия может НЕ соответствовать выбранному" +
+                                        " клеммнику — гейт [CROSSGATE] прервёт прогон");
+                                    // Инвариант файла (см. XML-коммент метода): на каждую комбинацию —
+                                    // свежий ReportBlock. 4-арг. вызов мог частично мутировать/вставить
+                                    // oReportBlock — фоллбэк только на новом блоке с той же комбинацией.
+                                    // Исключения 3-арг. фоллбэка ловит внешний catch попытки
+                                    // (переход к следующей комбинации).
+                                    ReportBlock oFreshBlock = new ReportBlock();
+                                    oFreshBlock.Create(oProject);
+                                    oFreshBlock.FormName = strFormName;
+                                    oFreshBlock.Type = eReportType;
+                                    if (strSchema.Length > 0) oFreshBlock.FilterSchemaName = strSchema;
+                                    oReportRef = new Reports().CreateEmbeddedReport(oFreshBlock,
+                                        oPage, oLocation);
+                                }
+                            }
+                            else
+                            {
+                                oReportRef = new Reports().CreateEmbeddedReport(oReportBlock,
+                                    oPage, oLocation);
+                            }
                             _log.Log("[SUCCESS-TYPE] " + eReportType + " (FormName='" + strFormName +
                                 "', FilterSchemaName='" + strSchema + "').");
                             DumpReportProperties(oReportRef);

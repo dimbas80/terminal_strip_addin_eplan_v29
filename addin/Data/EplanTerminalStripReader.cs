@@ -6,75 +6,9 @@ using Eplan.EplApi.DataModel.EObjects;
 
 namespace MyEplanActions
 {
-    /// <summary>Плоская строка дампа [DM]: Terminal | Side | Connection | Cable (Фаза B,
-    /// plan_implementation §23). rev.5.0: добавлены проба CDP и №31058
-    /// («Соединение: Принадлежность=Кабель», summary Задача 5).</summary>
-    public sealed class DmRow
-    {
-        public string StripName;
-        public string TerminalName;
-        public string Side;            // "Ext" | "Int" | "Bridge"
-        public string ConnectionName;  // ConnectionInfo.ConnectionName
-        public string PinName;         // ConnectionInfo.FunctionPinName
-        public int PinIndex;           // ConnectionInfo.PinIndex
-        public string PeerName;        // для моста: BridgedTerminal
-        public string CableName;       // CDP -> CableDefinitionLine -> Cable.Name (null = провод)
-        public bool HasConn;           // мост: Conn != null
-        public int CdpCount = -1;      // ConnectionDefPoints: 0/1/>1; -1 = проба не удалась
-        public bool? IsCableConn;      // №31058 на Connection (null = свойство не задано)
-        public bool? IsCableCdp;       // №31058 на первом CDP (null = нет CDP/не задано)
-    }
-
-    /// <summary>Итог пробы кабеля одного Connection (rev.5.0): кэш на прогон.
-    /// KB (www.eplan.help API 2.9): Connection.CableDefinitionLine бросает BaseException
-    /// при ≠1 CDP («Different count than 1») — основной путь: ConnectionDefPoints →
-    /// ConnectionDefinitionPoint.CableDefinitionLine; №31058 читается на Connection и
-    /// на CDP (docs помечает его legacy: «no longer in use, only old projects»).</summary>
-    public sealed class CableInfo
-    {
-        public string CableName;
-        public int CdpCount = -1;
-        public bool? IsCableConn;
-        public bool? IsCableCdp;
-    }
-
-    /// <summary>Статистика одного клеммника (rev.4.1: сверка [CROSS] по-клеммнику —
-    /// отчёт показывает один клеммник, сумма по проекту не годится, summary п.21).</summary>
-    public sealed class DmStripStats
-    {
-        public int TerminalCount;
-        public int ExtCount;
-        public int IntCount;
-        public int BridgeCount;
-        public int ConnCount { get { return ExtCount + IntCount; } }
-    }
-
-    /// <summary>Итог чтения Data Model (Задача 4, план: plan_stage2.md).</summary>
-    public sealed class DmReport
-    {
-        public readonly List<DmRow> Rows = new List<DmRow>();
-        public int StripCount;
-        public int TerminalCount;
-        public int ErrCount;
-        // По-клеммниковая статистика: полное имя клеммника -> счётчики (rev.4.1).
-        public readonly Dictionary<string, DmStripStats> PerStrip =
-            new Dictionary<string, DmStripStats>();
-        // rev.5.1: ВСЕ имена клемм клеммника (в порядке TerminalStrip.Terminals),
-        // включая клеммы без подключений — иначе сопоставление колонок К4 уезжает
-        // (урок rev.5.0: 10 клемм без подключений выпадали, 61 колонка vs 50 групп).
-        public readonly Dictionary<string, List<string>> StripTerminalNames =
-            new Dictionary<string, List<string>>();
-        // Кабель -> число жил, встреченных в подключениях клемм (первое обнаружение
-        // логируется как [DMCABLE]).
-        public readonly Dictionary<string, int> CableWireCounts = new Dictionary<string, int>();
-        // rev.5.0: статистика пробы CDP/№31058 по УНИКАЛЬНЫМ соединениям (кэш CableInfo).
-        public int ConnCdpZero;
-        public int ConnCdpOne;
-        public int ConnCdpMulti;
-        public int ConnCdpErr;
-        public int IsCable31058ConnTrue;
-        public int IsCable31058CdpTrue;
-    }
+    // rev.12.6 (Этап 8, H-3c): чистые data-классы DmRow/CableInfo/DmStripStats/
+    // DmReport перенесены дословно в DmModels.cs (компилируются в чистый
+    // тест-раннер tests/ вместе с MatchBuilder).
 
     /// <summary>
     /// Ридер Data Model — Фаза B (план: plan_stage2.md, Задача 4).
