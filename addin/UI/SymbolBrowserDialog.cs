@@ -337,6 +337,12 @@ namespace MyEplanActions
                 "имя символа можно ввести вручную.");
         }
 
+        // CS0618 (ruling контроллера, fix-2): PropertyInfo.GetValue(obj, args[]) —
+        // устаревший, но единственный гарантированно доступный в референсе .NET 4
+        // способ чтения свойства; newer overloads (GetValue(obj)/GetPropertyValue)
+        // на стенде не доказаны — прямое обращение = риск CS1061. Заглушение плотной
+        // парой pragma вокруг метода, вызывающего GetValue; поведение не меняется.
+#pragma warning disable CS0618
         /// <summary>Цепочка A: reflection-перебор кандидатов перечисления у
         /// DataModel SymbolLibrary (имена членов НЕ доказаны KB — только проба).
         /// Значение — string[] или Array элементов (имена — ResolveDisplayPath);
@@ -388,6 +394,7 @@ namespace MyEplanActions
             }
             return false;
         }
+#pragma warning restore CS0618
 
         /// <summary>Цепочка B: MDSymbolLibrary по кандидатам ПУТИ библиотеки
         /// (конструктор НЕ доказан KB — Activator-проба форм (string) и
@@ -544,6 +551,10 @@ namespace MyEplanActions
             catch { return null; }
         }
 
+        // CS0618 (ruling контроллера, fix-2): тот же устаревший, но единственный
+        // гарантированно доступный в референсе .NET 4 способ чтения свойства
+        // (args[]-перегрузка); newer overloads на стенде не доказаны (CS1061-риск).
+#pragma warning disable CS0618
         private static string TryGetStringProperty(object oTarget, string strProp)
         {
             try
@@ -560,6 +571,7 @@ namespace MyEplanActions
                 return null;
             }
         }
+#pragma warning restore CS0618
 
         // --- список символов: фильтр + предвыбор + диапазон вариантов ---
 
