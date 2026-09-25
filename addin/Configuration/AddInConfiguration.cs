@@ -133,6 +133,14 @@ namespace MyEplanActions
         // обязательны на каждом шаге).
         public const bool UseUi = true;
 
+        // SPIKE (throwaway, H-4v2, rev.13.2): гейты диагностики нативного диалога
+        // «Вставить символ» (XEGActionInsertSymRef) в UI-ветке до MainDialog и дампа
+        // [ACTDUMP]. УДАЛИТЬ вместе с addin/UI/NativeSymbolDialogSpike.cs и хуком в
+        // RunUi после разбора прогона (brief .superpowers/sdd/plan_stage8/
+        // task-h4v2-spike-brief.md). В headless-прогоне гейты не читаются.
+        public const bool SpikeNativeInsertSymbol = true;
+        public const bool SpikeActionDump = true;
+
         // Фаза H (rev.12.0, spec §6): рамка-призрак — записи GridPitch.<форма>
         // в настройках нет → фиксированный шаг 10 мм.
         public const double GhostPitchFallbackMm = 10.0;

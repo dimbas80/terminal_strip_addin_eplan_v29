@@ -34,8 +34,12 @@ namespace MyEplanActions
         // rev.13.1 (Этап 8, H-4): UI-режим — символ из настроек (браузер
         // SymbolBrowserDialog, слоты H/V), два пробных замера [SYMSIZE] (по слоту),
         // компенсация визуального центра [SYMSIZE-OFF] dx,dy при вставке (R9);
-        // headless-Run() — побайтно без изменений (обёртки: константы + (0;0), R8).
-        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.1 (H-4: браузер символа + слоты H/V, два замера [SYMSIZE], компенсация центра [SYMSIZE-OFF]; headless — обёртки без изменений)";
+        // headless-Run() — побайтно без изменений (обёртки: константы + (0,0), R8).
+        // rev.13.2 (Этап 8, H-4v2 SPIKE, throwaway): в UI-ветке ДО показа MainDialog —
+        // вызов нативного диалога «Вставить символ» (XEGActionInsertSymRef) + [ACTDUMP];
+        // логи [SYMDLG]; гейты AddInConfiguration.Spike*; провал спайка пайплайн не
+        // останавливает; H-4-браузер/замеры/DT — не тронуты (fallback до вердикта).
+        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.2 (H-4v2 SPIKE: нативный диалог XEGActionInsertSymRef до MainDialog + [ACTDUMP]; H-4 браузер/замеры/компенсация — без изменений; headless — обёртки)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -54,9 +58,9 @@ namespace MyEplanActions
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            // rev.13.1: UI-символ из настроек (браузер, слоты H/V), два замера
-            // [SYMSIZE] + компенсация центра [SYMSIZE-OFF]; headless — обёртки (R8).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.1 (H-4: браузер символа + слоты H/V, два замера [SYMSIZE], компенсация центра [SYMSIZE-OFF])", BUILD_STAMP);
+            // rev.13.2: SPIKE H-4v2 — нативный диалог выбора символа до MainDialog +
+            // [ACTDUMP] (UI-ветка); H-4: браузер+два замера+компенсация — без изменений.
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.2 (H-4v2 SPIKE: нативный диалог XEGActionInsertSymRef + [ACTDUMP]; H-4: браузер, замеры [SYMSIZE], компенсация [SYMSIZE-OFF])", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -493,6 +497,14 @@ namespace MyEplanActions
                      ". Требуется «Однополюсная схема соединения» (CircuitSingleLine).");
                 return;
             }
+
+            // --- 1b. SPIKE (throwaway, H-4v2, rev.13.2): нативный диалог «Вставить
+            //        символ» (XEGActionInsertSymRef) ДО показа нашего MainDialog —
+            //        строго в UI-ветке (headless Run() не затронут). Провал спайка
+            //        не останавливает пайплайн (WARN/INFO внутри + продолжение).
+            //        Удалить вместе с NativeSymbolDialogSpike.cs после вердикта. ---
+            if (AddInConfiguration.SpikeNativeInsertSymbol)
+                NativeSymbolDialogSpike.Run(oProject, _logger);
 
             // --- 2. Данные для диалога: (а) клеммники ВСЕГО ПРОЕКТА (rev.12.3: клеммники
             //        размещены на многополюсных страницах, активная под прогон —
