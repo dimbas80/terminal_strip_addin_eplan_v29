@@ -13,8 +13,11 @@ namespace MyEplanActions
     /// библиотеки/символа + два слота варианта (H/V, 0-based). Программный layout
     /// без designer (паттерн MainDialog: TableLayoutPanel, хелперы статическими
     /// методами — локальных функций в C#5 нет). Диалог ТОЛЬКО ЧИТАЕТ — никаких
-    /// EPLAN-мутаций. Выход: свойства Library/Name/VariantH/VariantV; «ОК» валиден
-    /// только при непустых Library/Name (значения НЕ триммингуются — урок хвостового
+    /// EPLAN-мутаций. Выход: свойства Library/SymbolName/VariantH/VariantV
+    /// (fix-3, R13: Name -> SymbolName — свойство «Name» скрывало
+    /// Control.Name, CS0108; new-тень не используется сознательно);
+    /// «ОК» валиден
+    /// только при непустых Library/SymbolName (значения НЕ триммингуются — урок хвостового
     /// пробела п.33). «Отмена»/крестик — ничего не возвращается.
     /// KB-факты API 2.9 (www.eplan.help; грабля базы: блок [Code] — артефакт
     /// скрейпера, авторитетен Remarks):
@@ -176,8 +179,10 @@ namespace MyEplanActions
             get { return _txtLibrary.Text; }
         }
 
-        /// <summary>Имя символа (как выбрано/введено, БЕЗ trim).</summary>
-        public string Name
+        /// <summary>Имя символа (как выбрано/введено, БЕЗ trim). Fix-3 (R13):
+        /// переименовано с Name — то имя скрывало наследуемый Control.Name
+        /// (CS0108); new-тенью Form-член не перекрываем.</summary>
+        public string SymbolName
         {
             get { return _txtSymbol.Text; }
         }
@@ -228,7 +233,7 @@ namespace MyEplanActions
 
         private void BtnOkOnClick(object oSender, EventArgs oArgs)
         {
-            if (string.IsNullOrEmpty(Library) || string.IsNullOrEmpty(Name))
+            if (string.IsNullOrEmpty(Library) || string.IsNullOrEmpty(SymbolName))
             {
                 MessageBox.Show(this, "Укажите библиотеку и имя символа.",
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -342,7 +347,7 @@ namespace MyEplanActions
         // способ чтения свойства; newer overloads (GetValue(obj)/GetPropertyValue)
         // на стенде не доказаны — прямое обращение = риск CS1061. Заглушение плотной
         // парой pragma вокруг метода, вызывающего GetValue; поведение не меняется.
-#pragma warning disable CS0618
+#pragma warning disable 618
         /// <summary>Цепочка A: reflection-перебор кандидатов перечисления у
         /// DataModel SymbolLibrary (имена членов НЕ доказаны KB — только проба).
         /// Значение — string[] или Array элементов (имена — ResolveDisplayPath);
@@ -394,7 +399,7 @@ namespace MyEplanActions
             }
             return false;
         }
-#pragma warning restore CS0618
+#pragma warning restore 618
 
         /// <summary>Цепочка B: MDSymbolLibrary по кандидатам ПУТИ библиотеки
         /// (конструктор НЕ доказан KB — Activator-проба форм (string) и
@@ -554,7 +559,7 @@ namespace MyEplanActions
         // CS0618 (ruling контроллера, fix-2): тот же устаревший, но единственный
         // гарантированно доступный в референсе .NET 4 способ чтения свойства
         // (args[]-перегрузка); newer overloads на стенде не доказаны (CS1061-риск).
-#pragma warning disable CS0618
+#pragma warning disable 618
         private static string TryGetStringProperty(object oTarget, string strProp)
         {
             try
@@ -571,7 +576,7 @@ namespace MyEplanActions
                 return null;
             }
         }
-#pragma warning restore CS0618
+#pragma warning restore 618
 
         // --- список символов: фильтр + предвыбор + диапазон вариантов ---
 

@@ -186,7 +186,7 @@ namespace MyEplanActions
             {
                 if (oBrowser.ShowDialog(this) != DialogResult.OK) return;
                 _oEffective.SymbolLibrary = oBrowser.Library;
-                _oEffective.SymbolName = oBrowser.Name;
+                _oEffective.SymbolName = oBrowser.SymbolName;
                 _oEffective.VariantH = oBrowser.VariantH;
                 _oEffective.VariantV = oBrowser.VariantV;
                 UpdateSymbolLabels();
