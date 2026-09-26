@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;   // SPIKE-2 fix-1: reflection-проба сигнатуры/возврата Execute
@@ -48,10 +48,27 @@ namespace MyEplanActions
         // rev.13.4 (Этап 8, H-4v2 SPIKE-3, throwaway): запуск интеракции по KB-канону —
         // ActionManager.FindAction("XGedStartInteractionAction") + ctx.AddParameter("Name",
         // <имя>) + Execute (reflection-проба возврата); лог [PICK-EXEC3]; вариант базового
-        // имени — SpikePickVariant (1=XEGedIaInsertSymRef, 2=XEGActionInsertSymRef; классы
-        // TERMINAL_STRIP_PICK_SPIKE/…2 зарегистрированы одновременно); legacy cli.Execute —
+        // имени — SpikePickVariant (1=XEGedIaInsertSymRef, 2=XEGActionInsertSymRef; в rev.13.4
+        // классы TERMINAL_STRIP_PICK_SPIKE/…2 были зарегистрированы одновременно — с rev.13.7
+        // класс-2 удалён, атрибут класса-1 — override-паттерн); legacy cli.Execute —
         // fallback сравнения. Факт rev.13.3: cli.Execute(<имя>) вернул False без диалога.
-        private const string BUILD_STAMP = "2026-09-25 Этап 8 rev.13.4 (H-4v2 SPIKE-3: запуск через XGedStartInteractionAction(Name=...) + SpikePickVariant 1|2, [PICK-EXEC3]; spike-2 захват — общий статический; H-4 production — без изменений)";
+        // rev.13.5: SpikePickVariant=2 — тоже False (прогон 26.09). rev.13.6 (SPIKE-4):
+        // имя класса → False, системное XEGedIaInsertSymRef → True (диалог, механизм жив).
+        // rev.13.7 (SPIKE-5): override-паттерн 50/20 — запуск системного имени True,
+        // но OnSuccess НЕ вызван (маршрутизации в наш класс нет).
+        // rev.13.8 (SPIKE-6, прогон): сканирование при старте есть (.cctor/.ctor);
+        // ручная вставка → OnStart/OnSuccess; InsertedPlacements Public 1 эл.;
+        // тройка напрямую SymbolLibraryName/SymbolName/VariantNr; placed = EObjects.Cable;
+        // XGedStartInteractionAction bypass-ит override.
+        // rev.13.9 (SPIKE-7): GUI-экшен XEGActionInsertSymRef — маршрутизация через override?
+        // rev.13.9 (SPIKE-7, прогон): GUI-экшен МАРШРУТИЗИРУЕТСЯ через override (OnStart
+        // в пробах) — серия SPIKE-1..7 закрыта; П.82: Execute async (размещение переживает
+        // отмену MainDialog). rev.13.10 (SPIKE-8): ожидание OnStop + OnCancel-пробы +
+        // autorestart off.
+        // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
+        // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
+        // CaptureActive + PromptForStatusLine.
+        private const string BUILD_STAMP = "2026-09-26 Этап 8 rev.13.11 (H-4v2 SPIKE-9: CaptureActive — в режиме захвата base.OnSuccess ПРОПУСКАЕТСЯ (нет диалога свойств, факт п.84: диалог внутри base 2.56 с) + PromptForStatusLine подсказка; риск: финализация/IsValid пробела без base — проверяется; [PICK-EXEC8]; H-4 production — без изменений)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -70,9 +87,21 @@ namespace MyEplanActions
 
         public bool Execute(ActionCallingContext oActionCallingContext)
         {
-            // rev.13.4: SPIKE-3 — запуск PICK-интеракции через XGedStartInteractionAction
-            // (Name=..., SpikePickVariant 1|2, [PICK-EXEC3]); захват/дампы SPIKE-2 — общие.
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.4 (H-4v2 SPIKE-3: запуск XGedStartInteractionAction(Name=TERMINAL_STRIP_PICK_SPIKE/…2) + [PICK-EXEC3]; дампы [PICK-DUMP]/[PICK-ADAPT]/[PICK-CLEAN])", BUILD_STAMP);
+            // rev.13.10: SPIKE-8 — модель событий: хук RunSymbolPickSpike ЗАПУСКАЕТ
+            // XEGActionInsertSymRef (spike-1 паттерн: FindAction + Execute(пустой
+            // ActionCallingContext) = полный диалог выбора символа), Execute возвращает
+            // ДО завершения размещения (факт п.82 — async), затем цикл ожидания до
+            // OnStop (docs 2.9: терминатор обеих веток — после OnSuccess ИЛИ OnCancel;
+            // StopSignaled). IsAutorestartEnabled=false — размещение завершает
+            // интеракцию без Esc. Читалки [IA-PROBE] + [PICK-DUMP]/[PICK-ADAPT],
+            // уборка [PICK-CLEAN] (при отмене PlacedObjects пуст — останца нет).
+            // rev.13.11: SPIKE-9 — режим захвата CaptureActive: base.OnSuccess в
+            // OnSuccess ПРОПУСКАЕТСЯ (нет диалога свойств после размещения — факт
+            // п.84: диалог внутри base, пауза 2.56 с), подсказка о пробном
+            // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
+            // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
+            // вставка штатно (диалог на месте).
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.11 (H-4v2 SPIKE-9: режим захвата CaptureActive — base.OnSuccess ПРОПУСКАЕТСЯ в OnSuccess (нет диалога свойств после размещения — факт п.84: диалог внутри base, пауза 2.56 с; риск: финализация/IsValid без base — проверяется) + PromptForStatusLine подсказка в OnStart; запуск GUI-экшена XEGActionInsertSymRef из хука + цикл ожидания до OnStop [PICK-EXEC8] (OnStop терминирует обе ветки — StopSignaled; IsAutorestartEnabled=false — без Esc; факт rev.13.9/п.82: Execute возвращает ДО завершения размещения — async) — читалки [IA-PROBE] + [PICK-DUMP]/[PICK-ADAPT]; уборка [PICK-CLEAN])", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -518,14 +547,28 @@ namespace MyEplanActions
             if (AddInConfiguration.SpikeNativeInsertSymbol)
                 NativeSymbolDialogSpike.Run(oProject, _logger);
 
-            // --- 1c. SPIKE-2/3 (throwaway, H-4v2, rev.13.4): запуск PICK-интеракции по
-            //        KB-канону — FindAction("XGedStartInteractionAction") +
-            //        AddParameter("Name", TERMINAL_STRIP_PICK_SPIKE|…2) (вариант базового
-            //        имени — SpikePickVariant); факты OnSuccess — общий статику-буфер
-            //        SymbolPickInteraction. Строго до MainDialog; headless не затронут;
-            //        провал — INFO [PICK-EXEC3], пайплайн жив; размещённое убирается
-            //        [PICK-CLEAN]. Удалить вместе с addin/Interaction/
-            //        SymbolPickInteraction.cs и гейтами после вердикта. ---
+            // --- 1c. SPIKE-9 (throwaway, H-4v2, rev.13.11): хук ЗАПУСКАЕТ GUI-экшен
+            //        XEGActionInsertSymRef (spike-1 паттерн: FindAction + Execute(пустой
+            //        ActionCallingContext) = полный диалог выбора символа) и ЖДЁТ
+            //        завершения интеракции: Execute возвращает ДО размещения (факт
+            //        п.82 — async), цикл DoEvents до OnStop (docs 2.9: терминатор обеих
+            //        веток — после OnSuccess ИЛИ OnCancel; StopSignaled);
+            //        IsAutorestartEnabled override=false — одиночное размещение
+            //        завершает интеракцию без Esc. SPIKE-9: режим захвата CaptureActive
+            //        (ставится в начале хука, снимается сразу после цикла ожидания) —
+            //        base.OnSuccess в OnSuccess ПРОПУСКАЕТСЯ: диалог свойств после
+            //        размещения не открывается (факт п.84: диалог внутри base, пауза
+            //        2.56 с до OnStop), пробное размещение поясняется пользователю
+            //        PromptForStatusLine в OnStart; вне флага обычная вставка штатна
+            //        (с диалогом). Протокол прогона: два прогона —
+            //        (1) разместить символ, (2) Esc-отмена. Затем хук сливает файловые
+            //        пробы interaction_probe.log ([IA-PROBE]) + буфер
+            //        ([PICK-DUMP]/[PICK-ADAPT]) и убирает пробное размещение
+            //        ([PICK-CLEAN]; при отмене PlacedObjects пуст — останца нет).
+            //        Строго до MainDialog; headless не затронут; провал — INFO,
+            //        пайплайн жив. Удалить вместе
+            //        с addin/Interaction/SymbolPickInteraction.cs и гейтом после
+            //        вердикта. ---
             if (AddInConfiguration.SpikeSymbolPick)
                 RunSymbolPickSpike(oProject);
 
@@ -696,137 +739,339 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>SPIKE-2/3 (throwaway, H-4v2, rev.13.4; brief task-h4v2-spike2-brief.md
-        /// + устная SPIKE-3): запуск PICK-интеракции по KB-канону —
-        /// ActionManager.FindAction("XGedStartInteractionAction") + ActionCallingContext.
-        /// AddParameter("Name", &lt;имя по SpikePickVariant&gt;) + Execute (reflection-проба,
-        /// фактический возврат в [PICK-EXEC3]). Факт rev.13.3: прямой cli.Execute(<имя>)
-        /// возвращал False без диалога — при недоступности канона вызывается и он
-        /// (TryLegacyCliLaunch) для сравнения. Execute синхронен полному циклу
-        /// «диалог+размещение» — факт spike-1; факты читаются из статики-буфера
-        /// SymbolPickInteraction после возврата (класс-захватчик различим в дампе).
-        /// Провал — INFO [PICK-EXEC3], пайплайн и настройки не трогает (ruling: Warn не
-        /// фейлит). Размещённое убирается по IsValid ([PICK-CLEAN], урок п.48). Удалить
-        /// вместе с addin/Interaction/SymbolPickInteraction.cs, блоком 1c в RunUi и
-        /// гейтами SpikeSymbolPick/SpikePickVariant после вердикта.</summary>
+        /// <summary>SPIKE-8 (throwaway, H-4v2, rev.13.10): цикл ожидания завершения
+        /// интеракции для рабочего цикла продакшн-кнопки A2. Модель событий (docs 2.9,
+        /// eplan.help Interaction class — проверено 26.09): Execute GUI-экшена
+        /// XEGActionInsertSymRef ВОЗВРАЩАЕТСЯ ДО завершения размещения (факт п.82/
+        /// rev.13.9: символ живёт на курсоре, интеракция асинхронна относительно нашего
+        /// действия; после отмены MainDialog вставка жива); OnSuccess/OnCancel — ветки
+        /// успеха/отмены; OnStop — ЕДИНЫЙ терминатор обеих веток («called before an
+        /// interaction stops, it is called after OnSuccess() or after OnCancel()») —
+        /// хук ждёт StopSignaled, который ставится в OnStop. IsAutorestartEnabled
+        /// override=false — одиночное размещение завершает интеракцию без Esc (факт
+        /// rev.13.8: раньше был авторестарт с повторным OnStart). Серия SPIKE-1..7
+        /// закрыта: GUI-экшен маршрутизируется через override (OnStart/OnSuccess в
+        /// пробах). Схема хука: сброс статики+StopSignaled → FindAction+Execute
+        /// (reflection, фактический возврат) → при возврате True цикл DoEvents+
+        /// Sleep(50) до StopSignaled (кап 120 с) → читалки проб/буфера → [PICK-ADAPT]
+        /// → [PICK-CLEAN]. Сброс статики-буфера держим: различаем «захват от нашего
+        /// запуска» (история ручной вставки живёт в interaction_probe.log с
+        /// timestamps). Уборка [PICK-CLEAN]: PlacedObjects НЕ пуст → останец убран;
+        /// пуст при StopSignaled=True — это штатная отмена Esc (символ НЕ оставлен).
+        /// ПРОТОКОЛ ПРОГОНА — ДВА прогона: (1) размещение, (2) отмена Esc.
+        /// TryLegacyCliLaunch оставлен в файле, но НЕ вызывается. Провал проб пайплайн
+        /// не останавливает (ruling: Warn не фейлит). Удалить вместе с addin/Interaction/SymbolPickInteraction.cs,
+        /// блоком 1c в RunUi и гейтом SpikeSymbolPick после вердикта (SpikePickVariant с
+        /// rev.13.6 не читается).</summary>
         private void RunSymbolPickSpike(Project oProject)
         {
-            // Сброс статики-буфера: OnSuccess «вернуть» нечего, контракт — статика.
+            // SPIKE-8 (rev.13.10): сброс статики-буфера + сигнала завершения — факты
+            // прошлой вставки затираются намеренно: различаем «захват от НАШЕГО запуска»
+            // (секция (а) ниже), а история ручной вставки остаётся в
+            // interaction_probe.log с timestamps — ничего не теряется. StopSignaled —
+            // сбрасывается ПЕРЕД запуском, выставится в OnStop (SymbolPickInteraction).
+            // SPIKE-9 (rev.13.11): CaptureActive — режим захвата на время всего
+            // спайк-блока: в OnSuccess пропускается base (нет диалога свойств после
+            // размещения — факт п.84). СНИМАЕТСЯ ровно в одном основном месте —
+            // сразу после цикла ожидания (секция (а2)), плюс страховка в catch
+            // запуска; дамп-читалки и уборка флаг не используют.
             SymbolPickInteraction.PickDump.Clear();
             SymbolPickInteraction.PlacedObjects.Clear();
             SymbolPickInteraction.PlacedCount = 0;
             SymbolPickInteraction.CollectedVia = "<не собрано>";
+            SymbolPickInteraction.StopSignaled = false;
+            SymbolPickInteraction.CaptureActive = true;
 
-            // SPIKE-3 (rev.13.4): гипотеза запуска — KB-канон: интеракции стартуют НЕ
-            // cli.Execute(<имя интеракции>), а экшеном XGedStartInteractionAction с
-            // параметром Name (KB-пример: acc.AddParameter("Name","XGedIaFormatText")).
-            // Факт rev.13.3: cli.Execute("<имя>",ctx) существует (2-арг, bool), но вернул
-            // False без диалога — проверяем канон. Вариант базового имени — гейт
-            // SpikePickVariant (1=TERMINAL_STRIP_PICK_SPIKE на XEGedIaInsertSymRef —
-            // пример пользователя; 2=TERMINAL_STRIP_PICK_SPIKE2 на XEGActionInsertSymRef —
-            // имя, доказанное spike-1). Fallback при недоступности канона: прежний прямой
-            // cli.Execute (TryLegacyCliLaunch) для сравнения. Провал — INFO, пайплайн жив.
-            string strIaName = AddInConfiguration.SpikePickVariant == 2
-                ? "TERMINAL_STRIP_PICK_SPIKE2" : "TERMINAL_STRIP_PICK_SPIKE";
-            _logger.Log("[INFO] [PICK-EXEC3] --- SPIKE-3: запуск через XGedStartInteractionAction, " +
-                "Name='" + strIaName + "' (SpikePickVariant=" +
-                AddInConfiguration.SpikePickVariant.ToString(CultureInfo.InvariantCulture) + ") ---");
+            // (а) SPIKE-8 (rev.13.10): секция запуска — GUI-экшен XEGActionInsertSymRef
+            // (spike-1 паттерн: FindAction + Execute(пустой ActionCallingContext) =
+            // полный диалог выбора символа). Факт rev.13.9 (прогон): экшен МАРШРУТИЗИРУЕТСЯ
+            // через override (OnStart/OnSuccess в пробах) — серия SPIKE-1..7 закрыта.
+            // Факт п.82: Execute ВОЗВРАЩАЕТСЯ ДО завершения размещения — символ живёт на
+            // курсоре, интеракция асинхронна относительно нашего действия; ниже — цикл
+            // ожидания (а2) до OnStop. ПРОТОКОЛ ПРОГОНА: прогон-1 — выбрать символ →
+            // разместить (autorestart выключен, OnSuccess→OnStop, без Esc); прогон-2 —
+            // Esc (OnCancel→OnStop, PlacedObjects пуст — останца нет).
+            bool bGuiStarted = false;
+            _logger.Log("[INFO] [PICK-EXEC8] --- SPIKE-9 (rev.13.11): CaptureActive=true — " +
+                "base.OnSuccess пропускается в режиме захвата (без диалога свойств, факт " +
+                "п.84: 2.56 с на диалог внутри base) + PromptForStatusLine-подсказка; " +
+                "запуск GUI-экшена XEGActionInsertSymRef (spike-1 паттерн) + цикл ожидания " +
+                "до OnStop (факты п.82/p.84: Execute async; IsAutorestartEnabled=false — " +
+                "без Esc); проверим: [PICK-CLEAN] удалено 1/1 + тройка в [PICK-DUMP] + " +
+                "OnStop без задержки на диалог; " +
+                "протокол: прогон-1 разместить, прогон-2 Esc-отмена ---");
             try
             {
                 // ActionManager/FindAction — паттерн доказан spike-1 (NativeSymbolDialogSpike).
                 ActionManager oManager = new ActionManager();
-                var oStartAction = oManager.FindAction("XGedStartInteractionAction");
-                if (oStartAction == null)
+                var oGuiAction = oManager.FindAction("XEGActionInsertSymRef");
+                if (oGuiAction == null)
                 {
-                    _logger.Log("[INFO] [PICK-EXEC3] экшен XGedStartInteractionAction не найден — " +
-                        "fallback: прежний прямой cli.Execute для сравнения");
-                    TryLegacyCliLaunch(strIaName);
+                    _logger.Log("[INFO] [PICK-EXEC8] экшен не найден");
                 }
                 else
                 {
-                    var oAcc = new ActionCallingContext();
-                    // AddParameter(string,string) — KB-канон (параметр Name интеракции).
-                    oAcc.AddParameter("Name", strIaName);
-                    // Возврат Execute по сигнатуре не доказан — reflection-проба (стиль
-                    // SPIKE-2 fix-1): логируем фактический boolean запуска.
-                    MethodInfo oExecStart = oStartAction.GetType().GetMethod("Execute",
+                    // Reflection-проба Execute(ActionCallingContext) (стиль SPIKE-3):
+                    // сигнатура доказана spike-1, reflection сохраняет лог фактического
+                    // возврата и CS-безопасность. Fallback на 1-арг не нужен — одного
+                    // пути достаточно (спайк-факт).
+                    MethodInfo oExecGui = oGuiAction.GetType().GetMethod("Execute",
                         new Type[] { typeof(ActionCallingContext) });
-                    if (oExecStart == null)
+                    if (oExecGui == null)
                     {
-                        _logger.Log("[INFO] [PICK-EXEC3] Execute(ActionCallingContext) не найден у " +
-                            "XGedStartInteractionAction (reflection) — fallback: прямой cli.Execute");
-                        TryLegacyCliLaunch(strIaName);
+                        _logger.Log("[INFO] [PICK-EXEC8] Execute(ActionCallingContext) не найден " +
+                            "(reflection) — запуска не было");
                     }
                     else
                     {
-                        object oRes = oExecStart.Invoke(oStartAction, new object[] { oAcc });
-                        _logger.Log("[INFO] [PICK-EXEC3] Name='" + strIaName + "' возврат=" +
-                            DescribeCliReturn(oRes));
+                        // Пустой ctx = полный диалог выбора символа (spike-1: параметры
+                        // не заполняем).
+                        object oRes = oExecGui.Invoke(oGuiAction,
+                            new object[] { new ActionCallingContext() });
+                        _logger.Log("[INFO] [PICK-EXEC8] возврат=" + DescribeCliReturn(oRes));
+                        // SPIKE-8: помним факт запуска (True = диалог открыт) — по нему
+                        // ниже решаем, ждать ли OnStop.
+                        bGuiStarted = (oRes is bool && (bool)oRes);
                     }
                 }
             }
             catch (Exception oException)
             {
-                // Invoke оборачивает исключениеcallee в TargetInvocationException —
-                // разворачиваем (C#6 exception-filters нет, разворот ручной).
+                // Invoke оборачивает исключение callee в TargetInvocationException —
+                // разворачиваем вручную (C#6 exception-filters на легаси-csc нет).
                 Exception oReal = oException;
                 TargetInvocationException oTie = oException as TargetInvocationException;
                 if (oTie != null && oTie.InnerException != null) oReal = oTie.InnerException;
-                // Провал/не-найдено — INFO (ruling: Warn не фейлит).
-                _logger.Log("[INFO] [PICK-EXEC3] исключение: " + oReal.GetType().Name + ": " + oReal.Message);
+                _logger.Log("[INFO] [PICK-EXEC8] исключение: " + oReal.GetType().Name + ": " + oReal.Message);
+                // SPIKE-9 (rev.13.11, страховка «на всякий случай»): исключение запуска —
+                // интеракции не было/она аномальна, режим захвата больше не нужен.
+                // Штатно этот путь и так дотекает до основного снятия флага ниже
+                // (bGuiStarted=false пропускает ожидание), но оставлять CaptureActive=true
+                // нельзя: все обычные вставки символов до конца сессии потеряли бы диалог
+                // свойств (изменение штатного поведения — урок п.54-го типа).
+                SymbolPickInteraction.CaptureActive = false;
             }
 
-            // [PICK-DUMP] — слив буфера OnSuccess, кап 200 строк (ruling).
-            int nDumped = 0;
-            foreach (string strLine in SymbolPickInteraction.PickDump)
+            // (а2) SPIKE-8 (rev.13.10): цикл ожидания завершения интеракции — ТОЛЬКО
+            // если запуск дал True (bGuiStarted==false → ожидания нет, существующая
+            // INFO-ветка выше). Факт п.82: Execute вернулся ДО завершения размещения;
+            // ждём OnStop — ЕДИНЫЙ терминатор обеих веток (docs 2.9: вызывается после
+            // OnSuccess ИЛИ после OnCancel), StopSignaled ставится в OnStop. DoEvents
+            // качает UI-очередь (события интеракции приходят в этом потоке), Sleep(50) —
+            // мягкий опрос; кап 120 с — защита от зависания действия, если OnStop не
+            // придёт (тогда дампы ниже могут быть неполны).
+            if (bGuiStarted)
             {
-                nDumped++;
-                if (nDumped > 200)
-                {
-                    _logger.Log("[INFO] [PICK-DUMP] кап 200 — опущено строк буфера: " +
-                        (SymbolPickInteraction.PickDump.Count - 200).ToString(CultureInfo.InvariantCulture));
-                    break;
-                }
-                _logger.Log("[INFO] [PICK-DUMP] " + strLine);
-            }
-            _logger.Log("[INFO] [PICK-DUMP] коллекция: '" + SymbolPickInteraction.CollectedVia +
-                "', размещено " + SymbolPickInteraction.PlacedCount.ToString(CultureInfo.InvariantCulture) +
-                ", буфер " + SymbolPickInteraction.PickDump.Count.ToString(CultureInfo.InvariantCulture) + ".");
-
-            // [PICK-ADAPT] — попытка восстановить (библиотека/имя/вариант) сверкой каталогом.
-            PickAdaptDump(oProject);
-
-            // [PICK-CLEAN] — уборка пробы: страница не засоряется (урок п.48).
-            int nRemoved = 0;
-            int nCleanFailed = 0;
-            foreach (Placement oPlaced in SymbolPickInteraction.PlacedObjects)
-            {
+                _logger.Log("[INFO] [PICK-EXEC8] запуск True — ждём завершения интеракции " +
+                    "(OnStop), кап 120 с: разместите символ (или Esc для отмены)");
+                DateTime oDeadline = DateTime.Now.AddSeconds(120);
+                DateTime oWaitStart = DateTime.Now;
                 try
                 {
-                    if (oPlaced != null && oPlaced.IsValid)
+                    while (!SymbolPickInteraction.StopSignaled && DateTime.Now < oDeadline)
                     {
-                        oPlaced.Remove();
-                        nRemoved++;
+                        // Полная квалификация: в файле есть using Eplan.EplApi.
+                        // ApplicationFramework — защита от CS0104 на легаси-csc.
+                        System.Windows.Forms.Application.DoEvents();
+                        System.Threading.Thread.Sleep(50);
                     }
                 }
                 catch (Exception oException)
                 {
-                    nCleanFailed++;
-                    _logger.Log("[INFO] [PICK-CLEAN] Remove бросил " + oException.GetType().Name + ": " +
-                        oException.Message + " — возможен останец (урок п.48)");
+                    // Ревью rev.13.10 (Major): DoEvents диспатчит чужие обработчики —
+                    // их исключение НЕ должно ронять пайплайн (урок: Fail ловится выше
+                    // в Execute → весь прогон упал бы). Дампы ниже всё равно сливаются.
+                    _logger.Log("[INFO] [PICK-EXEC8] цикл ожидания бросил: " +
+                        oException.GetType().Name + ": " + oException.Message);
+                }
+                double dWaitSec = Math.Round((DateTime.Now - oWaitStart).TotalSeconds, 1);
+                _logger.Log("[INFO] [PICK-EXEC8] ожидание завершено: StopSignaled=" +
+                    (SymbolPickInteraction.StopSignaled ? "True" : "False") +
+                    ", ожидание=" + dWaitSec.ToString(CultureInfo.InvariantCulture) +
+                    " сек (0..120)");
+                if (!SymbolPickInteraction.StopSignaled)
+                {
+                    _logger.Log("[INFO] [PICK-EXEC8] ТАЙМАУТ 120 с — интеракция не " +
+                        "завершилась (без OnStop?); дальнейшие дампы могут быть неполны");
                 }
             }
-            _logger.Log("[INFO] [PICK-CLEAN] удалено " +
-                nRemoved.ToString(CultureInfo.InvariantCulture) + "/" +
-                SymbolPickInteraction.PlacedObjects.Count.ToString(CultureInfo.InvariantCulture) +
-                ", отказов " + nCleanFailed.ToString(CultureInfo.InvariantCulture) + ".");
+
+            // SPIKE-9 (rev.13.11), ОСНОВНОЕ (единственное в нормальном потоке) снятие
+            // режима захвата — ПЕРВЫМ действием после секции ожидания, вне try-блоков
+            // читалок/уборки (они флаг не используют): секция ожидания закончилась —
+            // интеракция мертва (OnStop принят либо таймаут), флаг снят сразу после
+            // ожидания: OnSuccess уже отработал в режиме захвата. Сюда стекаются ВСЕ
+            // пути: bGuiStarted=True (после ожидания/таймаута), bGuiStarted=False
+            // (if пропущен), путь после catch запуска (страховка в нём — только
+            // «на всякий случай», см. выше).
+            SymbolPickInteraction.CaptureActive = false;
+
+            // SPIKE-8: читалки проб/буфера + уборка — блок в try/catch, провал сбора не
+            // останавливает пайплайн (ruling: Warn не фейлит). Идут ПОСЛЕ запуска и
+            // ожидания — буфер уже наполнен, если маршрутизация была (при ТАЙМАУТЕ
+            // ожидания — может быть неполным).
+            try
+            {
+                // (б) Файл пробы: те же кандидаты каталогов, что у логгера действия
+                // (LOG_DIR_CANDIDATES + temp — порядок как в Execute), первый
+                // существующий interaction_probe.log; кап 300 строк — хвост.
+                string[] arrProbeDirs = new string[DiagnosticLogger.LOG_DIR_CANDIDATES.Length + 1];
+                DiagnosticLogger.LOG_DIR_CANDIDATES.CopyTo(arrProbeDirs, 0);
+                arrProbeDirs[arrProbeDirs.Length - 1] = System.IO.Path.GetTempPath();
+                string strProbePath = null;
+                foreach (string strDir in arrProbeDirs)
+                {
+                    string strCandidate = System.IO.Path.Combine(strDir, "interaction_probe.log");
+                    if (System.IO.File.Exists(strCandidate))
+                    {
+                        strProbePath = strCandidate;
+                        break;
+                    }
+                }
+                if (strProbePath == null)
+                {
+                    _logger.Log("[INFO] [IA-PROBE] файл пробы не найден — записей нет " +
+                        "(класс не затрагивался с момента старта EPLAN, либо проба не " +
+                        "смогла писать в каталоги-кандидаты); хвост файла листается без " +
+                        "фильтра по границе прогона — различать по timestamps");
+                }
+                else
+                {
+                    _logger.Log("[INFO] [IA-PROBE] файл: " + strProbePath);
+                    string[] arrProbeLines = System.IO.File.ReadAllLines(strProbePath);
+                    int nFirst = 0;
+                    if (arrProbeLines.Length > 300)
+                    {
+                        _logger.Log("[INFO] [IA-PROBE] (всего строк " +
+                            arrProbeLines.Length.ToString(CultureInfo.InvariantCulture) +
+                            ", показаны последние 300)");
+                        nFirst = arrProbeLines.Length - 300;
+                    }
+                    for (int i = nFirst; i < arrProbeLines.Length; i++)
+                        _logger.Log("[INFO] [IA-PROBE] " + arrProbeLines[i]);
+                }
+
+                // (в) [PICK-DUMP] — слив буфера OnSuccess, кап 200 строк (ruling).
+                // Буфер сброшен в начале метода (SPIKE-8): в нём только захваты от
+                // НАШЕГО запуска ([PICK-EXEC8]); сливаем ХВОСТ (последние 200) —
+                // защита капа при обилии строк.
+                int nTotal = SymbolPickInteraction.PickDump.Count;
+                int nDumpFirst = nTotal > 200 ? nTotal - 200 : 0;
+                if (nDumpFirst > 0)
+                {
+                    _logger.Log("[INFO] [PICK-DUMP] (всего строк буфера " +
+                        nTotal.ToString(CultureInfo.InvariantCulture) +
+                        ", показаны последние 200 — сброс в начале метода, SPIKE-8)");
+                }
+                for (int i = nDumpFirst; i < nTotal; i++)
+                {
+                    _logger.Log("[INFO] [PICK-DUMP] " + SymbolPickInteraction.PickDump[i]);
+                }
+                _logger.Log("[INFO] [PICK-DUMP] коллекция: '" + SymbolPickInteraction.CollectedVia +
+                    "', размещено " + SymbolPickInteraction.PlacedCount.ToString(CultureInfo.InvariantCulture) +
+                    ", буфер " + SymbolPickInteraction.PickDump.Count.ToString(CultureInfo.InvariantCulture) + ".");
+
+            }
+            catch (Exception oException)
+            {
+                // Провал сбора проб — INFO (ruling: Warn не фейлит), пайплайн жив;
+                // читалки — в собственном try: их сбой НЕ отменяет уборку (ревью
+                // rev.13.9, Major: [PICK-CLEAN] обязан исполниться всегда — останец
+                // на странице недопустим, урок п.48).
+                _logger.Log("[INFO] [PICK-EXEC8] исключение сбора проб: " +
+                    oException.GetType().Name + ": " + oException.Message);
+            }
+
+            // [PICK-ADAPT] — изолированно: сбой сверки с каталогом не отменяет уборку.
+            try
+            {
+                PickAdaptDump(oProject);
+            }
+            catch (Exception oException)
+            {
+                _logger.Log("[INFO] [PICK-ADAPT] исключение: " +
+                    oException.GetType().Name + ": " + oException.Message);
+            }
+
+            // [PICK-CLEAN] — уборка ВСЕГДА (отдельный try — не зависит от читалок):
+            // размещение снова ПРОБА — запускается из действия ([PICK-EXEC8]), а не
+            // пользователем — страница не должна засоряться (урок п.48). Паттерн
+            // rev.13.4–13.7.
+            try
+            {
+                int nRemoved = 0;
+                int nCleanFailed = 0;
+                int nSkippedInvalid = 0;
+                foreach (Placement oPlaced in SymbolPickInteraction.PlacedObjects)
+                {
+                    try
+                    {
+                        if (oPlaced == null)
+                        {
+                            continue;
+                        }
+                        if (oPlaced.IsValid)
+                        {
+                            oPlaced.Remove();
+                            nRemoved++;
+                        }
+                        else
+                        {
+                            // SPIKE-9 (rev.13.11), ревью Major: пропуск по IsValid —
+                            // ключевой индикатор провала гипотезы skip-base (размещение
+                            // без base.OnSuccess мог не финализироваться) — сигнализируем
+                            // явно, а не молча.
+                            nSkippedInvalid++;
+                            _logger.Log("[INFO] [PICK-CLEAN] IsValid=false — Remove пропущен" +
+                                " (размещение не финализировано без base?); возможен останец");
+                        }
+                    }
+                    catch (Exception oException)
+                    {
+                        nCleanFailed++;
+                        _logger.Log("[INFO] [PICK-CLEAN] Remove бросил " + oException.GetType().Name + ": " +
+                            oException.Message + " — возможен останец (урок п.48)");
+                    }
+                }
+                _logger.Log("[INFO] [PICK-CLEAN] удалено " +
+                    nRemoved.ToString(CultureInfo.InvariantCulture) + "/" +
+                    SymbolPickInteraction.PlacedObjects.Count.ToString(CultureInfo.InvariantCulture) +
+                    ", отказов " + nCleanFailed.ToString(CultureInfo.InvariantCulture) +
+                    ", IsValid=false " + nSkippedInvalid.ToString(CultureInfo.InvariantCulture) + ".");
+                if (nRemoved < SymbolPickInteraction.PlacedObjects.Count &&
+                    SymbolPickInteraction.PlacedObjects.Count > 0)
+                {
+                    _logger.Log("[INFO] [PICK-CLEAN] ВНИМАНИЕ: не всё размещённое убрано —" +
+                        " проверь страницу, возможны останцы (убрать вручную).");
+                }
+                if (SymbolPickInteraction.PlacedObjects.Count == 0)
+                {
+                    // SPIKE-8 (rev.13.10), новая модель событий: пустой PlacedObjects при
+                    // StopSignaled=True — штатная ОТМЕНА (OnCancel→OnStop), символ НЕ
+                    // размещён, останца нет. Останец возможен только при размещении мимо
+                    // нашего захвата (bypass роутинга) — предупреждаем явно (бывш.
+                    // ревью rev.13.9, Major, критерий 9: неотличимость отмены от bypass).
+                    _logger.Log("[INFO] [PICK-CLEAN] захвата не было = отмена (OnCancel→" +
+                        "OnStop), сбой ИЛИ таймаут (размещение ещё идёт); при отмене Esc останца нет — символ НЕ оставлен; " +
+                        "StopSignaled=" + (SymbolPickInteraction.StopSignaled ? "True" : "False") +
+                        "; PlacedObjects убран целиком (если были захваты). Если символ всё " +
+                        "же размещён без захвата — он ОСТАЛСЯ НА СТРАНИЦЕ, убрать вручную.");
+                }
+            }
+            catch (Exception oException)
+            {
+                _logger.Log("[INFO] [PICK-CLEAN] исключение уборки: " +
+                    oException.GetType().Name + ": " + oException.Message);
+            }
         }
 
         /// <summary>SPIKE-3: legacy-дорожка — прежний прямой запуск cli.Execute(<имя
         /// интеракции>) (reflection-проба сигнатур из SPIKE-2 fix-1: 2-арг
         /// (string,ActionCallingContext), иначе 1-арг (string), иначе дамп public-методов
-        /// интерпретатора в буфер). Вызывается только когда XGedStartInteractionAction
-        /// недоступен — «для сравнения» двух механизмов запуска в одном прогоне.</summary>
+        /// интерпретатора в буфер). SPIKE-8 (rev.13.10): по-прежнему НЕ ВЫЗЫВАЕТСЯ —
+        /// запуск идёт GUI-экшеном ([PICK-EXEC8]), не cli; метод оставлен в файле как
+        /// инструментарий истории SPIKE (держит ссылки DescribeCliReturn/DumpCliMethods),
+        /// удалить вместе со всем спайк-кодом после вердикта.</summary>
         private void TryLegacyCliLaunch(string strIaName)
         {
             try

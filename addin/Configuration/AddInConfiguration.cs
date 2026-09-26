@@ -152,7 +152,13 @@ namespace MyEplanActions
         //     экшен, найденный/исполненный spike-1), 0 = спайк выключен.
         // Одна гипотеза за прогон: при возврате False у варианта 1 — переключить константу
         // и пересобрать. Удалить со всем spike-блоком.
-        public const int SpikePickVariant = 1;
+        // Факт прогона rev.13.4 (25.09, сборка 21:58): вариант 1 → Execute=False,
+        // OnSuccess не вызван ([PICK-DUMP] '<не собрано>'), диалога нет → переключено на 2.
+        // Факт rev.13.5 (прогон 26.09): вариант 2 → Execute=False, OnSuccess не вызван.
+        // С rev.13.6 (SPIKE-4) константа НЕ используется — запуск идёт упорядоченным
+        // списком имён в RunSymbolPickSpike; удалить вместе со spike-блоком.
+        // Факт rev.13.6 (SPIKE-4): имя класса → False, системное → True; с rev.13.7 (SPIKE-5) — override-паттерн, список имён в RunSymbolPickSpike.
+        public const int SpikePickVariant = 2;
 
         // Фаза H (rev.12.0, spec §6): рамка-призрак — записи GridPitch.<форма>
         // в настройках нет → фиксированный шаг 10 мм.

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
@@ -36,11 +36,78 @@ namespace MyEplanActions
     ///   AddParameter (...InteractionContext_members.html); ИМЕНА параметров неизвестны
     ///   → дамп членов reflection + пробы GetContextParameter по именам из дампа (тоже
     ///   reflection — сигнатуры перегрузок не доказаны).
-    /// Статика-буфер (PickDump/PlacedCount/CollectedVia/PlacedObjects) — OnSuccess не
-    /// «вернуть», читаем из AnalyzeAction после синхронного Execute; сброс перед запуском.
-    /// Буфер не потокозащищён — однопоточный UI-сценарий спайка допустим.
-    /// Провалы проб — строки в буфер, исключений наружу из OnSuccess не выпускаем.</summary>
-    [InteractionAttribute(Name = "TERMINAL_STRIP_PICK_SPIKE",
+     /// Статика-буфер (PickDump/PlacedCount/CollectedVia/PlacedObjects) — OnSuccess не
+     /// «вернуть», читаем из AnalyzeAction; с SPIKE-6 сброса в хуке не было (буфер
+     /// наполнялся РУЧНОЙ вставкой символа до прогона), с SPIKE-7 сброс ВОЗВРАЩЁН —
+     /// буфер держит захваты от НАШЕГО запуска ([PICK-EXEC7]), а история ручной вставки
+     /// живёт в interaction_probe.log с timestamps. Буфер не потокозащищён —
+     /// однопоточный UI-сценарий допустим.
+    /// Провалы проб — строки в буфер, исключений наружу из OnSuccess не выпускаем.
+    /// SPIKE-5 (rev.13.7): факты rev.13.4–13.6 — атрибутные имена
+    /// TERMINAL_STRIP_PICK_SPIKE/…2 и имя класса «SymbolPickInteraction» дали
+    /// Execute=False; системное «XEGedIaInsertSymRef» → True, диалог открылся,
+    /// размещение состоялось (механизм запуска из-под нашего действия ЖИВ), но наш
+    /// OnSuccess не вызван. Гипотеза SPIKE-5: регистрация проходит ТОЛЬКО по
+    /// override-паттерну (Name==NameOfBaseInteraction==системное имя; docs eplan.help
+    /// 2.9 Interactions.html, рабочий боевой пример EasyEPLANner XMIaInsertMacro) —
+    /// атрибут ниже переведён на override-паттерн. РИСК: пока аддин загружен, ВСЕ
+    /// вставки символа в EPLAN идут через наш OnSuccess — base.OnSuccess ПЕРВЫМ
+    /// (штатная вставка не ломается), захват пассивен (статика-буфер); уборка
+    /// с SPIKE-7 снова активна (размещение из хука — проба); С SPIKE-8
+    /// IsAutorestartEnabled=false ГЛОБАЛЬНО — обычная вставка символа в EPLAN тоже
+    /// не зацикливается (одиночное размещение).
+    /// SPIKE-6 (rev.13.8): факт rev.13.7 — запуск системного имени 'XEGedIaInsertSymRef'
+    /// дал True (диалог + размещение), но наш OnSuccess НЕ вызван даже при override-
+    /// атрибуте (Name==NameOfBaseInteraction, Ordinal=50, Prio=20) — маршрутизации в
+    /// класс нет. Гипотезы SPIKE-6: (1) сборка при старте EPLAN НЕ сканируется на
+    /// InteractionAttribute — класс вообще не инстанцируется/не регистрируется;
+    /// (2) override маршрутизирует только ВНУТРЕННИЕ события EPLAN (ручная вставка
+    /// символа пользователем), а запуск экшеном по имени идёт в ядро напрямую (наводка
+    /// EasyEPLANner: их override срабатывает на внутреннюю интеракцию). Пробы —
+    /// файловые, append-only: .cctor/.ctor/OnStart/OnSuccess пишутся в
+    /// interaction_probe.log (метод Probe), читается хуком
+    /// AnalyzeAction.RunSymbolPickSpike; статика-буфер наполняется РУЧНОЙ вставкой
+     /// символа ДО прогона. Визуальный канал проверки интеракций — окно Ctrl+\ в EPLAN
+     /// (последние действия/интеракции).
+     /// SPIKE-7 (rev.13.9): факты SPIKE-6 — ручная вставка маршрутизируется в класс
+     /// (OnStart/OnSuccess), InsertedPlacements (Public) 1 эл., тройка напрямую
+     /// (SymbolLibraryName/SymbolName/VariantNr), placed = EObjects.Cable, после
+     /// OnSuccess — авторестарт OnStart; XGedStartInteractionAction bypass-ит override.
+     /// Гипотеза SPIKE-7: GUI-экшен XEGActionInsertSymRef маршрутизируется через
+     /// override (запуск из хука, пробы/захват/уборка восстановлены).
+     /// SPIKE-8 (rev.13.10): гипотеза SPIKE-7 подтверждена прогоном (GUI-экшен
+     /// маршрутизируется через override — OnStart в пробах). Факт п.82: Execute
+     /// GUI-экшена ВОЗВРАЩАЕТСЯ ДО завершения размещения — символ живёт на курсоре,
+     /// интеракция асинхронна относительно нашего действия (после отмены MainDialog
+     /// вставка жива). Docs 2.9 (eplan.help, Interaction class, проверено 26.09):
+     /// OnCancel() — «Is called after abort of interaction»; OnStop() — «called
+     /// before an interaction stops, it is called after OnSuccess() or after
+     /// OnCancel()» = ЕДИНЫЙ терминатор обеих веток; IsAutorestartEnabled —
+     /// «Returns true, if interaction should restart after stop» (virtual get-only).
+     /// Цель SPIKE-8: цикл ожидания хука до OnStop — обе ветки (размещение и
+     /// отмена) терминируются одним сигналом StopSignaled; autorestart выключен
+     /// override'ом (факт rev.13.8: раньше был повторный OnStart и требовался Esc) —
+     /// одиночное размещение завершает интеракцию без Esc.
+     /// SPIKE-9 (rev.13.11): факт п.84 — после размещения EPLAN открывает ДИАЛОГ
+     /// СВОЙСТВ символа: пауза OnSuccess enter → base завершён = 2.56 с (диалог
+     /// живёт ВНУТРИ base.OnSuccess; пользователь закрыл OK, и только потом
+     /// пришёл OnStop). Диалог + неочевидность пробного размещения = лишние
+     /// действия. Гипотеза SPIKE-9: в режиме захвата (флаг CaptureActive) НЕ
+     /// вызывать base.OnSuccess — диалог не появится, а тройка из
+     /// InsertedPlacements и размещённый объект останутся доступны (для
+     /// [PICK-CLEAN] Remove). Флаг нужен, чтобы обычная (вне кнопки) вставка
+     /// символа осталась штатной — с диалогом. Риски (проверяются прогоном):
+     /// без base.OnSuccess размещение может не финализироваться — индикаторы
+     /// в логе: [PICK-CLEAN] удалено 0/1, IsValid=false, PlacedObjects пуст
+     /// при StopSignaled=True. Подсказка пользователю — PromptForStatusLine
+     /// в OnStart (KB 2.9: свойство Interaction «Prompt for status line»,
+     /// публичное settable string — www.eplan.help/.../api/2.9/Eplan.EplApi.
+     /// EServicesu~Eplan.EplApi.EServices.Ged.Interaction~PromptForStatusLine.
+     /// html; паттерн присваивания — docs-пример Interactions.html
+     /// this.PromptForStatusLine = "select Terminals" в OnStart). Вне
+     /// CaptureActive — полностью штатное поведение (base.OnSuccess
+     /// вызывается, диалог на месте).</summary>
+    [InteractionAttribute(Name = "XEGedIaInsertSymRef",
                           NameOfBaseInteraction = "XEGedIaInsertSymRef",
                           Ordinal = 50,
                           Prio = 20)]
@@ -54,18 +121,164 @@ namespace MyEplanActions
         public static string CollectedVia = "<не собрано>";
         /// <summary>Размещённые Placement'ы для уборки [PICK-CLEAN] (Remove по IsValid).</summary>
         public static readonly List<Placement> PlacedObjects = new List<Placement>();
+        /// <summary>SPIKE-8 (rev.13.10): сигнал завершения интеракции — сбрасывается
+        /// хуком AnalyzeAction.RunSymbolPickSpike перед запуском GUI-экшена,
+        /// выставляется в OnStop (единый терминатор обеих веток по docs 2.9: после
+        /// OnSuccess ИЛИ OnCancel). volatile — цикл ожидания хука обязан увидеть
+        /// запись (C#5 допускает volatile на static bool).</summary>
+        public static volatile bool StopSignaled = false;
+
+        /// <summary>SPIKE-9 (rev.13.11): РЕЖИМ ЗАХВАТА. Включается хуком/кнопкой
+        /// (AnalyzeAction.RunSymbolPickSpike) перед запуском GUI-экшена, снимается
+        /// после цикла ожидания (OnSuccess уже отработал в режиме захвата; дампы/
+        /// уборка флаг не используют). В режиме: OnSuccess НЕ вызывает base —
+        /// диалог свойств после размещения не открывается (факт п.84: диалог
+        /// внутри base.OnSuccess, пауза 2.56 с), захват тройки и размещения для
+        /// [PICK-CLEAN] — обычным кодом. ВНЕ режима — полностью штатное поведение:
+        /// base.OnSuccess вызывается, обычная (не из-под кнопки) вставка символа
+        /// идёт как раньше, с диалогом свойств. volatile — тот же паттерн, что
+        /// StopSignaled.</summary>
+        public static volatile bool CaptureActive = false;
 
         // Защита лога: больше этого числа строк в буфер не пишем (счётчик опущенных — в конце).
         private const int DUMP_CAP = 400;
         private static int s_nSuppressed = 0;
 
+        /// <summary>SPIKE-6: проба статического конструктора — срабатывает при ПЕРВОМ
+        /// касании класса (если EPLAN сканирует сборку на InteractionAttribute при
+        /// загрузке — уже на старте). Факт — в interaction_probe.log (append-only).</summary>
+        static SymbolPickInteraction()
+        {
+            Probe(".cctor (статический конструктор — класс затронут)");
+        }
+
+        /// <summary>SPIKE-6: проба инстанцирования класса (базовый InsertInteraction()
+        /// есть — KB: .../Eplan.EplApi.EServices.Ged.InsertInteraction~_ctor.html).</summary>
+        public SymbolPickInteraction()
+        {
+            Probe(".ctor (инстанцирование класса)");
+        }
+
+        /// <summary>SPIKE-6: файловая проба жизненного цикла (append-only, НИКОГДА не
+        /// бросает наружу — весь метод под try/catch, при отказе молча глотаем,
+        /// интеракцию не ломаем). Путь — первый доступный каталог из кандидатов (в том
+        /// же порядке, что логгер действия: DiagnosticLogger.LOG_DIR_CANDIDATES + temp),
+        /// файл "interaction_probe.log"; строки вида "HH:mm:ss.fff [IA-PROBE] <что>".
+        /// Читается хуком AnalyzeAction.RunSymbolPickSpike ([IA-PROBE] в основном логе).</summary>
+        private static void Probe(string strWhat)
+        {
+            try
+            {
+                // Кандидаты — единый источник DiagnosticLogger.LOG_DIR_CANDIDATES
+                // (writer здесь и reader в AnalyzeAction не разойдутся) + %TEMP%.
+                string[] arrDirs = new string[DiagnosticLogger.LOG_DIR_CANDIDATES.Length + 1];
+                DiagnosticLogger.LOG_DIR_CANDIDATES.CopyTo(arrDirs, 0);
+                arrDirs[arrDirs.Length - 1] = System.IO.Path.GetTempPath();
+                string strDir = null;
+                foreach (string strCandidate in arrDirs)
+                {
+                    if (System.IO.Directory.Exists(strCandidate)) { strDir = strCandidate; break; }
+                }
+                if (strDir == null) return;
+                string strLine = DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture) +
+                    " [IA-PROBE] " + strWhat + Environment.NewLine;
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(strDir, "interaction_probe.log"), strLine);
+            }
+            catch (Exception)
+            {
+                // Отказ пробы молчалив: интеракцию не ломать (контракт SPIKE-6).
+            }
+        }
+
+        /// <summary>SPIKE-6: проба СТАРТА интеракции — OnStart вызывается, если
+        /// маршрутизация действительно попала в наш класс. Паттерн — docs-пример
+        /// DeleteTerminalsInteraction/DerivedSymbolInsertInteraction (KB:
+        /// .../Eplan.EplApi.EServices.Ged.Interaction~OnStart.html — «public virtual
+        /// RequestCode OnStart(InteractionContext)»); RequestCode — из
+        /// Eplan.EplApi.EServices.Ged (using есть). После пробы — base.OnStart
+        /// (штатное поведение не ломаем). SPIKE-9 (rev.13.11): в режиме захвата
+        /// ДО базовой пробы выставляется PromptForStatusLine (подсказка в строке
+        /// состояния: размещение пробное и будет удалено) + отдельная строка-проба
+        /// — лог различает режимы; базовая проба OnStart остаётся.</summary>
+        public override RequestCode OnStart(InteractionContext pContext)
+        {
+            if (CaptureActive)
+            {
+                // SPIKE-9: KB 2.9 — Interaction.PromptForStatusLine, публичное
+                // settable string (страница ...~Eplan.EplApi.EServices.Ged.
+                // Interaction~PromptForStatusLine.html — «Prompt for status line»,
+                // C++/CLI-сигнатура содержит void set(String^value); паттерн
+                // присваивания — docs-пример Interactions.html в OnStart).
+                this.PromptForStatusLine = "Выберите точку размещения: символ будет удалён автоматически (это выбор символа для отчёта)";
+                Probe("OnStart capture-mode: PromptForStatusLine выставлен");
+            }
+            Probe("OnStart — интеракция ЗАПУЩЕНА (маршрутизация в наш класс)");
+            return base.OnStart(pContext);
+        }
+
+        /// <summary>SPIKE-8 (rev.13.10): docs 2.9 (eplan.help,
+        /// .../Eplan.EplApi.EServices.Ged.Interaction~IsAutorestartEnabled.html):
+        /// «Returns true, if interaction should restart after stop» — virtual
+        /// get-only. Override → false: убираем авторестарт (факт rev.13.8: после
+        /// OnSuccess шёл повторный OnStart и требовался Esc); теперь одиночное
+        /// размещение завершает интеракцию — OnStop приходит без Esc.</summary>
+        public override bool IsAutorestartEnabled
+        {
+            get { return false; }
+        }
+
+        /// <summary>SPIKE-8 (rev.13.10): docs 2.9 (eplan.help,
+        /// .../Eplan.EplApi.EServices.Ged.Interaction~OnCancel.html): «Is called
+        /// after abort of interaction» (отмена/Esc) — сигнатура void OnCancel()
+        /// подтверждена документацией. Только проба: сигнал завершения ставит
+        /// OnStop (он вызывается после OnSuccess ИЛИ после OnCancel).</summary>
+        public override void OnCancel()
+        {
+            Probe("OnCancel — отмена (abort)");
+            base.OnCancel();
+        }
+
+        /// <summary>SPIKE-8 (rev.13.10): docs 2.9 (eplan.help,
+        /// .../Eplan.EplApi.EServices.Ged.Interaction~OnStop.html): «called before
+        /// an interaction stops, it is called after OnSuccess() or after OnCancel()»
+        /// — ЕДИНЫЙ терминатор обеих веток. Порядок: проба → StopSignaled=true →
+        /// base: флаг ДО base, чтобы цикл ожидания хука вышел гарантированно
+        /// (base.OnStop по докам не бросает; даже если бросит — флаг уже стоит).</summary>
+        public override void OnStop()
+        {
+            Probe("OnStop — остановка (итог)");
+            SymbolPickInteraction.StopSignaled = true;
+            base.OnStop();
+        }
+
         /// <summary>SPIKE-3: логика захвата ВЫНЕСЕНА в общий статический CaptureOnSuccess
-        /// (её же использует SymbolPickInteraction2 с другим базовым экшеном). Шаблон из
-        /// KB-базы (EasyEPLANner InsertMacrosInteraction.cs, 2.9): base.OnSuccess ПЕРВЫМ.</summary>
+        /// (SPIKE-5 rev.13.7: второй класс удалён — факт rev.13.5 в summary.md). Шаблон из
+        /// KB-базы (EasyEPLANner InsertMacrosInteraction.cs, 2.9): base.OnSuccess ПЕРВЫМ.
+        /// SPIKE-6 (rev.13.8): файловые пробы входа и завершения base — факт вызова
+        /// (или невызова) OnSuccess при РУЧНОЙ вставке символа. SPIKE-9 (rev.13.11):
+        /// в режиме захвата (CaptureActive) base.OnSuccess ПРОПУСКАЕТСЯ — он открывает
+        /// диалог свойств размещённого символа (факт п.84: пауза 2.56 с внутри base,
+        /// OnStop только после закрытия диалога); пробный символ будет удалён — его
+        /// свойства не нужны. Вне режима — как раньше (base первым, штатный диалог).</summary>
         public override void OnSuccess(InteractionContext result)
         {
-            base.OnSuccess(result);
-            CaptureOnSuccess(this, result);
+            Probe("OnSuccess enter");
+            if (CaptureActive)
+            {
+                // SPIKE-9: base.OnSuccess НЕ вызываем — он открывает диалог свойств
+                // (факт п.84: пауза 2.56 с на диалог). Пробный символ будет удалён,
+                // его свойства не нужны. Риск (проверяется прогоном): без base размещение
+                // может не финализироваться — см. [PICK-CLEAN]/IsValid в логе.
+                Probe("OnSuccess capture-mode: base ПРОПУЩЕН");
+                CaptureOnSuccess(this, result);
+            }
+            else
+            {
+                base.OnSuccess(result);
+                Probe("OnSuccess: base завершён");
+                CaptureOnSuccess(this, result);
+            }
         }
 
         /// <summary>Общий захватчик (SPIKE-3): весь свой код под try/catch, сбои — строки
@@ -372,31 +585,6 @@ namespace MyEplanActions
         {
             try { return oTarget.ToString(); }
             catch (Exception oEx) { return "<ToString бросил " + oEx.GetType().Name + ">"; }
-        }
-    }
-
-    /// <summary>SPIKE-3 (throwaway), H-4v2: ВТОРОЙ вариант интеракции — та же гипотеза
-    /// запуска, другая база: [Interaction] над «XEGActionInsertSymRef» (именно этот экшен
-    /// spike-1 нашёл и выполнил с диалогом), тогда как класс 1 базируется на
-    /// «XEGedIaInsertSymRef» (имя из verbatim-примера пользователя). Оба класса
-    /// зарегистрированы ОДНОВРЕМЕННО (имена атрибута различны: ..._PICK_SPIKE /
-    /// ..._PICK_SPIKE2, Ordinal 50/51); AnalyzeAction запускает выбранный гейтом
-    /// AddInConfiguration.SpikePickVariant (1|2). Захват — общий статический
-    /// SymbolPickInteraction.CaptureOnSuccess; класс-захватчик различим в буфере
-    /// («OnSuccess от класса: …» + префикс CollectedVia).
-    /// УДАЛИТЬ вместе с SymbolPickInteraction.cs после вердикта
-    /// (brief .superpowers/sdd/plan_stage8/task-h4v2-spike2-brief.md + устная SPIKE-3).</summary>
-    [InteractionAttribute(Name = "TERMINAL_STRIP_PICK_SPIKE2",
-                          NameOfBaseInteraction = "XEGActionInsertSymRef",
-                          Ordinal = 51,
-                          Prio = 20)]
-    public class SymbolPickInteraction2 : InsertInteraction
-    {
-        /// <summary>Только base + общий захватчик (логика идентична классу 1).</summary>
-        public override void OnSuccess(InteractionContext result)
-        {
-            base.OnSuccess(result);
-            SymbolPickInteraction.CaptureOnSuccess(this, result);
         }
     }
 }
