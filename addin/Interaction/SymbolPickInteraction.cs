@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using Eplan.EplApi.ApplicationFramework;
+using Eplan.EplApi.Base;
 using Eplan.EplApi.DataModel;
 using Eplan.EplApi.DataModel.MasterData;
 using Eplan.EplApi.EServices.Ged;
@@ -88,6 +89,10 @@ namespace MyEplanActions
      /// отмена) терминируются одним сигналом StopSignaled; autorestart выключен
      /// override'ом (факт rev.13.8: раньше был повторный OnStart и требовался Esc) —
      /// одиночное размещение завершает интеракцию без Esc.
+     /// SPIKE-10 (rev.13.12): после base.OnStart системная интеракция может уже
+     /// положить SymbolLibName/SymbolId/VariantId в InteractionContext; при полной
+     /// тройке OnStart возвращает Abort до размещения. При пустых параметрах остаётся
+     /// SPIKE-9. Факт сохраняется в статике для хука AnalyzeAction.RunSymbolPickSpike.
      /// SPIKE-9 (rev.13.11): факт п.84 — после размещения EPLAN открывает ДИАЛОГ
      /// СВОЙСТВ символа: пауза OnSuccess enter → base завершён = 2.56 с (диалог
      /// живёт ВНУТРИ base.OnSuccess; пользователь закрыл OK, и только потом
@@ -139,6 +144,15 @@ namespace MyEplanActions
         /// идёт как раньше, с диалогом свойств. volatile — тот же паттерн, что
         /// StopSignaled.</summary>
         public static volatile bool CaptureActive = false;
+
+        public static string ContextSymbolLibName = string.Empty;
+        public static string ContextSymbolId = string.Empty;
+        public static string ContextVariantId = string.Empty;
+        public static volatile bool ContextParametersResolved = false;
+        /// <summary>SPIKE-11 (rev.13.13): OnStart вызвал OnPoint в (0,0) и получил
+        /// Success. Хук не ждёт пользовательский клик; OnSuccess/OnStop всё равно
+        /// диагностируются штатными обработчиками.</summary>
+        public static volatile bool AutoPointSucceeded = false;
 
         // Защита лога: больше этого числа строк в буфер не пишем (счётчик опущенных — в конце).
         private const int DUMP_CAP = 400;
@@ -214,7 +228,101 @@ namespace MyEplanActions
                 Probe("OnStart capture-mode: PromptForStatusLine выставлен");
             }
             Probe("OnStart — интеракция ЗАПУЩЕНА (маршрутизация в наш класс)");
-            return base.OnStart(pContext);
+            RequestCode eBaseCode = base.OnStart(pContext);
+            Buf("SPIKE-11 eBaseCode после base.OnStart: " + eBaseCode);
+            Probe("SPIKE-11 eBaseCode после base.OnStart: " + eBaseCode);
+
+            // SPIKE-11: Point означает, что базовая интеракция ждёт координаты.
+            // Пробуем ровно одну фиксированную точку; любой отказ оставляет
+            // SPIKE-9 без изменения и ждёт обычный пользовательский клик.
+            if (AddInConfiguration.SpikeAutoPoint &&
+                (eBaseCode & RequestCode.Point) == RequestCode.Point)
+            {
+                string strSymbolLibName = string.Empty;
+                string strSymbolId = string.Empty;
+                string strVariantId = string.Empty;
+                try
+                {
+                    pContext.GetParameter("SymbolLibName", ref strSymbolLibName);
+                    pContext.GetParameter("SymbolId", ref strSymbolId);
+                    pContext.GetParameter("VariantId", ref strVariantId);
+                }
+                catch (Exception oException)
+                {
+                    Buf("SPIKE-10 GetParameter бросил " + oException.GetType().Name +
+                        ": параметры не получены, продолжение SPIKE-9");
+                    Probe("SPIKE-10 GetParameter бросил " + oException.GetType().Name +
+                        ": параметры не получены, продолжение SPIKE-9");
+                    return eBaseCode;
+                }
+                ContextSymbolLibName = strSymbolLibName ?? string.Empty;
+                ContextSymbolId = strSymbolId ?? string.Empty;
+                ContextVariantId = strVariantId ?? string.Empty;
+                ContextParametersResolved = !string.IsNullOrEmpty(ContextSymbolLibName) &&
+                    !string.IsNullOrEmpty(ContextSymbolId) && !string.IsNullOrEmpty(ContextVariantId);
+                string strContextFact = "SPIKE-10 GetParameter: SymbolLibName='" + ContextSymbolLibName +
+                    "', SymbolId='" + ContextSymbolId + "', VariantId='" + ContextVariantId +
+                    "', полная тройка=" + (ContextParametersResolved ? "True" : "False");
+                Buf(strContextFact);
+                Probe(strContextFact);
+                if (ContextParametersResolved)
+                {
+                    Buf("SPIKE-10 гипотеза подтверждена: Abort до размещения");
+                    Probe("SPIKE-10 гипотеза подтверждена: Abort до размещения");
+                    return RequestCode.Abort;
+                }
+                if (!string.IsNullOrEmpty(ContextSymbolLibName) ||
+                    !string.IsNullOrEmpty(ContextSymbolId) ||
+                    !string.IsNullOrEmpty(ContextVariantId))
+                {
+                    Buf("SPIKE-11 контекст не пуст, но неполон: продолжение SPIKE-9");
+                    Probe("SPIKE-11 контекст не пуст, но неполон: продолжение SPIKE-9");
+                    return eBaseCode;
+                }
+                Buf("SPIKE-11 попытка программного OnPoint: eBaseCode=" + eBaseCode +
+                    ", PointD(0,0)");
+                Probe("SPIKE-11 попытка программного OnPoint: eBaseCode=" + eBaseCode +
+                    ", PointD(0,0)");
+                try
+                {
+                    PointD oPoint = new PointD(0.0, 0.0);
+                    Position oPosition = new Position(oPoint);
+                    RequestCode ePointCode = base.OnPoint(oPosition);
+                    string strPointResult = "SPIKE-11 программный OnPoint(PointD(0,0)) вернул " +
+                        ePointCode + " (число=" + (int)ePointCode + ")";
+                    Buf(strPointResult);
+                    Probe(strPointResult);
+                    bool bSuccess = (ePointCode & RequestCode.Success) == RequestCode.Success;
+                    bool bContinuingRequest = (ePointCode &
+                        (RequestCode.Point | RequestCode.Select)) != RequestCode.Nothing;
+                    if (bSuccess && !bContinuingRequest)
+                    {
+                        AutoPointSucceeded = true;
+                        Buf("SPIKE-11 OnPoint успешен: пользовательский клик не ожидается");
+                        Probe("SPIKE-11 OnPoint успешен: пользовательский клик не ожидается");
+                        return ePointCode;
+                    }
+                    Buf("SPIKE-11 OnPoint неоднозначен/продолжает запрос: Success=" +
+                        (bSuccess ? "True" : "False") + ", Point/Select=" +
+                        (bContinuingRequest ? "True" : "False") +
+                        "; продолжение SPIKE-9");
+                    Probe("SPIKE-11 OnPoint неоднозначен/продолжает запрос: Success=" +
+                        (bSuccess ? "True" : "False") + ", Point/Select=" +
+                        (bContinuingRequest ? "True" : "False") +
+                        "; продолжение SPIKE-9");
+                }
+                catch (Exception oException)
+                {
+                    string strPointError = "SPIKE-11 программный OnPoint бросил " +
+                        oException.GetType().Name + ": " + oException.Message +
+                        "; продолжение SPIKE-9";
+                    Buf(strPointError);
+                    Probe(strPointError);
+                }
+            }
+            Buf("SPIKE-11 auto OnPoint не применён или отказал: продолжение SPIKE-9");
+            Probe("SPIKE-11 auto OnPoint не применён или отказал: продолжение SPIKE-9");
+            return eBaseCode;
         }
 
         /// <summary>SPIKE-8 (rev.13.10): docs 2.9 (eplan.help,
@@ -248,6 +356,11 @@ namespace MyEplanActions
         public override void OnStop()
         {
             Probe("OnStop — остановка (итог)");
+            if (AutoPointSucceeded)
+            {
+                Buf("SPIKE-11 OnStop после программного OnPoint");
+                Probe("SPIKE-11 OnStop после программного OnPoint");
+            }
             SymbolPickInteraction.StopSignaled = true;
             base.OnStop();
         }
@@ -264,6 +377,11 @@ namespace MyEplanActions
         public override void OnSuccess(InteractionContext result)
         {
             Probe("OnSuccess enter");
+            if (AutoPointSucceeded)
+            {
+                Buf("SPIKE-11 OnSuccess после программного OnPoint: читаем InsertedPlacements/InsertedItems");
+                Probe("SPIKE-11 OnSuccess после программного OnPoint: читаем InsertedPlacements/InsertedItems");
+            }
             if (CaptureActive)
             {
                 // SPIKE-9: base.OnSuccess НЕ вызываем — он открывает диалог свойств
@@ -391,13 +509,15 @@ namespace MyEplanActions
                     System.Array arr = oValue as System.Array;
                     if (arr == null)
                     {
-                        CollectedVia = "класс " + strClass + ": " + strName + "@" + strOwner +
+                        string strNotArray = "класс " + strClass + ": " + strName + "@" + strOwner +
                             "=не-массив:" + oValue.GetType().FullName;
-                        Buf("проба «" + strName + "»: " + CollectedVia);
+                        CollectedVia = strNotArray;
+                        Buf("проба «" + strName + "»: " + strNotArray);
                         continue;
                     }
-                    CollectedVia = "класс " + strClass + ": " + strName + "@" + strOwner +
+                    string strCollected = "класс " + strClass + ": " + strName + "@" + strOwner +
                         " (" + Idx(arr.Length) + " эл.)";
+                    CollectedVia = strCollected;
                     Buf("проба «" + strName + "»: успех — " + Idx(arr.Length) + " эл. @" + strOwner);
                     return arr;
                 }

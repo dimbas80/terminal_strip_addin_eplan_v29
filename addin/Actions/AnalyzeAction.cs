@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-26 Этап 8 rev.13.11 (H-4v2 SPIKE-9: CaptureActive — в режиме захвата base.OnSuccess ПРОПУСКАЕТСЯ (нет диалога свойств, факт п.84: диалог внутри base 2.56 с) + PromptForStatusLine подсказка; риск: финализация/IsValid пробела без base — проверяется; [PICK-EXEC8]; H-4 production — без изменений)";
+        private const string BUILD_STAMP = "2026-09-26 Этап 8 rev.13.13 (H-4v2 SPIKE-11: программный base.OnPoint(PointD(0,0)) после eBaseCode=Point; Success без клика, отказ оставляет SPIKE-9; production SymbolVariant не подключён)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -101,7 +101,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.11 (H-4v2 SPIKE-9: режим захвата CaptureActive — base.OnSuccess ПРОПУСКАЕТСЯ в OnSuccess (нет диалога свойств после размещения — факт п.84: диалог внутри base, пауза 2.56 с; риск: финализация/IsValid без base — проверяется) + PromptForStatusLine подсказка в OnStart; запуск GUI-экшена XEGActionInsertSymRef из хука + цикл ожидания до OnStop [PICK-EXEC8] (OnStop терминирует обе ветки — StopSignaled; IsAutorestartEnabled=false — без Esc; факт rev.13.9/п.82: Execute возвращает ДО завершения размещения — async) — читалки [IA-PROBE] + [PICK-DUMP]/[PICK-ADAPT]; уборка [PICK-CLEAN])", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.13 (H-4v2 SPIKE-11: base.OnPoint(PointD(0,0)) при eBaseCode=Point; Success без клика, отказ оставляет SPIKE-9; production SymbolVariant не подключён)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -780,6 +780,11 @@ namespace MyEplanActions
             SymbolPickInteraction.PlacedCount = 0;
             SymbolPickInteraction.CollectedVia = "<не собрано>";
             SymbolPickInteraction.StopSignaled = false;
+            SymbolPickInteraction.ContextSymbolLibName = string.Empty;
+            SymbolPickInteraction.ContextSymbolId = string.Empty;
+            SymbolPickInteraction.ContextVariantId = string.Empty;
+            SymbolPickInteraction.ContextParametersResolved = false;
+            SymbolPickInteraction.AutoPointSucceeded = false;
             SymbolPickInteraction.CaptureActive = true;
 
             // (а) SPIKE-8 (rev.13.10): секция запуска — GUI-экшен XEGActionInsertSymRef
@@ -792,7 +797,9 @@ namespace MyEplanActions
             // разместить (autorestart выключен, OnSuccess→OnStop, без Esc); прогон-2 —
             // Esc (OnCancel→OnStop, PlacedObjects пуст — останца нет).
             bool bGuiStarted = false;
-            _logger.Log("[INFO] [PICK-EXEC8] --- SPIKE-9 (rev.13.11): CaptureActive=true — " +
+            _logger.Log("[INFO] [PICK-EXEC8] --- SPIKE-11 (rev.13.13): после base.OnStart читаем " +
+                "GetParameter(SymbolLibName/SymbolId/VariantId); при полной тройке Abort до размещения, " +
+                "при пустых параметрах продолжается SPIKE-9; CaptureActive=true — " +
                 "base.OnSuccess пропускается в режиме захвата (без диалога свойств, факт " +
                 "п.84: 2.56 с на диалог внутри base) + PromptForStatusLine-подсказка; " +
                 "запуск GUI-экшена XEGActionInsertSymRef (spike-1 паттерн) + цикл ожидания " +
@@ -852,6 +859,16 @@ namespace MyEplanActions
                 SymbolPickInteraction.CaptureActive = false;
             }
 
+            if (SymbolPickInteraction.ContextParametersResolved)
+            {
+                _logger.Log("[INFO] [PICK-EXEC8] SPIKE-10 результат: полная тройка получена, " +
+                    "OnStart вернул RequestCode.Abort до размещения; OnStop не ожидается. " +
+                    "SymbolLibName='" + SymbolPickInteraction.ContextSymbolLibName +
+                    "', SymbolId='" + SymbolPickInteraction.ContextSymbolId +
+                    "', VariantId='" + SymbolPickInteraction.ContextVariantId + "'");
+                bGuiStarted = false;
+            }
+
             // (а2) SPIKE-8 (rev.13.10): цикл ожидания завершения интеракции — ТОЛЬКО
             // если запуск дал True (bGuiStarted==false → ожидания нет, существующая
             // INFO-ветка выше). Факт п.82: Execute вернулся ДО завершения размещения;
@@ -860,15 +877,26 @@ namespace MyEplanActions
             // качает UI-очередь (события интеракции приходят в этом потоке), Sleep(50) —
             // мягкий опрос; кап 120 с — защита от зависания действия, если OnStop не
             // придёт (тогда дампы ниже могут быть неполны).
-            if (bGuiStarted)
+            if ((bGuiStarted || SymbolPickInteraction.AutoPointSucceeded) &&
+                !SymbolPickInteraction.ContextParametersResolved)
             {
-                _logger.Log("[INFO] [PICK-EXEC8] запуск True — ждём завершения интеракции " +
-                    "(OnStop), кап 120 с: разместите символ (или Esc для отмены)");
+                if (SymbolPickInteraction.AutoPointSucceeded)
+                {
+                    _logger.Log("[INFO] [PICK-EXEC8] SPIKE-11 auto OnPoint успешен: " +
+                        "клик не ожидается; ждём только OnSuccess/OnStop для захвата и cleanup");
+                }
+                else
+                {
+                    _logger.Log("[INFO] [PICK-EXEC8] запуск True — ждём завершения интеракции " +
+                        "(OnStop), кап 120 с: разместите символ (или Esc для отмены)");
+                }
                 DateTime oDeadline = DateTime.Now.AddSeconds(120);
                 DateTime oWaitStart = DateTime.Now;
                 try
                 {
-                    while (!SymbolPickInteraction.StopSignaled && DateTime.Now < oDeadline)
+                    while (!SymbolPickInteraction.StopSignaled &&
+                        !SymbolPickInteraction.ContextParametersResolved &&
+                        DateTime.Now < oDeadline)
                     {
                         // Полная квалификация: в файле есть using Eplan.EplApi.
                         // ApplicationFramework — защита от CS0104 на легаси-csc.
@@ -885,11 +913,19 @@ namespace MyEplanActions
                         oException.GetType().Name + ": " + oException.Message);
                 }
                 double dWaitSec = Math.Round((DateTime.Now - oWaitStart).TotalSeconds, 1);
-                _logger.Log("[INFO] [PICK-EXEC8] ожидание завершено: StopSignaled=" +
-                    (SymbolPickInteraction.StopSignaled ? "True" : "False") +
-                    ", ожидание=" + dWaitSec.ToString(CultureInfo.InvariantCulture) +
-                    " сек (0..120)");
-                if (!SymbolPickInteraction.StopSignaled)
+                if (SymbolPickInteraction.ContextParametersResolved)
+                {
+                    _logger.Log("[INFO] [PICK-EXEC8] ожидание завершено: SPIKE-10 ранний Abort " +
+                        "(ContextParametersResolved=True, OnStop не ожидается), ожидание=" +
+                        dWaitSec.ToString(CultureInfo.InvariantCulture) + " сек (0..120)");
+                }
+                else if (SymbolPickInteraction.StopSignaled)
+                {
+                    _logger.Log("[INFO] [PICK-EXEC8] ожидание завершено: обычный OnStop " +
+                        "(StopSignaled=True), ожидание=" +
+                        dWaitSec.ToString(CultureInfo.InvariantCulture) + " сек (0..120)");
+                }
+                else
                 {
                     _logger.Log("[INFO] [PICK-EXEC8] ТАЙМАУТ 120 с — интеракция не " +
                         "завершилась (без OnStop?); дальнейшие дампы могут быть неполны");

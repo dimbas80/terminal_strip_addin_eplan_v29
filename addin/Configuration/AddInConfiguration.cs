@@ -145,6 +145,10 @@ namespace MyEplanActions
         public const bool SpikeNativeInsertSymbol = false;
         public const bool SpikeActionDump = false;
         public const bool SpikeSymbolPick = true;
+        // SPIKE-11 (throwaway): после base.OnStart(Point) попробовать завершить
+        // ввод фиксированной точкой (0,0) без клика пользователя. Не подключать
+        // к production pipeline; при false сохраняется SPIKE-9.
+        public const bool SpikeAutoPoint = true;
         // SPIKE-3 (rev.13.4, throwaway): какой из двух одновременно зарегистрированных
         // PICK-интеракций запускать (только при SpikeSymbolPick=true):
         // 1 = TERMINAL_STRIP_PICK_SPIKE  (база «XEGedIaInsertSymRef» — verbatim-пример
