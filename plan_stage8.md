@@ -209,6 +209,131 @@ pragma в форму «голый 618» для легаси-csc (CS1692), вых
 
 ---
 
+### Task H-4b: Браузер v2 — дерево категорий (FD) + превью DrawingService
+
+**Реализация (26.09.2026, rev.14.0):** код готов — `addin/UI/SymbolCatalog.cs` (чистая
+категоризация: FD-имена / «Прочее (FD N)» / fallback-префикс / «Прочие»),
+`tests/SymbolCatalogTests.cs` (11 кейсов, раннер зарегистрирован в build_tests.bat И
+Program.Main — ловушка п.66), `addin/UI/SymbolBrowserDialog.cs` переработан (рев.14.0,
+контракт конструктора и выходов не менялся): TableLayoutPanel 840×620 — слева
+библиотеки + поиск + TreeView («Библиотека → Категория → Символ», листья Tag=имя,
+двойной клик = ОК после валидации, поиск фильтрует листья, предвыбор разворачивает путь
+и подсвечивает), справа превью-Panel (260px, FixedSingle, Paint →
+`DrawDisplayList(e, ClientRectangle)`) + карточка (имя/категория/«вариантов: N»/
+NumericUpDown «Вариант превью», НЕ связан со слотами H/V); DrawingService — один
+экземпляр на диалог, Dispose при закрытии. FD-ID — первично из MDSymbol
+(`MDSymbolPropertyList(mdsym).SYMB_MAINFUNCTION` #16018, MDPropertyValue, извлечение
+числа — reflection-проба ToInt64/ToInt/Value + fallback ToString+TryParse); словарь
+FD-ID→имя — `Project.FunctionDefinitionLibrary.FunctionDefinitions` + reflection-проба
+поверхности (GetProperty-существование — дамп [FD], без вызовов!). Превью-каскад:
+(1) типизированный путь `Symbol(SymbolLibrary, name)` → `SymbolVariant(symbol, n)` →
+`CreateDisplayList(SymbolVariant)`; (2) `CreateDisplayList(name, lib, n, project)` и
+второй пробой с ""; (3) честная деградация «Превью недоступно» — RepresentationType-
+перегрузка сознательно НЕ пробуется. После успешного списка — проба
+`SetDefaultViewport` (подгон viewport по bbox — KB). Настройки перед CreateDisplayList:
+DrawConnections=false, MacroPreview=false, DrawBackGround=false. Спайк-дампы
+первого прогона: [FD] (счётчик + поверхность членов + ToString первого FD),
+[SYMFDMAP] (10 первых символов: raw #16018, извлечённый id + через какое свойство, итог
+«сопоставлено X из Y, словарь N»), [DSPROBE] (какая перегрузка CreateDisplayList
+сработала / тип+сообщение каждой пробы, факт SetDefaultViewport).
+
+**Решения пользователя (26.09.2026):** категории дерева — по определению функции
+(`SYMB_MAINFUNCTION` #16018 → `FunctionDefinition`; fallback — группировка по префиксу
+имени + «Прочие»); превью — **картинка прямо в диалоге через `DrawingService`**
+(наводка пользователя; KB-подтверждение: класс-рендер display list с официальными
+примерами); «Показать в EPLAN» из плана выпало (превью закрывает); кнопка
+«Выбрать через EPLAN…» (нативный диалог, механизм SPIKE-7/8) — PARK в ledger.
+Контекст: SPIKE-11 (rev.13.13) закрыл программную автоточку отрицательно —
+`base.OnPoint(PointD(0,0))` → Success(1024), OnSuccess авто, но вставки нет
+(0 останцев, коллекции null, 3 детерминированных прогона; KB `Interaction~OnPoint`:
+«Is called after a point input by user» — callback реального ввода, не команда).
+
+**Files:**
+- Create: `addin/UI/SymbolCatalog.cs` (чистая категоризация, без EPLAN-типов),
+  `tests/SymbolCatalogTests.cs`
+- Modify: `addin/UI/SymbolBrowserDialog.cs` (2 колонки: слева библиотеки+поиск+TreeView,
+  справа превью-панель+карточка), `addin/Actions/AnalyzeAction.cs` (BUILD_STAMP
+  rev.14.0), `tests/build_tests.bat` (+ новые исходники, регистрация в Program.Main —
+  ловушка п.66)
+
+**KB-факты (www.eplan.help, API 2.9; проверено 26.09, коллекция eplan_api):**
+- `Project.FunctionDefinitionLibrary : FunctionDefinitionLibrary` —
+  `DataModelu~Eplan.EplApi.DataModel.Project~FunctionDefinitionLibrary.html`
+- `FunctionDefinitionLibrary.FunctionDefinitions : FunctionDefinition[]` —
+  `DataModelu~...MasterData.FunctionDefinitionLibrary~FunctionDefinitions.html`;
+  члены `FunctionDefinition` (Name/IdentifyingName/Id/Category) НЕ доказаны —
+  reflection-пробы (урок rev.7: имена членов не угадываем)
+- `SYMB_MAINFUNCTION` #16018 на `MDSymbolPropertyList` (ctor `(MDSymbol)` доказан) —
+  Int64 = ID определения функции; уровень `MDSymbolVariant` — проба (FD может
+  отличаться по вариантам)
+- `Eplan.EplApi.HEServices.DrawingService` — рендер превью: `CreateDisplayList`
+  (перегрузки `(SymbolVariant)`, `(SymbolVariant, Boolean bReturnSymbolConnectionPointsData)`
+  — «…return also a structure with information about the symbol variant's connection
+  points», `(String,String,Int32,Project)`, `(Placement)`, `(StorableObject[])`,
+  `(Page[])`, `(WindowMacro)`); `DrawDisplayList` — «Draws a display list on a window.
+  The preview is fit to the window, while keeping its aspect ratio», пример
+  `DrawDisplayList(e, oForm.ClientRectangle)` в Paint-обработчике; `SetWindow`/
+  `SetDefaultWindow` (100×100)/`SetViewport`/`SetDefaultViewport` («Adjusts viewport to
+  the bounding box of the objects from drawing list»)/`ZoomAll`; свойства
+  `DrawConnections`/`DrawCrossReferences`/`DrawInvisibleObjects`/`DrawBackGround`/
+  `DrawBlackAndWhite` (Remarks: «images are always colored, independently»)/
+  `MacroPreview`/`UseThumbnail`/`CenterView`; `Reset`/`Dispose`.
+  Примеры: `DrawingService.html` (WindowMacro → Panel.Paint → DrawDisplayList),
+  `HE_Display.html` (`DrawConnections=true; MacroPreview=true;
+  CreateDisplayList(strObj, "", 0, gProject); Picture1.Invalidate()`).
+  Ранний вывод «рендера в 2.9 нет» (проверка по ExportBitmap/geometry) — опровергнут.
+- Референс `Eplan.EplApi.HEServicesu.dll` уже в build_addin.bat (NameService, rev.13.0).
+
+**Interfaces:**
+- `SymbolCatalog` (чистый): вход — список имён символов, FD-ID по символу (или null),
+  словарь FD-ID → имя категории; выход — упорядоченные категории → символы.
+  Нет маппинга/не сошёлся — бакеты по префиксу имени (ведущая нецифровая группа,
+  как SplitDeviceTagLetterCounter) + «Прочие»; пустой вход — одна категория.
+- `SymbolBrowserDialog`: выход не меняется (`Library`/`SymbolName`/`VariantH`/
+  `VariantV`), сигнатура конструктора та же (`MainDialog` передаёт `_oProject`).
+  Слева: список библиотек (как есть) + поиск + TreeView «Библиотека → Категория →
+  Символ» (поиск фильтрует листья, пустые категории скрываются; двойной клик по
+  символу = ОК; предвыбор из настроек — разворот пути). Справа: превью-Panel
+  (Paint → `DrawDisplayList(e, panel.ClientRectangle)`) + карточка (имя, категория,
+  число вариантов, «Вариант превью» NumericUpDown 0..count−1 — независимо от слотов
+  H/V) + статусная строка (как сейчас).
+- Превью-каскад (одна гипотеза = пробы с логом): (1) `CreateDisplayList(strName,
+  strLib, nVariant, project)` (паттерн HE_Display; второй пробой — с `""` вместо
+  имени библиотеки), (2) сборка `DataModel.SymbolVariant` reflection-пробой +
+  `CreateDisplayList(SymbolVariant)`, (3) деградация «превью недоступно» (карточка,
+  честный статус). После создания списка при пустой картинке — проба
+  `SetDefaultViewport`. Базовые настройки: `DrawConnections=false`,
+  `MacroPreview=false`, `DrawBackGround=false` — фиксируются прогоном.
+- Спайк-дампы (первый прогон): `[FD]` — счётчик `FunctionDefinitions` + поверхность
+  членов; `[SYMFDMAP]` — чтение #16018 с MDSymbol, результат сопоставления с FD-ID;
+  `[DSPROBE]` — какая перегрузка сработала/тип+сообщение отказа. Всё — Console +
+  статусная строка (паттерн диалога).
+- Диалог остаётся read-only (display list — внутренний рендер, мутаций проекта нет).
+  Габарит A×B в карточку НЕ выносится: `SymbolSizeMeasurer` вставляет реальный
+  символ — на каждый клик недопустимо; габариты измеряются в `RunPipeline` как
+  сейчас.
+
+**Steps:**
+- [x] TDD: `tests/SymbolCatalogTests.cs` — кейсы: группировка по FD-именам; fallback
+      по префиксу; FD неизвестен у части символов (смешанный); дубли имён; пустой
+      вход; регистр/локаль — регистрация в `build_tests.bat` + `Program.Main`.
+- [x] `SymbolCatalog.cs` + TreeView в диалоге (предвыбор, поиск, двойной клик).
+- [x] Превью-панель DrawingService + карточка + дампы [FD]/[SYMFDMAP]/[DSPROBE];
+      `Dispose` DrawingService при закрытии диалога.
+- [x] BUILD_STAMP rev.14.0; headless-ветка не тронута.
+- [x] SDD-ревью: Needs fixes (3 Important + 2 Minor) → fix-раунд r14.1 (ранние
+      [FD]/[SYMFDMAP]-выходы, сброс превью/карточки при ручном вводе, чистое имя
+      категории в карточке, чекбоксы) — все пункты закрыты.
+- [ ] Стендовый прогон (ожидания — ниже).
+
+**Ожидание прогона:** дерево строится по FD-именам (или честный fallback-префикс —
+решение по `[SYMFDMAP]`); превью отрисовывает CABDCP2/0 и GOST K/0 (отказ — тип
+исключения в `[DSPROBE]`, следующая гипотеза по нему); выбор символа в диалоге →
+пайплайн без изменений (счётчики == эталону rev.13.x, WARN-бюджет не расширен);
+тесты — новые кейсы 0 failed.
+
+---
+
 ### Task H-5: PING-спик InsertInteraction
 
 **Files:**

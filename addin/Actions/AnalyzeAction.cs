@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-26 Этап 8 rev.13.13 (H-4v2 SPIKE-11: программный base.OnPoint(PointD(0,0)) после eBaseCode=Point; Success без клика, отказ оставляет SPIKE-9; production SymbolVariant не подключён)";
+        private const string BUILD_STAMP = "2026-09-26 Этап 8 rev.14.0 (H-4b: браузер v2 — дерево категорий (FD #16018) + превью DrawingService; [FD]/[SYMFDMAP]/[DSPROBE])";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -101,7 +101,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.13.13 (H-4v2 SPIKE-11: base.OnPoint(PointD(0,0)) при eBaseCode=Point; Success без клика, отказ оставляет SPIKE-9; production SymbolVariant не подключён)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.14.0 (H-4b: браузер v2 — дерево категорий (FD #16018) + превью DrawingService; [FD]/[SYMFDMAP]/[DSPROBE])", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
