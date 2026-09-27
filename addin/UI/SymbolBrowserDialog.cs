@@ -7,6 +7,8 @@ using System.Windows.Forms;
 using Eplan.EplApi.DataModel;
 using Eplan.EplApi.DataModel.MasterData;
 using Eplan.EplApi.HEServices;
+// CS0104: HEServices.Label конфликтует с WinForms.Label — все Labels в этом файле контролы (уроки CS0108/CS0246 п.30/72).
+using Label = System.Windows.Forms.Label;
 
 namespace MyEplanActions
 {
@@ -1394,7 +1396,7 @@ namespace MyEplanActions
             AddRow(oLeft, LabelOf("Символы (дерево: библиотека → категория → символ; " +
                 "двойной клик — выбрать):"), false);
             _treeSymbols.Height = 180;
-            _treeSymbols.HorizontalScrollbar = true;
+            // HSCROLL у TreeView автоматический (свойства HorizontalScrollbar нет — CS1061).
             AddRow(oLeft, _treeSymbols, true);
             AddRow(oLeft, _lblCount, false);
             AddRow(oLeft, LabelOf("Имя символа:"), false);
