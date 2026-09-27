@@ -144,11 +144,15 @@ namespace MyEplanActions
         // spike-2 (rev.13.3): производный InsertInteraction + дампы OnSuccess.
         public const bool SpikeNativeInsertSymbol = false;
         public const bool SpikeActionDump = false;
-        public const bool SpikeSymbolPick = true;
+        // rev.14.1: выключено — spike мешал прогону H-4b (нативный диалог открывался
+        // при вызове команды, замечание R1); H-4b браузер — рабочий путь. Полное
+        // удаление spike-кода — задача H-4v2 production (PARK, п.88).
+        public const bool SpikeSymbolPick = false;
         // SPIKE-11 (throwaway): после base.OnStart(Point) попробовать завершить
         // ввод фиксированной точкой (0,0) без клика пользователя. Не подключать
         // к production pipeline; при false сохраняется SPIKE-9.
-        public const bool SpikeAutoPoint = true;
+        // rev.14.1: выключено вместе с SpikeSymbolPick (замечание R1).
+        public const bool SpikeAutoPoint = false;
         // SPIKE-3 (rev.13.4, throwaway): какой из двух одновременно зарегистрированных
         // PICK-интеракций запускать (только при SpikeSymbolPick=true):
         // 1 = TERMINAL_STRIP_PICK_SPIKE  (база «XEGedIaInsertSymRef» — verbatim-пример

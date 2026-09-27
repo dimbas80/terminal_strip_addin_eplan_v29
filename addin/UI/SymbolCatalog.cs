@@ -5,20 +5,48 @@ using System.Globalization;
 
 namespace MyEplanActions
 {
-    /// <summary>Группа категорий дерева символов (Этап 8, задача H-4b, rev.14.0):
-    /// имя категории, признак fallback (не FD) и символы группы В ИСХОДНОМ перечислении
-    /// библиотеки (план_stage8.md § H-4b). Чистый модуль БЕЗ EPLAN-типов —
-    /// компилируется и в консольный тест-раннер tests/ (add UI/SymbolCatalog.cs).</summary>
-    public class SymbolCatalogGroup
+    /// <summary>Определение функции для категоризации (rev.14.1, замечание R2):
+    /// имя категории и имя группы из FunctionDefinition (KB: CategoryName/GroupName).
+    /// Чистый класс без EPLAN-типов.</summary>
+    public class FdInfo
     {
-        /// <summary>Имя категории: FD-имя, «Прочее (FD N)», fallback-префикс или «Прочие».</summary>
+        /// <summary>Имя категории (FunctionDefinition.CategoryName).</summary>
+        public string Category;
+
+        /// <summary>Имя группы (FunctionDefinition.GroupName).</summary>
+        public string Group;
+    }
+
+    /// <summary>Категория дерева символов (Этап 8, H-4b v3, rev.14.1): имя категории
+    /// и упорядоченный список групп. Чистый модуль БЕЗ EPLAN-типов — компилируется
+    /// и в консольный тест-раннер tests/ (add UI/SymbolCatalog.cs).</summary>
+    public class SymbolCatalogCategory
+    {
+        /// <summary>Имя категории: FD CategoryName, «Без категории», fallback-префикс, «Прочие».</summary>
         public string Name { get; set; }
 
-        /// <summary>true — fallback-бакет (FD недоступен: по префиксу имени или «Прочие»);
-        /// false — категория по определению функции (FD).</summary>
+        /// <summary>true — fallback-бакет (FD недоступен: по префиксу имени, «Прочие»
+        /// или символ без FD при рабочем словаре); false — категория по FD.</summary>
         public bool IsFallback { get; set; }
 
-        /// <summary>Имена символов категории (номера вариантов диалог добирает сам) —
+        /// <summary>Группы категории (имя + символы в исходном порядке перечисления).</summary>
+        public List<SymbolCatalogGroup> Groups { get { return _lstGroups; } }
+        private readonly List<SymbolCatalogGroup> _lstGroups = new List<SymbolCatalogGroup>();
+
+        public override string ToString()
+        {
+            return Name + " (" + _lstGroups.Count.ToString(CultureInfo.InvariantCulture) + ")";
+        }
+    }
+
+    /// <summary>Группа внутри категории дерева символов (rev.14.1, замечание R2):
+    /// имя группы (FD GroupName или «—») и символы В ИСХОДНОМ перечислении библиотеки.</summary>
+    public class SymbolCatalogGroup
+    {
+        /// <summary>Имя группы: FD-GroupName, «—» (без группы), fallback «—» или «Прочие».</summary>
+        public string Name { get; set; }
+
+        /// <summary>Имена символов группы (номера вариантов диалог добирает сам) —
         /// в исходном порядке перечисления; дубли НЕ схлопываются.</summary>
         public List<string> SymbolNames { get { return _lstNames; } }
         private readonly List<string> _lstNames = new List<string>();
@@ -29,41 +57,52 @@ namespace MyEplanActions
         }
     }
 
-    /// <summary>Чистая категоризация символов для дерева браузера (Этап 8, H-4b,
-    /// rev.14.0; plan_stage8.md § Task H-4b). Вход: список имён символов, FD-ID по
-    /// символу (long? или null — для цепочки A DataModel FD недоступен) и словарь
-    /// FD-ID → имя категории (может быть пустым/частичным). Выход: упорядоченный
-    /// список категорий («SymbolCatalogGroup») со списками имён в исходном порядке.
-    /// Правила: (а) FD-ID есть и в словаре — имя FD; (б) FD-ID есть, в словаре нет —
-    /// «Прочее (FD N)» (InvariantCulture); (в) FD-ID нет — fallback-бакет по ПРЕФИКСУ
-    /// имени (ведущая нецифровая часть до первой цифры, по образцу
-    /// SplitDeviceTagLetterCounter, CableSymbolCreator.cs; пустой префикс — «Прочие»);
-    /// (г) полностью пустой вход — одна категория «Прочие». Сортировка: FD-категории
-    /// по имени (OrdinalIgnoreCase), затем fallback-бакеты, «Прочие» последней;
-    /// внутри категории — исходный порядок символов (дубли сохраняются).</summary>
+    /// <summary>Чистая категоризация символов для дерева браузера (Этап 8, H-4b v3,
+    /// rev.14.1; замечание R2: нативное дерево EPLAN = Категория → Группа). Вход:
+    /// список имён символов, FD-ID по символу (long? или null) и словарь FD-ID →
+    /// FdInfo {Category, Group} (из Project.FunctionDefinitionLibrary.FunctionDefinitions).
+    /// Выход: упорядоченный список категорий со списками групп; символы — в исходном
+    /// порядке. Правила: (а) словарь FD НЕ пуст: FD-ID есть и в словаре — категория =
+    /// FdInfo.Category (пустая → «Без категории»), группа = FdInfo.Group (пустая → «—»);
+    /// (б) FD-ID нет или записи в словаре нет — категория «Без категории», группа «—»
+    /// (по решению пользователя — НЕ префикс имени); (в) словарь пуст (цепочка A,
+    /// FD недоступен) — fallback-бакеты по ПРЕФИКСУ имени (ведущая нецифровая часть,
+    /// по образцу SplitDeviceTagLetterCounter; пустой префикс — «Прочие»), группа «—»;
+    /// (г) пустой вход — одна категория «Прочие» с группой «—». Сортировка: категории
+    /// resolved (FD) раньше fallback; внутри уровня по имени OrdinalIgnoreCase;
+    /// группы в категории — resolved по имени, «—» последней; символы — исходный
+    /// порядок (дубли сохраняются).</summary>
     public static class SymbolCatalog
     {
         /// <summary>Имя бакета-«отстойника»: пустой префикс / пустой вход.</summary>
         public const string STR_MISC = "Прочие";
 
+        /// <summary>Категория символа без FD (словарь рабочий) — решение R2.</summary>
+        public const string STR_NO_CATEGORY = "Без категории";
+
+        /// <summary>Имя группы, когда группа не определена.</summary>
+        public const string STR_NO_GROUP = "—";
+
         /// <summary>Группировка (см. класс-комментарий). Списки lstFdIds — параллельны
-        /// lstNames (короче/отсутствует — FD как null → fallback). dctFdNames
-        /// отсутствует/пуст — FD-символы уходят в «Прочее (FD N)».</summary>
-        public static List<SymbolCatalogGroup> Build(List<string> lstNames,
-            List<long?> lstFdIds, Dictionary<long, string> dctFdNames)
+        /// lstNames (короче/отсутствует — FD как null). dctFd отсутствует/пуст —
+        /// fallback-префиксы (цепочка A).</summary>
+        public static List<SymbolCatalogCategory> Build(List<string> lstNames,
+            List<long?> lstFdIds, Dictionary<long, FdInfo> dctFd)
         {
-            // (г) пустой вход — одна категория «Прочие» (включая null-аргументы).
+            // (г) пустой вход — одна категория «Прочие» с группой «—».
             if (lstNames == null || lstNames.Count == 0)
             {
-                List<SymbolCatalogGroup> lstEmpty = new List<SymbolCatalogGroup>();
-                lstEmpty.Add(MakeGroup(STR_MISC, true));
+                List<SymbolCatalogCategory> lstEmpty = new List<SymbolCatalogCategory>();
+                lstEmpty.Add(MakeCategory(STR_MISC, true, STR_NO_GROUP));
                 return lstEmpty;
             }
 
-            // Группы копятся в словарь (уникальность — по tier+имени: fallback-бакет
-            // «K» и FD-категория «K» — разные сущности) и в список сохранения порядка.
-            Dictionary<string, SymbolCatalogGroup> dctGroups =
-                new Dictionary<string, SymbolCatalogGroup>();
+            bool bDictEmpty = dctFd == null || dctFd.Count == 0;
+
+            // Категории копятся в словарь (уникальность — по tier+имени) и в список
+            // сохранения порядка; группы — внутри категории.
+            Dictionary<string, SymbolCatalogCategory> dctCategories =
+                new Dictionary<string, SymbolCatalogCategory>();
             for (int i = 0; i < lstNames.Count; i++)
             {
                 string strName = lstNames[i];
@@ -71,81 +110,121 @@ namespace MyEplanActions
                 if (lstFdIds != null && i < lstFdIds.Count) nFd = lstFdIds[i];
 
                 string strCategory;
+                string strGroup;
                 bool bFallback;
-                if (nFd.HasValue)
+                if (!bDictEmpty)
                 {
-                    string strFdName;
-                    if (dctFdNames != null && dctFdNames.TryGetValue(nFd.Value, out strFdName) &&
-                        !string.IsNullOrEmpty(strFdName))
+                    // Основной путь (R2): рабочее дерево по FD. Без FD/без записи —
+                    // «Без категории»/«—» (решение пользователя — НЕ префикс).
+                    // Fix (rev.14.1 ревью): категория и группа считаются НЕЗАВИСИМО —
+                    // запись FD с пустой CategoryName теряет только категорию,
+                    // GroupName сохраняется.
+                    FdInfo oInfo = null;
+                    if (nFd.HasValue) dctFd.TryGetValue(nFd.Value, out oInfo);
+                    if (oInfo != null)
                     {
-                        strCategory = strFdName;        // (а) имя FD из словаря
+                        strCategory = string.IsNullOrEmpty(oInfo.Category)
+                            ? STR_NO_CATEGORY : oInfo.Category;
+                        strGroup = string.IsNullOrEmpty(oInfo.Group)
+                            ? STR_NO_GROUP : oInfo.Group;
+                        bFallback = string.IsNullOrEmpty(oInfo.Category);
                     }
                     else
                     {
-                        // (б) FD-ID вне словаря — «Прочее (FD N)», InvariantCulture.
-                        strCategory = "Прочее (FD " +
-                            nFd.Value.ToString(CultureInfo.InvariantCulture) + ")";
+                        strCategory = STR_NO_CATEGORY;
+                        strGroup = STR_NO_GROUP;
+                        bFallback = true;
                     }
-                    bFallback = false;
                 }
                 else
                 {
+                    // Fallback (цепочка A): FD недоступен — прежние префиксные бакеты.
                     string strPrefix = ExtractNonDigitPrefix(strName);
-                    if (strPrefix.Length == 0)
-                    {
-                        strCategory = STR_MISC;         // (в) пустой префикс → «Прочие»
-                        bFallback = true;
-                    }
-                    else
-                    {
-                        strCategory = strPrefix;        // (в) fallback-бакет по префиксу
-                        bFallback = true;
-                    }
+                    strCategory = strPrefix.Length == 0 ? STR_MISC : strPrefix;
+                    strGroup = STR_NO_GROUP;
+                    bFallback = true;
                 }
 
                 string strKey = (bFallback ? "F:" : "D:") + strCategory;
-                SymbolCatalogGroup oGroup;
-                if (!dctGroups.TryGetValue(strKey, out oGroup))
+                SymbolCatalogCategory oCategory;
+                if (!dctCategories.TryGetValue(strKey, out oCategory))
                 {
-                    oGroup = MakeGroup(strCategory, bFallback);
-                    dctGroups[strKey] = oGroup;
+                    oCategory = MakeCategory(strCategory, bFallback, strGroup);
+                    dctCategories[strKey] = oCategory;
                 }
+                SymbolCatalogGroup oGroup = FindOrMakeGroup(oCategory, strGroup);
                 oGroup.SymbolNames.Add(strName);
             }
 
-            List<SymbolCatalogGroup> lstResult = new List<SymbolCatalogGroup>();
-            foreach (SymbolCatalogGroup oGroup in dctGroups.Values) lstResult.Add(oGroup);
-            // Сортировка категорий (символы внутри групп не пересобираются — порядок
-            // вставки в списке групп не влияет на участников; List.Sort нестабилен,
-            // но ключи уникальны — эквивалентно).
-            lstResult.Sort(GroupCompare);
+            List<SymbolCatalogCategory> lstResult = new List<SymbolCatalogCategory>();
+            foreach (SymbolCatalogCategory oCategory in dctCategories.Values)
+            {
+                lstResult.Add(oCategory);
+                // Группы внутри категории: «—» последней, остальные по имени.
+                oCategory.Groups.Sort(GroupCompare);
+            }
+            // Сортировка категорий (символы внутри групп не пересобираются; List.Sort
+            // нестабилен, но ключи словаря уникальны — эквивалентно).
+            lstResult.Sort(CategoryCompare);
             return lstResult;
         }
 
-        private static SymbolCatalogGroup MakeGroup(string strName, bool bFallback)
+        private static SymbolCatalogCategory MakeCategory(string strName, bool bFallback,
+            string strFirstGroup)
+        {
+            SymbolCatalogCategory oCategory = new SymbolCatalogCategory();
+            oCategory.Name = strName;
+            oCategory.IsFallback = bFallback;
+            oCategory.Groups.Add(MakeGroup(strFirstGroup));
+            return oCategory;
+        }
+
+        private static SymbolCatalogGroup FindOrMakeGroup(SymbolCatalogCategory oCategory,
+            string strGroup)
+        {
+            foreach (SymbolCatalogGroup oExisting in oCategory.Groups)
+            {
+                if (string.Compare(oExisting.Name, strGroup, StringComparison.OrdinalIgnoreCase) == 0)
+                    return oExisting;
+            }
+            SymbolCatalogGroup oMade = MakeGroup(strGroup);
+            oCategory.Groups.Add(oMade);
+            return oMade;
+        }
+
+        private static SymbolCatalogGroup MakeGroup(string strName)
         {
             SymbolCatalogGroup oGroup = new SymbolCatalogGroup();
             oGroup.Name = strName;
-            oGroup.IsFallback = bFallback;
             return oGroup;
         }
 
-        /// <summary>Сортировка: FD-категории раньше fallback; «Прочие» последняя;
-        /// внутри уровня — по имени OrdinalIgnoreCase (регистронезависимо).</summary>
-        private static int GroupCompare(SymbolCatalogGroup oA, SymbolCatalogGroup oB)
+        /// <summary>Сортировка категорий: FD-resolved раньше fallback; «Прочие»
+        /// последняя; внутри уровня — по имени OrdinalIgnoreCase.</summary>
+        private static int CategoryCompare(SymbolCatalogCategory oA, SymbolCatalogCategory oB)
         {
-            int nA = TierOf(oA);
-            int nB = TierOf(oB);
+            int nA = CategoryTierOf(oA);
+            int nB = CategoryTierOf(oB);
             if (nA != nB) return nA - nB;
             return string.Compare(oA.Name, oB.Name, StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>Уровень: 0 — FD (IsFallback=false), 2 — «Прочие», 1 — fallback-префикс.</summary>
-        private static int TierOf(SymbolCatalogGroup oGroup)
+        /// <summary>Уровень категории: 0 — FD (IsFallback=false), 1 — fallback
+        /// (префикс/«Без категории»), 2 — «Прочие».</summary>
+        private static int CategoryTierOf(SymbolCatalogCategory oCategory)
         {
-            if (!oGroup.IsFallback) return 0;
-            return string.Compare(oGroup.Name, STR_MISC, StringComparison.OrdinalIgnoreCase) == 0
+            if (!oCategory.IsFallback) return 0;
+            return string.Compare(oCategory.Name, STR_MISC, StringComparison.OrdinalIgnoreCase) == 0
                 ? 2 : 1;
+        }
+
+        /// <summary>Сортировка групп: «—» последней; остальные по имени OrdinalIgnoreCase.</summary>
+        private static int GroupCompare(SymbolCatalogGroup oA, SymbolCatalogGroup oB)
+        {
+            bool bMiscA = string.Compare(oA.Name, STR_NO_GROUP, StringComparison.OrdinalIgnoreCase) == 0;
+            bool bMiscB = string.Compare(oB.Name, STR_NO_GROUP, StringComparison.OrdinalIgnoreCase) == 0;
+            if (bMiscA != bMiscB) return bMiscA ? 1 : -1;
+            return string.Compare(oA.Name, oB.Name, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>Ведущая нецифровая часть имени (до первой цифры) — по образцу

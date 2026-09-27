@@ -35,16 +35,21 @@ namespace MyEplanActions
         // настроек диалога — выбор браузера применяется к его 4 полям.
         private readonly Project _oProject;
         private readonly AddInSettings _oEffective;
+        // rev.14.1: канал проб браузера символов (nullable; пробы [FD]/[DSPROBE]
+        // дублируются в главный лог — урок прогона rev.14.0).
+        private readonly DiagnosticLogger _oLogger;
 
         /// <summary>Диалог: списки (null — пустые), предвыбор из настроек
         /// (null — дефолты из AddInConfiguration). oProject (rev.13.1, H-4) —
         /// текущий проект для браузера символов; null — кнопка выключена.</summary>
         public MainDialog(List<string> lstStripNames, List<string> lstFormNames,
-            AddInSettings oSettings, Project oProject = null)
+            AddInSettings oSettings, Project oProject = null,
+            DiagnosticLogger oLogger = null)
         {
             AddInSettings oEffective = oSettings ?? new AddInSettings();
             _oEffective = oEffective;
             _oProject = oProject;
+            _oLogger = oLogger;
 
             Text = "Генерация схемы подключений клеммника";
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -182,7 +187,7 @@ namespace MyEplanActions
             if (_oProject == null) return;
             using (SymbolBrowserDialog oBrowser = new SymbolBrowserDialog(_oProject,
                 _oEffective.SymbolLibrary, _oEffective.SymbolName,
-                _oEffective.VariantH, _oEffective.VariantV))
+                _oEffective.VariantH, _oEffective.VariantV, _oLogger))
             {
                 if (oBrowser.ShowDialog(this) != DialogResult.OK) return;
                 _oEffective.SymbolLibrary = oBrowser.Library;
