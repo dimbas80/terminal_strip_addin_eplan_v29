@@ -12,83 +12,108 @@ using Label = System.Windows.Forms.Label;
 
 namespace MyEplanActions
 {
-    /// <summary>Браузер символов кабеля v3 (Этап 8, H-4b, rev.14.1 — замечания R2-R9
-    /// прогона rev.14.0): выбор библиотеки/символа + два слота варианта (H/V, буквы
-    /// A-H) + ДЕРЕВО «Категория → Группа → Символ» (R2, как нативное EPLAN) +
-    /// ПРЕВЬЮ-СЕТКА всех вариантов (R5: клетки A-H на чёрном фоне R3, центр R4).
-    /// Программный layout без designer (паттерн MainDialog: TableLayoutPanel, хелперы
-    /// статическими методами — локальных функций в C#5 нет). Диалог ТОЛЬКО ЧИТАЕТ —
-    /// никаких EPLAN-мутаций (display list рендера — внутренний объект DrawingService,
-    /// проект не трогает). Выход: свойства Library/SymbolName/VariantH/VariantV
-    /// (Variant* — числа, как rev.14.0: пайплайн и настройки не тронуты; в UI — буквы);
-    /// «ОК» валиден только при непустых Library/SymbolName (значения НЕ триммингуются —
-    /// урок хвостового пробела п.33). «Отмена»/крестик — ничего не возвращается.
-    /// СЛЕВА: библиотеки (как rev.13.1) + поиск + TreeView «Библиотека → Категория →
-    /// Группа → Символ» (листья Tag=имя; двойной клик = ОК после валидации; поиск
-    /// фильтрует ЛИСТЬЯ, пустые группы/категории скрываются; предвыбор — разворот
-    /// пути + подсветка). СПРАВА: превью-сетка (до 8 клеток A-H, фон чёрный — R3;
-    /// у каждой клетки СВОЙ DrawingService: Reset → CreateDisplayList(вариант) →
-    /// SetDefaultViewport — гипотеза центра R4: display list накапливался между
-    /// CreateDisplayList и уезжал в левый верхний угол) + карточка
-    /// (имя/категория/ОПИСАНИЕ СИМВОЛА SYMB_DESC #16011 — R7; счётчик «вариантов»
-    /// удалён R7) + статусная строка внизу на всю ширину (подпись «Превью: …»
-    /// удалена R10).
-    /// Категории/группы дерева — чистый SymbolCatalog (addin/UI/SymbolCatalog.cs):
-    /// ПЕРВИЧНО по FD (SYMB_MAINFUNCTION #16018 из MDSymbol, цепочка B; словарь
-    /// Project.FunctionDefinitionLibrary.FunctionDefinitions → CategoryName/GroupName,
-    /// KB-доказано); символ без FD при рабочем словаре — «Без категории» (R2, НЕ
-    /// префикс); в цепочке A FD недоступен — fallback-бакеты по префиксу имени +
-    /// «Прочие». Пробы [FD]/[SYMFDMAP]/[DSPROBE] пишутся ДУБЛИРОВАННО Console +
-    /// DiagnosticLogger (урок прогона rev.14.0: Console-канал не попадал в главный
-    /// лог — провал FD-цепочки был невидим).
-    /// KB-факты API 2.9 (www.eplan.help; грабля базы: блок [Code] — артефакт
-    /// скрейпера, авторитетен Remarks):
-    /// - Project.SymbolLibraries — «Gets the symbol libraries used by the project»,
-    ///   «public SymbolLibrary[] SymbolLibraries { get; }» — KB-доказан (rev.13.1,
-    ///   цепочка A листинга) —
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.DataModelu~Eplan.EplApi.DataModel.Project~SymbolLibraries.html
-    /// - MDSymbolLibrary.Symbols — «Gets a read only list of all Symbols in the
-    ///   library», «public MDSymbol[] Symbols { get; }» (rev.13.1, цепочка B) —
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.MasterDatau~Eplan.EplApi.MasterData.MDSymbolLibrary~Symbols.html
-    /// - MDSymbol.Variants — «a read only list of all MDSymbolVariants in the
-    ///   symbol», «public MDSymbolVariant[] Variants { get; }» —
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.MasterDatau~Eplan.EplApi.MasterData.MDSymbol~Variants.html
-    /// - Project.FunctionDefinitionLibrary (класс
-    ///   Eplan.EplApi.DataModel.MasterData.FunctionDefinitionLibrary) и его
-    ///   FunctionDefinitions : FunctionDefinition[] («public FunctionDefinition[]
-    ///   FunctionDefinitions { get; }») — KB-доказано; члены FunctionDefinition
-    ///   («Id», «Name», …) НЕ доказаны — ТОЛЬКО reflection-пробы (урок rev.7).
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.DataModelu~Eplan.EplApi.DataModel.Project~FunctionDefinitionLibrary.html
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.DataModelu~Eplan.EplApi.DataModel.MasterData.FunctionDefinitionLibrary~FunctionDefinitions.html
-    /// - MDSymbolPropertyList ctor (MDSymbol) + SYMB_MAINFUNCTION (Main function
-    ///   # 16018, «Returns property value of type System.Int64» → MDPropertyValue) —
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.MasterDatau~Eplan.EplApi.MasterData.MDSymbolPropertyList~SYMB_MAINFUNCTION().html
-    /// - MasterData.Symbol(SymbolLibrary, String) и SymbolVariant(Symbol, Int32) —
-    ///   конструкторы KB-доказаны; символ из библиотеки + вариант — вход display list:
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.DataModelu~Eplan.EplApi.DataModel.MasterData.Symbol~_ctor.html
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.DataModelu~Eplan.EplApi.DataModel.MasterData.SymbolVariant~_ctor.html
-    ///   (паттерн «new SymbolLibrary(page.Project, name); new Symbol(symbolLibrary,
-    ///   symbolName)» — Suplanus.Sepla SymbolUtility.cs, база eplan_api).
-    /// - HEServices.DrawingService: ctor() без параметров; CreateDisplayList
-    ///   (SymbolVariant[, Boolean bReturnSymbolConnectionPointsData]) — «Creates a
-    ///   display list for a symbol variant», перегрузки (String,String,Int32,Project),
-    ///   (Placement), (Placement[]), (Page[]), (WindowMacro), (StorableObject[]);
-    ///   DrawDisplayList(PaintEventArgs, Rectangle) — «Draws a display list on a
-    ///   window. The preview is fit to the window, while keeping its aspect ratio.
-    ///   Only the rectangle specified by the parameter rcClientRect will be used»;
-    ///   SetDefaultViewport — «Adjusts viewport to the bounding box of the objects
-    ///   from drawing list» (включён после CreateDisplayList — безвредно); свойства
-    ///   DrawConnections/DrawBackGround/MacroPreview и др.; Reset()/Dispose().
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.HEServicesu~Eplan.EplApi.HEServices.DrawingService.html
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.HEServicesu~Eplan.EplApi.HEServices.DrawingService~DrawDisplayList.html
-    ///   https://www.eplan.help/en-us/infoportal/content/api/2.9/Eplan.EplApi.HEServicesu~Eplan.EplApi.HEServices.DrawingService~SetDefaultViewport.html
-    ///   Примеры: DrawingService.html (Panel.Paint → DrawDisplayList) и HE_Display.html
-    ///   (CreateDisplayList(strObj,"",0,gProject) → Picture1.Invalidate()).
-    /// НЕ доказано KB: члены FunctionDefinition, поверхность MDPropertyValue
-    /// (значение числа — reflection-проба), перегрузка CreateDisplayList
-    /// (String,String,RepresentationType,Int32,Project) — сознательно НЕ пробуется
-    /// (одна гипотеза за прогон; RepresentationType не доказан). Отказы проб —
-    /// Console-дамп + статусная строка; поле имени ReadOnly — выбор только из дерева.</summary>
+    /// <summary>Браузер символов кабеля v4 (Этап 8, H-4b v4, rev.14.2 — замечания
+    /// 1–7 прогона rev.14.1; спека category_and_prewiev.md): выбор библиотеки +
+    /// ДЕРЕВО «Trade → Area → Категория → Группа → Определение функции → символ»
+    /// (5 уровней по FunctionDefinition) + ПРЕВЬЮ-СЕТКА ФИКСИРОВАННО 8 клеток A–H
+    /// (VariantNr 0..7; отсутствующие — disabled, не кликабельны; клик = визуальное
+    /// выделение клетки, слоты H/V комбо — отдельно). Программный layout без
+    /// designer (паттерн MainDialog: TableLayoutPanel, хелперы статическими
+    /// методами — локальных функций в C#5 нет). Диалог ТОЛЬКО ЧИТАЕТ.
+    /// Выход: свойства Library/SymbolName/VariantH/VariantV (контракт с MainDialog
+    /// НЕ менялся: ctor(Project, library, name, variantH, variantV, logger), значения
+    /// НЕ триммингуются — урок хвостового пробела п.33; Variant* — числа, как
+    /// rev.14.0). «ОК» валиден только при непустых Library/SymbolName И принадлежности
+    /// перечислению; «Отмена»/крестик — ничего не возвращается.
+    /// === Перечисление (RefreshSymbols, rev.14.2; RC-1: замечания 1+2+4 = один
+    /// корень — ранняя цепочка A пишла ТОЛЬКО имена) ===
+    /// Новый порядок цепочек ПО ИНФОРМАТИВНОСТИ:
+    /// - A2 (первичная): reflection-проба «Symbols» у DataModel SymbolLibrary
+    ///   (рантайм-доказано rev.14.1) → элементы as MasterData.Symbol; для каждого:
+    ///   варианты — ТИПИРОВАННО Symbol.Variants : SymbolVariant[] (KB страницы
+    ///   Symbol~Variants; VariantNr + живые объекты для CreateDisplayList), FD —
+    ///   обратный словарь _dctFdBySymbol (ключ = вариант.SymbolLibraryName +
+    ///   "\u0001" + вариант.SymbolName; fallback: SYMB_MAINFUNCTION #16018 через
+    ///   reflection-пробу Properties на Symbol), описание — SYMB_DESC #16011 той же
+    ///   пробой; НИ ОДНОГО Symbol-объекта — отказ A2;
+    /// - B (fallback): MDSymbolLibrary.Symbols (KB rev.13.1) — FD #16018 →
+    ///   _dctFdById, число вариантов MDSymbol.Variants, SYMB_DESC;
+    /// - C (последняя): names-only («Symbols» → строки / «Names») — деградация:
+    ///   1 enabled клетка A, категории по префиксу, FunInfo без описаний.
+    /// Отказ всех — прежний статус-текст ошибки. R6: на УСПЕХЕ статус НЕ печатается
+    /// (пустой); статусы ошибок/деградации сохранены.
+    /// === FD-словари (BuildFdDictionary) ===
+    /// Один раз за жизнь диалога: Project.FunctionDefinitionLibrary.FunctionDefinitions,
+    /// (а) _dctFdById (Id → FdInfo; первый побеждает — Id НЕ уникален глобально:
+    /// 1305 FD → 40 Id, дамп [FD] rev.14.1); (б) НОВЫЙ _dctFdBySymbol
+    /// (ключ = lib + '\u0001' + sym → FdInfo) из FD.BaseSymbol → SymbolLibraryName/
+    /// SymbolName (KB members; рантайм НЕ подтверждён — try/catch + дамп [FD-BASE]
+    /// первых 10). Поля уровней и Description локализуются SymbolCatalog.
+    /// LocalizeMultiLang (формат блоба «de_DE@…;en_US@…;ru_RU@…» доказан дампом [FD];
+    /// дамп [FD] первых 10 сохранён + desc).
+    /// === Состояние выбора (R5, замечание 3) ===
+    /// Поле «Имя выбранного символа» (_txtSymbol) УДАЛЕНО из layout: имя — private
+    /// _strSelectedSymbol (SymbolName → оно же); AfterSelect листа применяет новый
+    /// выбор (карточка по SymbolEntry из FD.Name/Desc, превью по записи); предвыборка
+    /// — программная (FindLeaf → разворот+выделение; не найден — карточка по имени +
+    /// превью по каскаду); OK-валидация — принадлежность перечислению;
+    /// TxtSymbolOnTextChanged удалён совсем.
+    /// === Дерево (RebuildTree, RC-3) ===
+    /// Рендер SymbolCatalogNode рекурсией: Kind=Symbol — лист (Tag=имя), остальные
+    /// ветки БЕЗ Tag с текстом «Name (N)» (число показанных листьев; карты чистых
+    /// имён больше НЕ нужны — карточка берёт FD.Name из SymbolEntry по имени);
+    /// поиск фильтрует листья (substring OrdinalIgnoreCase), пустые ветки скрыты;
+    /// корень — библиотека; 5 уровней FD-пути (Trade → Area → Категория → Группа →
+    /// Определение функции), unmapped — бакет «Без классификации» последним
+    /// (SymbolCatalog, addin/UI/SymbolCatalog.cs).
+    /// === Превью-сетка (R3+спека, RC-2: замечание 2) ===
+    /// ВСЕГДА 8 клеток (4×2): внешняя Panel + ВНУТРЕННЯЯ панель рисования (Dock=Fill,
+    /// добавлена ПЕРВОЙ) + Label буквы (Dock=Bottom 18, добавлена ВТОРОЙ — docking
+    /// обрабатывается в обратном порядке, метка НЕ накрывает область рисования;
+    /// Paint внутренней панели → DrawDisplayList(oArgs, inner.ClientRectangle);
+    /// ResizeRedraw=true). Enabled — фон чёрный (R3); disabled — серый фон, серая
+    /// буква, клик игнор. Клик по enabled = выделение (золотая рамка + буква золотая),
+    /// слоты H/V НЕ трогаются; перерисовка выделения — Invalidate клеток. Display
+    /// list клетки — каскад: живой SymbolVariant (A2) → new Symbol+new SymbolVariant
+    /// (типизированная KB-связка) → by-strings (CreateDisplayList(String,String,
+    /// Int32,Project), строка с именем библ и «»; рев.14.0, HE_Display), у каждой
+    /// клетки СВОЙ DrawingService (один сервис = один display list); Reset перед
+    /// каждым созданием + SetDefaultViewport (гипотеза центра R4 rev.14.1);
+    /// деградация chain C → 1 enabled клетка; Dispose всех сервисов — OnFormClosing
+    /// и каждая пересборка.
+    /// === Строки статуса и пробы ===
+    /// Пробы [FD]/[FD-BASE]/[SYMFDMAP]/[SYMFDMAP-DESC]/[DSPROBE] — дублированный
+    /// канал Console + DiagnosticLogger (урок прогона rev.14.0: только-Console
+    /// был невидим в terminal_strip_addin.log!). R6: статус на успехе пустой.
+    /// KB-факты API 2.9 (www.eplan.help):
+    /// - Project.SymbolLibraries — «public SymbolLibrary[] SymbolLibraries { get; }»
+    ///   — KB-доказан (rev.13.1);
+    /// - MasterData.Symbol.Variants : SymbolVariant[]; SymbolVariant.SymbolLibraryName /
+    ///   SymbolName («unique for library») / VariantNr — KB + рантайм (rev.13.8);
+    /// - MDSymbolLibrary.Symbols — «public MDSymbol[] Symbols { get; }»; MD.Symbol.ctor
+    ///   (path) и (Project, path) — конструктор НЕ доказан — Activator-проба (fix-1);
+    /// - MDSymbolPropertyList ctor (MDSymbol) + SYMB_MAINFUNCTION (#16018, Int64),
+    ///   SYMB_DESC (#16011) — KB;
+    /// - DataModel.MasterData.SymbolPropertyList (SYMB_MAINFUNCTION/SYMB_DESC) —
+    ///   KB-доказаны, НО как получить SymbolPropertyList от Symbol НЕ доказано →
+    ///   ТОЛЬКО reflection-проба (без компиляционных рисков);
+    /// - Project.FunctionDefinitionLibrary.FunctionDefinitions : FunctionDefinition[]
+    ///   — KB; члены FD Id/Name/CategoryName/CategoryRegion/GroupName/MainGroup/
+    ///   Description/BaseSymbol — KB members page; Id/кат/группа/имя рантайм-
+    ///   подтверждены дампом [FD] rev.14.1; Description/BaseSymbol — рантайм ещё НЕ
+    ///   подтвержден (try/catch + [FD-BASE] первых 10);
+    /// - MasterData.Symbol(SymbolLibrary, String) + SymbolVariant(Symbol, Int32) —
+    ///   конструкторы KB (вход display list клетек B/C-цепочек);
+    /// - HEServices.DrawingService: ctor(); CreateDisplayList (SymbolVariant[, bool]);
+    ///   CreateDisplayList (String,String,Int32,Project) — KB (пример HE_Display);
+    ///   DrawDisplayList (PaintEventArgs, Rectangle) — «fit keeping aspect ratio»;
+    ///   SetDefaultViewport — «Adjusts viewport to the bounding box»; Reset/Dispose.
+    /// НЕ доказано KB (reflection/Activator-пробы; «одна гипотеза за прогон»):
+    /// перечислитель «Symbols» у DataModel SymbolLibrary (элементы — рантайм-факт
+    /// rev.14.1), Properties/Activator SymbolPropertyList(SА Symbol), поверхность
+    /// PropertyValue (ExtractLongViaReflection), перегрузка CreateDisplayList
+    /// (String,String,RepresentationType,Int32,Project) — сознательно НЕ пробуется.
+    /// Отказы проб — Console-дамп + честные статусы старых ревизий.</summary>
     public class SymbolBrowserDialog : Form
     {
         private readonly Project _oProject;
@@ -96,59 +121,75 @@ namespace MyEplanActions
         private readonly ListBox _lstLibraries = new ListBox();
         private readonly TextBox _txtSearch = new TextBox();
         private readonly TreeView _treeSymbols = new TreeView();
-        private readonly TextBox _txtSymbol = new TextBox();
 
         // rev.14.1 (R6): слоты H/V — ComboBox букв A-H (всегда 8 пунктов); наружу —
         // числа (SelectedIndex = индекс варианта), пайплайн/настройки не тронуты.
+        // rev.14.2: выделение клетки превью слоты сознательно НЕ трогает (спека §5).
         private readonly ComboBox _cbVariantH = new ComboBox();
         private readonly ComboBox _cbVariantV = new ComboBox();
 
         private readonly Label _lblCount = new Label();
         private readonly Label _lblStatus = new Label();
 
-        // H-4b: карточка превью (справа) — имя/категория/описание символа (R7:
-        // SYMB_DESC #16011; счётчик «вариантов» удалён по R7).
+        // H-4b: карточка превью (справа) — имя/категория/описание символа (R7).
         private readonly Label _lblPreviewName = new Label();
         private readonly Label _lblPreviewCategory = new Label();
         private readonly Label _lblPreviewDescription = new Label();
 
         // Объекты библиотек под строками списка (параллельны _lstLibraries.Items).
         private readonly List<SymbolLibrary> _lstLibraryObjects = new List<SymbolLibrary>();
-        // Все символы выбранной библиотеки (поиск фильтрует дерево отсюда);
-        // параллельные списки — число вариантов (-1 — неизвестно), FD-ID по символу
-        // (null — FD не извлёкся или цепочка A) и ОПИСАНИЕ символа SYMB_DESC #16011
-        // (null — не извлёкся/цепочка A; rev.14.1 R7).
-        private List<string> _lstAllSymbols = new List<string>();
-        private List<int> _lstAllVariantCounts = new List<int>();
-        private List<long?> _lstAllFdIds = new List<long?>();
-        private List<string> _lstAllDescriptions = new List<string>();
 
-        // H-4b v3 (rev.14.1): словарь FD-ID → FdInfo{Category,Group} (проект,
-        // строится один раз) и [SYMFDMAP]-счётчик сопоставления текущего перечисления.
-        private Dictionary<long, FdInfo> _dctFd;
+        // rev.14.2: записи символов (RC-1): имя + варианты (номера и ЖИВЫЕ объекты
+        // SymbolVariant из A2) + резолв FD (BaseSymbol-обратный словарь → fallback
+        // #16018 → MDSymbol #16018 → цепочка C без FD) + описание SYMB_DESC.
+        private sealed class SymbolEntry
+        {
+            public string Name;
+            public int nVariantCount;                          // -1 — неизвестно (деградация)
+            public readonly List<int> lstVariantNrs = new List<int>();
+            public readonly List<object> lstVariantObjects = new List<object>();
+            public FdInfo Fd;                                  // null — не сопоставился
+            public string strFdPath;                           // «BaseSymbol»|«16018»|«MDSymbol»|null
+            public string Description;
+        }
+        private List<SymbolEntry> _lstEntries = new List<SymbolEntry>();
+
+        // rev.14.2 (R5): выбор символа — состояние БЕЗ текстового поля («Имя
+        // выбранного символа» удалено из layout; имя задаётся ТОЛЬКО выбором
+        // листа дерева/программной предвыборкой).
+        private string _strSelectedSymbol = string.Empty;
+
+        // rev.14.2: словари FD (проект; строятся ОДИН раз за жизнь диалога):
+        // (а) Id → FdInfo — fallback-бакетизация (Id НЕ уникален глобально: 1305 FD
+        //     → 40 Id, дамп [FD] rev.14.1; first wins);
+        // (б) «lib\u0001sym» → FdInfo — ПЕРВИЧНАЯ связь символ → FD через FD.BaseSymbol.
+        private Dictionary<long, FdInfo> _dctFdById;
+        private Dictionary<string, FdInfo> _dctFdBySymbol;
         private int _nFdMapped;
+        private int _nFdViaBase;
+        private int _nFdVia16018;
+        private string _strFdPath = "нет";   // путь сопоставления [SYMFDMAP] текущего перечисления
 
-        // Fix-минор r14.1: чистые имена узлов дерева (категория/группа) по ссылкам
-        // (текст узла содержит счётчик «(N)» — карточке он не нужен; Tag листьев
-        // занят именем символа, категориям/группам Tag сознательно не назначаем —
-        // см. FindLeaf).
-        private readonly Dictionary<TreeNode, string> _dctCatNodeNames =
-            new Dictionary<TreeNode, string>();
-        private readonly Dictionary<TreeNode, string> _dctGroupNodeNames =
-            new Dictionary<TreeNode, string>();
-
-        // H-4b v3 (rev.14.1, R3-R5): превью-сетка — до 8 клеток (варианты A..H),
-        // у каждой клетки СВОЙ DrawingService (один сервис = один display list);
-        // список готовых клеток параллелен; Dispose при закрытии (OnFormClosing).
+        // Превью-сетка (RC-2 fix): ВСЕГДА 8 фиксированных клеток (4×2); параллельные
+        // списки: внешние панели, ВНУТРЕННИЕ панели рисования, буквы, готовность
+        // display list, доступность варианта (disabled — серые, не кликаются).
         private readonly TableLayoutPanel _tlpPreviewGrid = new TableLayoutPanel();
         private readonly List<Panel> _lstPreviewCells = new List<Panel>();
+        private readonly List<Panel> _lstCellDrawPanels = new List<Panel>();
+        private readonly List<Label> _lstCellLetters = new List<Label>();
         private readonly List<DrawingService> _lstPreviewServices = new List<DrawingService>();
         private readonly List<bool> _lstCellReady = new List<bool>();
+        // Ревью rev.14.2 (Minor-шум): успех-строка [DSPROBE] пути рендера — ОДИН раз
+        // на пересборку сетки (8 клеток × 3 пути = до 24 строк на выделение).
+        private bool _bPathLogged;
+        private readonly List<bool> _lstCellEnabled = new List<bool>();
+        private int _nSelectedCell = -1;   // выделенная клетка (клик = выбор варианта)
 
-        // rev.14.1: пробы [FD]/[SYMFDMAP]/[DSPROBE] — Console + DiagnosticLogger
-        // (урок прогона rev.14.0: Console-канал не попадал в главный лог).
+        // Пробы [FD]/[FD-BASE]/[SYMFDMAP]/[SYMFDMAP-DESC]/[DSPROBE] — Console +
+        // DiagnosticLogger (урок прогона rev.14.0: только-Console был невидим).
         private readonly DiagnosticLogger _oLogger;
-        private bool _bFdDumped;
+        private bool _bFdDumped;           // FD-словари — один раз за жизнь диалога
+        private int _nPropsFormLogged;     // [DSPROBE] «какая форма SymbolPropertyList сработала» — кап 5
 
         /// <summary>Вход: открытый проект (null — списки пусты), текущий выбор:
         /// строки как есть (предвыбор точным совпадением БЕЗ trim — урок п.33),
@@ -166,18 +207,22 @@ namespace MyEplanActions
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(840, 620);
+            // R3 (замечание 2): окно 840×620 — 8 клеток не помещались достойно.
+            ClientSize = new Size(1120, 800);
+            // Страховка маленьких мониторов (ревью rev.14.2): фиксированный диалог
+            // не должен вылезать за рабочий стол — прижимаем к WorkingArea.
+            Rectangle oWork = Screen.PrimaryScreen.WorkingArea;
+            if (ClientSize.Height > oWork.Height - 40)
+                ClientSize = new Size(ClientSize.Width, oWork.Height - 40);
+            if (ClientSize.Width > oWork.Width - 40)
+                ClientSize = new Size(oWork.Width - 40, ClientSize.Height);
 
-            // rev.14.1 (R6): слоты — ComboBox букв A-H (8 пунктов всегда); предвыбор
-            // из настроек: число → SelectedIndex (вне 0..7 — прижать к 0 + INFO).
+            // Слоты H/V — ComboBox букв A-H (8 пунктов всегда); предвыбор из
+            // настроек: число → SelectedIndex (вне 0..7 — прижать к 0 + INFO).
             FillVariantCombo(_cbVariantH);
             FillVariantCombo(_cbVariantV);
             SetVariantIndex(_cbVariantH, nVariantH);
             SetVariantIndex(_cbVariantV, nVariantV);
-
-            // rev.14.1 (R8): имя символа пользователь не правит — только выбор
-            // из дерева; программная предвыборка (ReadOnly не блокирует set).
-            _txtSymbol.ReadOnly = true;
 
             // Карточка превью — прочерк до первого выбора.
             _lblPreviewName.Text = "Имя: —";
@@ -185,28 +230,27 @@ namespace MyEplanActions
             _lblPreviewDescription.Text = "Описание: —";
 
             _txtLibrary.Text = strLibrary ?? string.Empty;
-            _txtSymbol.Text = strName ?? string.Empty;
 
             // (1) Библиотеки: Project.SymbolLibraries (KB-цитата в шапке).
             LoadLibraries(strLibrary);
 
-            // (2) Реакции (диалог только читает; программы мутаций нет).
+            // (2) Реакции (диалог только читает; программных мутаций нет).
+            // rev.14.2: поле «Имя выбранного символа» удалено (R5) — обработчик
+            // TxtSymbolOnTextChanged и его подписка больше НЕ существуют.
             _lstLibraries.SelectedIndexChanged += LstLibrariesOnSelectedIndexChanged;
             _treeSymbols.AfterSelect += TreeSymbolsOnAfterSelect;
             _treeSymbols.NodeMouseDoubleClick += TreeSymbolsOnNodeMouseDoubleClick;
             _txtSearch.TextChanged += delegate { RebuildTree(); };
-            // Программная установка имени (ReadOnly): подсветка листа + карточка/превью.
-            _txtSymbol.TextChanged += TxtSymbolOnTextChanged;
 
-            // (3) Символы: цепочки перечисления для предвыбранной библиотеки
-            // (обработчики уже навешаны — предвыбор имени применится внутри).
+            // (3) Символы: цепочки перечисления для предвыбранной библиотеки,
+            // затем программная предвыборка имени (FindLeaf/карточка/превью).
             if (_lstLibraries.SelectedIndex >= 0)
                 RefreshSymbols();
             SelectSymbolPrechoice(strName);
 
-            // (4) Кнопки: «ОК» — валидация в Click (DialogResult=OK ставится
-            // ТОЛЬКО при непустых Library/Name — паттерн MainDialog «Создать»);
-            // «Отмена» — DialogResult.Cancel (CancelButton).
+            // (4) Кнопки: «ОК» — валидация в Click (DialogResult=OK ставится ТОЛЬКО
+            // при непустых Library/Name, принадлежащих перечислению); «Отмена» —
+            // DialogResult.Cancel (CancelButton).
             Button btnOk = new Button();
             btnOk.Text = "ОК";
             btnOk.Size = new Size(110, 27);
@@ -236,18 +280,27 @@ namespace MyEplanActions
             if (_oLogger != null) _oLogger.Warn(strText);
         }
 
+        /// <summary>Проба [SYMFDMAP/[SYMFDMAP-DESC]/[FD…]] с капом шума: после первых
+        /// 10 символов строки НЕ эмитятся вовсе (шум ~800 символов; итог — сводка
+        /// [SYMFDMAP] в RefreshSymbols). Комментарий выправлен ревью rev.14.2:
+        /// после капа каналов НЕТ (ни Console, ни логгер) — сводка единственный итог.</summary>
+        private void Probe(string strText, int iOrdinal)
+        {
+            if (iOrdinal < 10) ProbeInfo(strText);
+        }
+
         /// <summary>Имя библиотеки (как выбрано/введено, БЕЗ trim).</summary>
         public string Library
         {
             get { return _txtLibrary.Text; }
         }
 
-        /// <summary>Имя символа (как выбрано/введено, БЕЗ trim). Fix-3 (R13):
-        /// переименовано с Name — то имя скрывало наследуемый Control.Name
-        /// (CS0108); new-тенью Form-член не перекрываем.</summary>
+        /// <summary>Имя символа (rev.14.2 R5: состояние выбора — поле «Имя выбранного
+        /// символа» удалено, имя задаётся ТОЛЬКО выбором листа дерева/предвыборкой).
+        /// Имя свойства SymbolName (не Name): CS0108-тень Form-члена — урок п.30.</summary>
         public string SymbolName
         {
-            get { return _txtSymbol.Text; }
+            get { return _strSelectedSymbol; }
         }
 
         /// <summary>Индекс варианта слота H (0-based; UI — буква A-H, наружу число).</summary>
@@ -271,42 +324,30 @@ namespace MyEplanActions
                 _txtLibrary.Text = _lstLibraryObjects[iIndex] == null
                     ? string.Empty
                     : ResolveDisplayPath(_lstLibraryObjects[iIndex]);
-            RefreshSymbols();
+            RefreshSymbols();   // stale-выбор/карточка гасятся ВНУТРИ RefreshSymbols
         }
 
-        /// <summary>Выбор ЛИСТА дерева (символа) — имя уходит в TextBox, карточка/
-        /// превью обновляются. Корень/категория/группа — ничего (Tag только у листьев).</summary>
+        /// <summary>Выбор ЛИСТА дерева (символа) — состояние R5 + карточка/превью.
+        /// Ветки (Trade/Area/Category/Group/Fd/бакеты) — Tag нет, игнор.</summary>
         private void TreeSymbolsOnAfterSelect(object oSender, TreeViewEventArgs oArgs)
         {
             TreeNode oNode = oArgs == null ? null : oArgs.Node;
             if (oNode == null || oNode.Tag == null) return;
-            string strShown = (string)oNode.Tag;
-            _txtSymbol.Text = strShown;   // TextChanged ничего не делает — лист уже выделен
-            // Карточке нужна КАТЕГОРИЯ (rev.14.1: родитель листа — группа, категория —
-            // родитель группы; null-safe — leaf может быть в корне при деградации).
-            TreeNode oGroup = oNode.Parent;
-            TreeNode oCat = oGroup == null ? null : oGroup.Parent;
-            UpdateCard(strShown, CategoryOfNode(oCat));
-            RefreshPreviewGrid();
+            ApplySelection((string)oNode.Tag);
         }
 
-        /// <summary>Чистое имя категории по узлу (rev.14.1: два уровня карт —
-        /// категория/группа; текст узла содержит счётчик «(N)», карточке нужен
-        /// только текст). Узел не из дерева текущей сборки — fallback на текст.</summary>
-        private string CategoryOfNode(TreeNode oCat)
+        /// <summary>Применение выбранного имени (rev.14.2 R5): состояние + карточка
+        /// (из SymbolEntry по имени) + превью-сетка по записи (каскад).</summary>
+        private void ApplySelection(string strName)
         {
-            if (oCat == null) return string.Empty;
-            string strName;
-            if (_dctCatNodeNames.TryGetValue(oCat, out strName) &&
-                !string.IsNullOrEmpty(strName))
-            {
-                return strName;
-            }
-            return oCat.Text;
+            if (string.IsNullOrEmpty(strName)) return;
+            _strSelectedSymbol = strName;
+            UpdateCardByEntry(strName);
+            RefreshPreviewGridByEntry(strName);
         }
 
         /// <summary>Двойной клик по листу = ОК (наше «создать» — после валидации,
-        /// как кнопка). Клик по корню/категории — игнор.</summary>
+        /// как кнопка). Клик по ветке — игнор.</summary>
         private void TreeSymbolsOnNodeMouseDoubleClick(object oSender,
             TreeNodeMouseClickEventArgs oArgs)
         {
@@ -314,64 +355,19 @@ namespace MyEplanActions
             BtnOkOnClick(oArgs.Node, oArgs);
         }
 
-        /// <summary>Программная установка имени (rev.14.1 R8: поле ReadOnly —
-        /// пользовательский ввод отключён; ветка «имя НЕ в дереве» осталась для
-        /// предвыборки сохранённого имени вне текущей библиотеки): очистка — сброс
-        /// превью пречерками; точное совпадение — подсветка + карточка/превью;
-        /// имени нет в дереве — карточка по имени и превью по каскаду.</summary>
-        private void TxtSymbolOnTextChanged(object oSender, EventArgs oArgs)
-        {
-            string strName = _txtSymbol.Text;
-            if (string.IsNullOrEmpty(strName))
-            {
-                // Очистка имени — старые display lists гасим (картинка старого
-                // символа при пустой строке недопустима); карточка — прочерки.
-                RefreshPreviewGrid();   // пустое имя → сброс клеток + ClearCard
-                return;
-            }
-            TreeNode oLeaf = FindLeaf(_treeSymbols.Nodes, strName);   // точное, без trim (п.33)
-            if (oLeaf != null)
-            {
-                if (_treeSymbols.SelectedNode != oLeaf)
-                {
-                    // Разворот пути до листа + подсветка (AfterSelect обновит
-                    // карточку и превью — повторный вызов не нужен).
-                    TreeNode oWalk = oLeaf;
-                    while (oWalk != null)
-                    {
-                        oWalk.Expand();
-                        oWalk = oWalk.Parent;
-                    }
-                    _treeSymbols.SelectedNode = oLeaf;
-                }
-                else
-                {
-                    RefreshPreviewGrid();   // лист уже был выделен — превью по текущему полю
-                }
-            }
-            else
-            {
-                // Имя НЕ в дереве (предвыборка вне текущей библиотеки): ранее ветка
-                // молчала — старая картинка оставалась при новом имени; карточка
-                // и превью — всегда по имени из поля.
-                UpdateCard(strName, string.Empty);
-                RefreshPreviewGrid();
-            }
-        }
-
         private void BtnOkOnClick(object oSender, EventArgs oArgs)
         {
             if (string.IsNullOrEmpty(Library) || string.IsNullOrEmpty(SymbolName))
             {
-                MessageBox.Show(this, "Укажите библиотеку и имя символа.",
+                MessageBox.Show(this, "Укажите библиотеку и выберите символ в дереве.",
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            // Fix (rev.14.1 ревью, Important): поле имени ReadOnly — выбор только
-            // из дерева; имя НЕ из текущего перечисления (сменилась библиотека /
-            // перечисление отказало) — OK блокируем, иначе вернулась бы пара
-            // библ/имя, которой нет.
-            if (_lstAllSymbols.Count == 0)
+            // Перечисление недоступно — выбор невозможен (пустое перечисление при
+            // старой предвыборке не должно пропустить пару «библ/имя, которой нет» —
+            // Important ревью rev.14.1; проверка сохранена, только источник —
+            // _lstEntries).
+            if (_lstEntries.Count == 0)
             {
                 MessageBox.Show(this,
                     "Перечисление символов недоступно для этой библиотеки — " +
@@ -379,7 +375,7 @@ namespace MyEplanActions
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            if (_lstAllSymbols.IndexOf(SymbolName) < 0)
+            if (FindEntryIndex(SymbolName) < 0)
             {
                 MessageBox.Show(this,
                     "Выбранный символ отсутствует в списке текущей библиотеки — " +
@@ -392,7 +388,7 @@ namespace MyEplanActions
 
         /// <summary>Крестик/Alt+F4 (CloseReason.UserClosing) — это «отмена»: гасим
         /// залипший DialogResult.OK (паттерн MainDialog). Валидации здесь нет.
-        /// H-4b v3: здесь же — Dispose ВСЕХ DrawingService превью-сетки (владение
+        /// rev.14.2: здесь же — Dispose ВСЕХ DrawingService превью-сетки (владение
         /// диалогово: один сервис на клетку варианта).</summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
@@ -410,8 +406,7 @@ namespace MyEplanActions
         /// <summary>Project.SymbolLibraries — KB-доказанный SymbolLibrary[]
         /// (цитата в шапке). Отображаемое имя члена НЕ доказано KB —
         /// reflection-проба кандидатов (ResolveDisplayPath), отказ — ToString().
-        /// Сбой перечисления — статусная строка, пустой список (ручной ввод
-        /// имени библиотеки не запрещаем).</summary>
+        /// Сбой перечисления — статусная строка, пустой список.</summary>
         private void LoadLibraries(string strPreselect)
         {
             if (_oProject == null)
@@ -444,31 +439,31 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Цепочка перечисления символов выбранной библиотеки (R11:
-        /// пробовать по очереди, первая успешная): A) перечислители DataModel
-        /// SymbolLibrary — НЕ доказаны, reflection-проба (FD для дерева тут
-        /// недоступен — SymbolCatalog уйдёт в fallback-префиксы); B) MDSymbolLibrary
-        /// (path).Symbols — свойство KB-доказано (цитата в шапке), путь и конструктор
-        /// НЕ доказаны — Activator-проба; FD-ID — ПЕРВИЧНО из MDSymbol
-        /// (SYMB_MAINFUNCTION #16018, [SYMFDMAP]). Полный отказ — INFO-статус,
-        /// отказ листинга — выбор символа блокируется OK-валидацией. Никаких мутаций.</summary>
+        /// <summary>Цепочки перечисления символов выбранной библиотеки — В ПОРЯДКЕ
+        /// ИНФОРМАТИВНОСТИ (rev.14.2, RC-1: цепочка A rev.14.1 резко выигрывала
+        /// и рано выходила, оставляя fdId=null/варианты -1/описание null):
+        /// A2) DataModel SymbolLibrary «Symbols» → MasterData.Symbol (INTERVAL:
+        ///     варианты + FD + SYMB_DESC — ПОЛНАЯ запись);
+        /// B)  MDSymbolLibrary.Symbols (KB; FD #16018 → dctFdById, варианты числом,
+        ///     SYMB_DESC);
+        /// C)  names-only («Symbols» → строки / «Names») — деградация: 1 клетка A,
+        ///    категории-префиксы.
+        /// R6: на успехе статус НЕ печатается (пустой); деградация C и отказ всех —
+        /// честные статусы. [SYMFDMAP]-сводка после каждой успешной цепочки.
+        /// Никаких мутаций (диалог только читает).</summary>
         private void RefreshSymbols()
         {
-            _lstAllSymbols = new List<string>();
-            _lstAllVariantCounts = new List<int>();
-            _lstAllFdIds = new List<long?>();
-            _lstAllDescriptions = new List<string>();
-            _nFdMapped = 0;
+            _lstEntries = new List<SymbolEntry>();
+            ResetFdMatchCounters();
             DisposePreviewGrid();
-            BuildFdDictionary();   // [FD] — один раз за жизнь диалога; до [SYMFDMAP]
+            BuildFdDictionary();   // [FD]/[FD-BASE] — один раз за жизнь диалога
             _treeSymbols.Nodes.Clear();
             _lblCount.Text = string.Empty;
-            // Fix (rev.14.1 ревью, Important): смена библиотеки — старое имя нового
-            // списка не соответствует; поле ReadOnly (выбор из дерева), залиставшее
-            // имя гасим (иначе OK вернул бы пару библ/имя, которой нет). Пустое имя
-            // через TxtSymbolOnTextChanged гасит карточку и превью.
-            if (_txtSymbol.Text.Length > 0)
-                _txtSymbol.Text = string.Empty;
+            // Fix (rev.14.1 ревью, Important) — сохранено: смена библиотеки — старое
+            // имя не соответствует новому списку; stale-выбор гасим (OK не вернул бы
+            // пару библ/имя, которой нет); карточка — прочерки.
+            _strSelectedSymbol = string.Empty;
+            ClearCard();
 
             int iIndex = _lstLibraries.SelectedIndex;
             if (iIndex < 0 || iIndex >= _lstLibraryObjects.Count)
@@ -479,111 +474,220 @@ namespace MyEplanActions
             }
             SymbolLibrary oLib = _lstLibraryObjects[iIndex];
 
-            // Цепочка A: DataModel-перечислитель (проба).
-            if (TryEnumerateViaDataModel(oLib))
+            // A2 (первичная): ПОЛНЫЕ записи Symbol (варианты/FD/описание).
+            if (TryEnumerateViaDataModelTyped(oLib))
             {
-                // Fix r14.1 (Important-2 ревью): ранний выход с явным [SYMFDMAP] —
-                // отсутствие источника FD должно быть различимо в диагностике.
-                ProbeInfo("[SYMFDMAP] FD недоступен: перечисление через " +
-                    "DataModel (fallback-префиксы)");
-                SetStatus("Символы перечислены через DataModel SymbolLibrary (проба), " +
-                    _lstAllSymbols.Count.ToString(CultureInfo.InvariantCulture) + " шт.; " +
-                    "FD недоступен — категории по префиксу имён.");
+                _strFdPath = _nFdViaBase > 0
+                    ? "BaseSymbol"
+                    : (_nFdVia16018 > 0 ? "16018" : "нет");
+                ProbeFdSummary();
                 RebuildTree();
+                SetStatus(string.Empty);   // R6: успех — статус пустой
                 return;
             }
 
             // Цепочка B: MDSymbolLibrary.Symbols. FIX-1 (review 09fb80d Important):
-            // путь библиотеки — СВОИ кандидаты (EnumeratePathCandidates внутри
-            // TryCreateMdLibrary), НЕ одно и то же значение, что отображаемое имя:
-            // ResolveDisplayPath отдаёт Name первым и остаётся только отображением/
-            // возвращаемым Library (бриф разделяет: «MDSymbolLibrary(path)» — про путь,
-            // «резолв имён библиотек — свойство Name» — про имя).
+            // путь библиотеки — СВОИ кандидаты (EnumeratePathCandidates), НЕ
+            // отображаемое имя ResolveDisplayPath (то остаётся возвращаемым Library).
             if (TryEnumerateViaMasterData(oLib))
             {
-                ProbeInfo("[SYMFDMAP] сопоставлено " +
-                    _nFdMapped.ToString(CultureInfo.InvariantCulture) + " из " +
-                    _lstAllSymbols.Count.ToString(CultureInfo.InvariantCulture) +
-                    " символов, словарь FD: " +
-                    _dctFd.Count.ToString(CultureInfo.InvariantCulture) + " записей");
-                SetStatus("Символы перечислены через MDSymbolLibrary.Symbols (KB), " +
-                    _lstAllSymbols.Count.ToString(CultureInfo.InvariantCulture) + " шт.; " +
-                    "FD сопоставлено " + _nFdMapped.ToString(CultureInfo.InvariantCulture) +
-                    " из " + _lstAllSymbols.Count.ToString(CultureInfo.InvariantCulture) + ".");
+                _strFdPath = "MDSymbol";
+                ProbeFdSummary();
                 RebuildTree();
+                SetStatus(string.Empty);   // R6: успех — статус пустой
                 return;
             }
 
-            SetStatus("Перечисление символов недоступно (обе цепочки пробили в отказ) — " +
+            // Цепочка C: names-only — деградация (1 клетка A, префиксные бакеты).
+            if (TryEnumerateNamesOnly(oLib))
+            {
+                _strFdPath = "нет";
+                ProbeFdSummary();
+                RebuildTree();
+                SetStatus("Деградация: получены только ИМЕНА символов (без вариантов, " +
+                    "FD и описаний) — категории по префиксу, превью — клетка A.");
+                return;
+            }
+
+            SetStatus("Перечисление символов недоступно (все цепочки пробили в отказ) — " +
                 "выбор символа невозможен (подробности в [DSPROBE] лога).");
+        }
+
+        private void ResetFdMatchCounters()
+        {
+            _nFdMapped = 0;
+            _nFdViaBase = 0;
+            _nFdVia16018 = 0;
+            _strFdPath = "нет";
+        }
+
+        /// <summary>[SYMFDMAP]-сводка текущего перечисления.</summary>
+        private void ProbeFdSummary()
+        {
+            ProbeInfo("[SYMFDMAP] сопоставлено " +
+                _nFdMapped.ToString(CultureInfo.InvariantCulture) + " из " +
+                _lstEntries.Count.ToString(CultureInfo.InvariantCulture) +
+                " символов (путь: " + _strFdPath + ")");
         }
 
         // CS0618 (ruling контроллера, fix-2): PropertyInfo.GetValue(obj, args[]) —
         // устаревший, но единственный гарантированно доступный в референсе .NET 4
         // способ чтения свойства; newer overloads (GetValue(obj)/GetPropertyValue)
         // на стенде не доказаны — прямое обращение = риск CS1061. Заглушение плотной
-        // парой pragma вокруг метода, вызывающего GetValue; поведение не меняется.
+        // парой pragma вокруг каждого метода, вызывающего GetValue; поведение не меняется.
 #pragma warning disable 618
-        /// <summary>Цепочка A: reflection-перебор кандидатов перечисления у
-        /// DataModel SymbolLibrary (имена членов НЕ доказаны KB — только проба).
-        /// Значение — string[] или Array элементов (имена — ResolveDisplayPath);
-        /// счётчик вариантов при этом -1 (неизвестен), FD — null (в цепочке A
-        /// FD недоступен — план H-4b). Пустой/отказной результат кандидата —
-        /// следующий; всё не удалось — false.</summary>
-        private bool TryEnumerateViaDataModel(SymbolLibrary oLib)
+
+        /// <summary>Цепочка A2 (первичная, rev.14.2): reflection-доступ к «Symbols»
+        /// у DataModel SymbolLibrary (рантайм-доказано rev.14.1), элементы —
+        /// MasterData.Symbol; НИ ОДНОГО Symbol-объекта — false (переход к B).
+        /// Для каждого символа: имя (ResolveNameViaReflection), варианты —
+        /// ТИПИРОВАННО Symbol.Variants : SymbolVariant[] (KB): номера VariantNr
+        /// 0..7 (вне — не в сетку A–H) + ЖИВЫЕ объекты вариантов (для
+        /// CreateDisplayList), FD — обратный словарь BaseSymbol, fallback #16018
+        /// (Properties-проба), описание — SYMB_DESC (та же проба). [DSPROBE]:
+        /// какая форма сработала («Symbols → N объектов Symbol»). Только чтение.</summary>
+        private bool TryEnumerateViaDataModelTyped(SymbolLibrary oLib)
         {
-            string[] arrCandidateProps = new string[] { "Symbols", "Names" };
-            foreach (string strProp in arrCandidateProps)
+            try
             {
-                try
+                PropertyInfo oProp = oLib.GetType().GetProperty("Symbols");
+                if (oProp == null)
                 {
-                    PropertyInfo oProp = oLib.GetType().GetProperty(strProp);
-                    if (oProp == null) continue;
-                    object oValue = oProp.GetValue(oLib, null);
-                    string[] arrStrings = oValue as string[];
-                    if (arrStrings != null)
-                    {
-                        foreach (string strName in arrStrings)
-                        {
-                            if (string.IsNullOrEmpty(strName)) continue;
-                            AddSymbolEntry(strName, -1, null);
-                        }
-                        if (_lstAllSymbols.Count > 0) return true;
-                        continue;
-                    }
-                    System.Array arrItems = oValue as System.Array;
-                    if (arrItems != null)
-                    {
-                        foreach (object oItem in arrItems)
-                        {
-                            if (oItem == null) continue;
-                            string strName = ResolveDisplayPath(oItem);
-                            if (string.IsNullOrEmpty(strName)) continue;
-                            AddSymbolEntry(strName, -1, null);
-                        }
-                        if (_lstAllSymbols.Count > 0) return true;
-                    }
+                    ProbeInfo("[DSPROBE] A2: свойства «Symbols» у DataModel SymbolLibrary нет");
+                    return false;
                 }
-                catch (Exception oEx)
+                object oValue = oProp.GetValue(oLib, null);
+                System.Array arrItems = oValue as System.Array;
+                if (arrItems == null)
                 {
-                    // Проба — не мутация: отказ кандидата — в Console-дамп,
-                    // переходим к следующему (урок rev.7).
-                    ProbeInfo("SymbolBrowserDialog: проба «" + strProp + "» — " +
-                        oEx.GetType().Name + ": " + oEx.Message);
+                    ProbeInfo("[DSPROBE] A2: «Symbols» не массив (" +
+                        (oValue == null ? "null" : oValue.GetType().Name) + ") — переход к B");
+                    return false;
                 }
+                int nSymbols = 0;
+                int iOrdinal = 0;
+                foreach (object oItem in arrItems)
+                {
+                    if (oItem == null) continue;
+                    // ГЕЙТ A2: элемент должен быть MasterData.Symbol (иначе — не наш
+                    // путь: string[] уйдёт в цепочку B/C). Смешанные массивы —
+                    // Symbol'ы собираем, посторонние пропускаем.
+                    // CS0246-фикс: «MasterData» без квалификатора не резолвится
+                    // (using импортирует ТИПЫ, не сам namespace) — «Symbol» дальше
+                    // по файлу резолвится в DataModel.MasterData.Symbol тем же using.
+                    Symbol oSymbol = oItem as Symbol;
+                    if (oSymbol == null) continue;
+                    iOrdinal++;
+                    string strName = ResolveNameViaReflection(oSymbol);
+                    if (string.IsNullOrEmpty(strName)) continue;
+
+                    SymbolEntry oEntry = new SymbolEntry();
+                    oEntry.Name = strName;
+                    oEntry.nVariantCount = -1;
+
+                    // Варианты: KB Symbol~Variants — SymbolVariant[] (типизированно);
+                    // вне 0..7 — в сетку A–H не попадают (16 = contact image).
+                    try
+                    {
+                        SymbolVariant[] arrVars = oSymbol.Variants;
+                        if (arrVars != null)
+                        {
+                            oEntry.nVariantCount = arrVars.Length;
+                            foreach (SymbolVariant oVar in arrVars)
+                            {
+                                if (oVar == null) continue;
+                                int nNr = -1;
+                                try { nNr = oVar.VariantNr; }
+                                catch (Exception oExVariant)
+                                {
+                                    Probe("[SYMFDMAP] VariantNr «" + strName + "» — " +
+                                        oExVariant.GetType().Name + ": " +
+                                        oExVariant.Message, iOrdinal - 1);
+                                    continue;
+                                }
+                                if (nNr < 0 || nNr > 7) continue;
+                                oEntry.lstVariantNrs.Add(nNr);
+                                oEntry.lstVariantObjects.Add(oVar);
+                            }
+                        }
+                    }
+                    catch (Exception oEx)
+                    {
+                        Probe("[SYMFDMAP] Symbol.Variants «" + strName + "» — " +
+                            oEx.GetType().Name + ": " + oEx.Message, iOrdinal - 1);
+                    }
+
+                    // FD записи: (1) ПЕРВИЧНО — обратный словарь по lib/sym первого
+                    // варианта (KB SymbolVariant.SymbolLibraryName/SymbolName);
+                    // (2) fallback — SYMB_MAINFUNCTION #16018 через Properties-пробу.
+                    if (oEntry.lstVariantNrs.Count > 0 && oEntry.lstVariantObjects.Count > 0)
+                    {
+                        object oFirstVariant = oEntry.lstVariantObjects[0];
+                        string strVarLib = TryGetStringProperty(oFirstVariant, "SymbolLibraryName");
+                        string strVarSym = TryGetStringProperty(oFirstVariant, "SymbolName");
+                        if (!string.IsNullOrEmpty(strVarLib) && !string.IsNullOrEmpty(strVarSym))
+                        {
+                            FdInfo oInfoFd;
+                            if (_dctFdBySymbol != null &&
+                                _dctFdBySymbol.TryGetValue(
+                                    MakeFdSymbolKey(strVarLib, strVarSym), out oInfoFd))
+                            {
+                                oEntry.Fd = oInfoFd;
+                                oEntry.strFdPath = "BaseSymbol";
+                                _nFdViaBase++;
+                            }
+                        }
+                    }
+                    if (oEntry.Fd == null)
+                    {
+                        long? nFdId = TryGetFdIdFromSymbolProperties(
+                            oSymbol, iOrdinal - 1, strName);
+                        if (nFdId.HasValue && _dctFdById != null)
+                        {
+                            FdInfo oInfoById;
+                            if (_dctFdById.TryGetValue(nFdId.Value, out oInfoById))
+                            {
+                                oEntry.Fd = oInfoById;
+                                oEntry.strFdPath = "16018";
+                                _nFdVia16018++;
+                            }
+                        }
+                    }
+
+                    // Описание: SYMB_DESC #16011 через Properties-пробу (rev.14.2).
+                    oEntry.Description = TryGetSymbolSymbDesc(oSymbol, iOrdinal - 1, strName);
+
+                    _lstEntries.Add(oEntry);
+                    if (oEntry.Fd != null) _nFdMapped++;
+                    nSymbols++;
+                }
+                if (nSymbols == 0)
+                {
+                    // Спека: «если ни одного Symbol-объекта → false» — B перечислит,
+                    // C доберёт names-only.
+                    ProbeInfo("[DSPROBE] A2: MasterData.Symbol-объектов нет — переход к B");
+                    return false;
+                }
+                ProbeInfo("[DSPROBE] A2: «Symbols» → " +
+                    nSymbols.ToString(CultureInfo.InvariantCulture) +
+                    " объектов MasterData.Symbol");
+                return true;
             }
-            return false;
+            catch (Exception oEx)
+            {
+                ProbeInfo("[DSPROBE] A2 отказ: " + oEx.GetType().Name + ": " + oEx.Message);
+                return false;
+            }
         }
 #pragma warning restore 618
 
-        /// <summary>Цепочка B: MDSymbolLibrary по кандидатам ПУТИ библиотеки
-        /// (конструктор НЕ доказан KB — Activator-проба форм (string) и
+        /// <summary>Цепочка B (fallback): MDSymbolLibrary по кандидатам ПУТИ
+        /// библиотеки (конструктор НЕ доказан KB — Activator-проба форм (string) и
         /// (Project, string) для каждого кандидата, fix-1), затем Symbols —
-        /// KB-доказанное свойство «public MDSymbol[] Symbols { get; }» (прямое
-        /// типизированное обращение; сборка Eplan.EplApi.MasterDatau — добавлена
-        /// в build_addin.bat). Имена: MDSymbol.Name НЕ доказан — reflection-проба.
-        /// Число вариантов: MDSymbol.Variants KB-доказано (TryGetVariantCount).
-        /// FD-ID (#16018): чтение с MDSymbol — TryGetFdId ([SYMFDMAP] внутри).</summary>
+        /// KB-доказанное свойство (прямое типизированное обращение). Имена —
+        /// ResolveNameViaReflection; число вариантов — MDSymbol.Variants (KB);
+        /// FD-ID (#16018) → _dctFdById (TryGetFdId + [SYMFDMAP]); SYMB_DESC.
+        /// Записи: номера вариантов 0..min(count,8)-1 (клетки включены по списку).</summary>
         private bool TryEnumerateViaMasterData(SymbolLibrary oLib)
         {
             object oMdLib = TryCreateMdLibrary(oLib);
@@ -599,16 +703,32 @@ namespace MyEplanActions
                     if (oMdSym == null) continue;
                     string strName = ResolveNameViaReflection(oMdSym);
                     if (string.IsNullOrEmpty(strName)) continue;
+                    int nVariantCount = TryGetVariantCount(oMdSym);
                     long? nFdId = TryGetFdId(oMdSym, iOrdinal, strName);
                     string strDesc = TryGetSymbDesc(oMdSym, iOrdinal, strName);
-                    AddSymbolEntry(strName, TryGetVariantCount(oMdSym), nFdId, strDesc);
-                    // [SYMFDMAP]-итог: сопоставлено = FD извлечён И в словаре FD.
-                    if (nFdId.HasValue && _dctFd != null &&
-                        _dctFd.ContainsKey(nFdId.Value))
-                        _nFdMapped++;
+
+                    SymbolEntry oEntry = new SymbolEntry();
+                    oEntry.Name = strName;
+                    oEntry.nVariantCount = nVariantCount;
+                    int nCells = nVariantCount < 0 ? 0 : Math.Min(nVariantCount, 8);
+                    for (int i = 0; i < nCells; i++) oEntry.lstVariantNrs.Add(i);
+                    // FD: словарь по Id (16018 — FD-Id; первый FD с этим Id выигрывает:
+                    // принцип dctFdById first-wins, рантайм-правило rev.14.1).
+                    if (nFdId.HasValue && _dctFdById != null)
+                    {
+                        FdInfo oInfoFd;
+                        if (_dctFdById.TryGetValue(nFdId.Value, out oInfoFd))
+                        {
+                            oEntry.Fd = oInfoFd;
+                            oEntry.strFdPath = "MDSymbol";
+                            _nFdMapped++;
+                        }
+                    }
+                    oEntry.Description = strDesc;
+                    _lstEntries.Add(oEntry);
                     iOrdinal++;
                 }
-                return _lstAllSymbols.Count > 0;
+                return _lstEntries.Count > 0;
             }
             catch (Exception oEx)
             {
@@ -618,32 +738,196 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Параллельное добавление символа (имя, число вариантов, FD-ID,
-        /// описание SYMB_DESC — rev.14.1 R7).</summary>
-        private void AddSymbolEntry(string strName, int nVariantCount, long? nFdId,
-            string strDescription)
+        // CS0618 — см. блок выше.
+#pragma warning disable 618
+        /// <summary>Цепочка C (последняя, names-only): reflection-перебор кандидатов
+        /// перечисления у DataModel SymbolLibrary (имена членов НЕ доказаны KB —
+        /// только проба). Значение — string[] или Array элементов (имена —
+        /// ResolveDisplayPath); записи БЕЗ вариантов/FD/описания (деградация:
+        /// 1 клетка A, префиксные бакеты SymbolCatalog). Пустой/отказной результат
+        /// кандидата — следующий; всё не удалось — false.</summary>
+        private bool TryEnumerateNamesOnly(SymbolLibrary oLib)
         {
-            _lstAllSymbols.Add(strName);
-            _lstAllVariantCounts.Add(nVariantCount);
-            _lstAllFdIds.Add(nFdId);
-            _lstAllDescriptions.Add(strDescription);
+            string[] arrCandidateProps = new string[] { "Symbols", "Names" };
+            foreach (string strProp in arrCandidateProps)
+            {
+                try
+                {
+                    PropertyInfo oProp = oLib.GetType().GetProperty(strProp);
+                    if (oProp == null) continue;
+                    object oValue = oProp.GetValue(oLib, null);
+                    string[] arrStrings = oValue as string[];
+                    if (arrStrings != null)
+                    {
+                        foreach (string strName in arrStrings)
+                        {
+                            if (string.IsNullOrEmpty(strName)) continue;
+                            AddNamesOnlyEntry(strName);
+                        }
+                        if (_lstEntries.Count > 0)
+                        {
+                            ProbeInfo("[DSPROBE] C: «" + strProp + "» → " +
+                                _lstEntries.Count.ToString(CultureInfo.InvariantCulture) +
+                                " имён (строковый массив) — деградация");
+                            return true;
+                        }
+                        continue;
+                    }
+                    System.Array arrItems = oValue as System.Array;
+                    if (arrItems != null)
+                    {
+                        foreach (object oItem in arrItems)
+                        {
+                            if (oItem == null) continue;
+                            string strName = ResolveDisplayPath(oItem);
+                            if (string.IsNullOrEmpty(strName)) continue;
+                            AddNamesOnlyEntry(strName);
+                        }
+                        if (_lstEntries.Count > 0)
+                        {
+                            ProbeInfo("[DSPROBE] C: «" + strProp + "» → " +
+                                _lstEntries.Count.ToString(CultureInfo.InvariantCulture) +
+                                " имён — деградация");
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception oEx)
+                {
+                    // Проба — не мутация: отказ кандидата — в дамп, далее (урок rev.7).
+                    ProbeInfo("SymbolBrowserDialog: проба «" + strProp + "» — " +
+                        oEx.GetType().Name + ": " + oEx.Message);
+                }
+            }
+            return false;
+        }
+#pragma warning restore 618
+
+        /// <summary>Деградационная запись (цепочка C): имя, variants неизвестно
+        /// (-1), FD=null (префиксные бакеты), описание=null.</summary>
+        private void AddNamesOnlyEntry(string strName)
+        {
+            SymbolEntry oEntry = new SymbolEntry();
+            oEntry.Name = strName;
+            oEntry.nVariantCount = -1;
+            _lstEntries.Add(oEntry);
         }
 
-        /// <summary>Цепочка A: описание недоступно — null (карточка «—»).</summary>
-        private void AddSymbolEntry(string strName, int nVariantCount, long? nFdId)
+        /// <summary>FD-ID символа в цепочке A2 — FALLBACK #16018 c DataModel Symbol:
+        /// как получить SymbolPropertyList от Symbol НЕ доказано (страниц
+        /// Symbol~Properties / SymbolPropertyList~_ctor в базе нет) — ТОЛЬКО
+        /// reflection-проба (свойство «Properties» / Activator ctor(Symbol)); далее
+        /// SYMB_MAINFUNCTION чтение той же пробой → ExtractLongViaReflection →
+        /// _dctFdById. Метка [SYMFDMAP] первых 10. Отказ — null (→ «Без
+        /// классификации»). Инстансный (Probe-канал).</summary>
+        private long? TryGetFdIdFromSymbolProperties(object oSymbol, int iOrdinal,
+            string strName)
         {
-            AddSymbolEntry(strName, nVariantCount, nFdId, null);
+            if (oSymbol == null) return null;
+            object oProps = GetSymbolPropertyListViaProbes(oSymbol, strName);
+            if (oProps == null) return null;
+            try
+            {
+                object oVal = TryGetMemberValue(oProps, "SYMB_MAINFUNCTION");
+                if (oVal == null)
+                {
+                    Probe("[SYMFDMAP] «" + strName + "» Symbol.props #16018 = null",
+                        iOrdinal);
+                    return null;
+                }
+                string strVia;
+                long? nId = ExtractLongViaReflection(oVal, "SYMFDMAP:" + strName,
+                    out strVia);
+                Probe("[SYMFDMAP] «" + strName + "» Symbol.props #16018 → " +
+                    (nId.HasValue
+                        ? nId.Value.ToString(CultureInfo.InvariantCulture) + " via " + strVia
+                        : "НЕТ"), iOrdinal);
+                return nId;
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[SYMFDMAP] «" + strName + "» #16018 через Symbol.Properties — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+                return null;
+            }
         }
 
-        /// <summary>FD-ID символа — ПЕРВИЧНО из MDSymbol (план H-4b): KB
-        /// MDSymbolPropertyList ctor(MDSymbol) + SYMB_MAINFUNCTION (Main function
-        /// # 16018; «Returns property value of type System.Int64» — поэтому
-        /// MDPropertyValue, извлечение числа — reflection-проба ExtractLongVia
-        /// Reflection; НЕ угадывать API — урок rev.7). Метка [SYMFDMAP]: raw
-        /// + сопоставление со словарём FD для первых 10 символов (возможно,
-        /// уровень MDSymbolVariant также пройдёт — отдельная проба, НЕ в rev.14.0).
-        /// Отказ (нет/пусто/проба не удалась) — null: SymbolCatalog уйдёт в
-        /// fallback-префиксы по этому символу.</summary>
+        /// <summary>Описание SYMB_DESC (#16011) в цепочке A2 — через Properties-пробу
+        /// (reflection — как получить SymbolPropertyList от Symbol НЕ доказано).
+        /// Блоб может вернуться MultiLangString-форматом «de_DE@…;ru_RU@…» —
+        /// локализуется SymbolCatalog.LocalizeMultiLang. Метка [SYMFDMAP-DESC]
+        /// первых 10. Пусто/отказ — null (карточка «—», иначе FD.Description).</summary>
+        private string TryGetSymbolSymbDesc(object oSymbol, int iOrdinal, string strName)
+        {
+            if (oSymbol == null) return null;
+            object oProps = GetSymbolPropertyListViaProbes(oSymbol, strName);
+            if (oProps == null) return null;
+            try
+            {
+                object oVal = TryGetMemberValue(oProps, "SYMB_DESC");
+                if (oVal == null) return null;
+                string strRaw = oVal.ToString();
+                string strLocalized = SymbolCatalog.LocalizeMultiLang(strRaw);
+                Probe("[SYMFDMAP-DESC] «" + strName + "» raw=«" +
+                    (string.IsNullOrEmpty(strRaw) ? "<пусто>" : strRaw) + "» → «" +
+                    (string.IsNullOrEmpty(strLocalized) ? "<пусто>" : strLocalized) + "»",
+                    iOrdinal);
+                return string.IsNullOrEmpty(strLocalized) ? null : strLocalized;
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[SYMFDMAP-DESC] «" + strName + "» SYMB_DESC — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+                return null;
+            }
+        }
+
+        /// <summary>SymbolPropertyList для DataModel MasterData Symbol — НИКАК не
+        /// доказано (Rev.14.2: страниц Symbol~Properties / SymbolPropertyList~
+        /// _ctor(Symbol) в базе нет): проба (1) свойство «Properties» объекта;
+        /// (2) Activator ctor MasterData.SymbolPropertyList(Symbol). Формы сработок
+        /// — в [DSPROBE] (кап 5; [DSPROBE] обязан показать КАКАЯ форма).
+        /// Null/отказ — null; каждый отказ — Console-дамп.</summary>
+        private object GetSymbolPropertyListViaProbes(object oSymbol, string strName)
+        {
+            if (oSymbol == null) return null;
+            object oProps = TryGetMemberValue(oSymbol, "Properties");
+            if (oProps != null)
+            {
+                if (_nPropsFormLogged < 5)
+                {
+                    ProbeInfo("[DSPROBE] SymbolPropertyList: форма «Symbol.Properties» → " +
+                        oProps.GetType().FullName);
+                    _nPropsFormLogged++;
+                }
+                return oProps;
+            }
+            try
+            {
+                Type oPlType = oSymbol.GetType().Assembly.GetType(
+                    "Eplan.EplApi.DataModel.MasterData.SymbolPropertyList");
+                if (oPlType == null) return null;
+                oProps = Activator.CreateInstance(oPlType, new object[] { oSymbol });
+                if (oProps != null && _nPropsFormLogged < 5)
+                {
+                    ProbeInfo("[DSPROBE] SymbolPropertyList: форма «Activator ctor(Symbol)» → ок");
+                    _nPropsFormLogged++;
+                }
+                return oProps;
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[DSPROBE] SymbolPropertyList (Activator) «" + strName +
+                    "» — " + oEx.GetType().Name + ": " + oEx.Message);
+                return null;
+            }
+        }
+
+        /// <summary>FD-ID символа в цепочке B — ПЕРВИЧНО из MDSymbol (rev.14.0
+        /// KB MDSymbolPropertyList ctor(MDSymbol) + SYMB_MAINFUNCTION «Returns
+        /// System.Int64»): извлечение числа — ExtractLongViaReflection (НЕ угадываем
+        /// поверхность MDPropertyValue). Метка [SYMFDMAP] первых 10. Отказ — null:
+        /// символ → «Без классификации».</summary>
         private long? TryGetFdId(Eplan.EplApi.MasterData.MDSymbol oMdSym,
             int iOrdinal, string strName)
         {
@@ -664,27 +948,22 @@ namespace MyEplanActions
                 }
                 string strVia;
                 nId = ExtractLongViaReflection(oVal, "SYMFD:" + strName, out strVia);
-                if (iOrdinal < 10)
-                {
-                    Probe("[SYMFDMAP] «" + strName + "» raw=«" +
-                        (strRaw ?? "<null>") + "» id=" +
-                        (nId.HasValue ? nId.Value.ToString(CultureInfo.InvariantCulture) +
-                            " via " + strVia : "НЕТ"), iOrdinal);
-                }
+                Probe("[SYMFDMAP] «" + strName + "» raw=«" + (strRaw ?? "<null>") +
+                    "» id=" + (nId.HasValue
+                        ? nId.Value.ToString(CultureInfo.InvariantCulture) + " via " + strVia
+                        : "НЕТ"), iOrdinal);
             }
             catch (Exception oEx)
             {
-                if (iOrdinal < 10)
-                    Probe("[SYMFDMAP] «" + strName + "» #16018 — " +
-                        oEx.GetType().Name + ": " + oEx.Message, iOrdinal);
+                ProbeWarn("[SYMFDMAP] «" + strName + "» #16018 — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
             }
             return nId;
         }
 
-        /// <summary>Описание символа (rev.14.1 R7): KB MDSymbolPropertyList.SYMB_DESC —
-        /// «Symbol description # 16011» (source: ...MDSymbolPropertyList~SYMB_DESC.html);
-        ///PropertyValue → ToString(). Метка [SYMFDMAP-DESC] первых 10 символов.
-        /// Пусто/отказ — null (карточка «—»).</summary>
+        /// <summary>Описание символа в цепочке B: KB MDSymbolPropertyList.SYMB_DESC —
+        /// «Symbol description # 16011»; значение → ToString(). Метка [SYMFDMAP-DESC]
+        /// первых 10. Пусто/отказ — null (карточка «—» или FD.Description).</summary>
         private string TryGetSymbDesc(Eplan.EplApi.MasterData.MDSymbol oMdSym,
             int iOrdinal, string strName)
         {
@@ -709,24 +988,14 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Проба [SYMFDMAP] — дублированный канал (ProbeInfo) c капом шума:
-        /// после первых 10 символов строки НЕ эмитятся вовсе (шум ~800 символов;
-        /// итог — сводка [SYMFDMAP] в RefreshSymbols; фикс ревью rev.14.1:
-        /// Console-only после капа — bypass логгера).</summary>
-        private void Probe(string strText, int iOrdinal)
-        {
-            if (iOrdinal < 10) ProbeInfo(strText);
-        }
-
-        // CS0618 (ruling контроллера, fix-2): GetValue(args[]-перегрузка) — см. выше.
+        // CS0618 — см. блоки выше: ExtractLongViaReflection и TryGetMemberValue
+        // используют устаревший GetValue(args[]).
 #pragma warning disable 618
-        /// <summary>Извлечение числа из объекта-провайдера (MDPropertyValue и прочих):
-        /// reflection-проба кандидатов — НИЧЕГО не угадываем (урок rev.7: CS1061 на
-        /// первой стендовой сборке): (1) уже готовые long/int; (2) методы
-        /// ToInt64()/ToInt(); (3) свойство Value; (4) fallback — ToString()+long.
-        /// TryParse. strVia — каким путём получилось (печатается в [SYMFDMAP]).
-        /// Отказ — null; ошибки каждой пробы — Console-дамп. Инстансный (Probe-канал).
-        /// </summary>
+        /// <summary>Извлечение числа из объекта-провайдера (PropertyValue и прочих):
+        /// reflection-проба кандидатов — НИЧЕГО не угадываем (урок rev.7):
+        /// (1) уже готовые long/int; (2) методы ToInt64()/ToInt(); (3) свойство Value;
+        /// (4) fallback — ToString()+long.TryParse. strVia — каким путём получилось
+        /// (печатается в [SYMFDMAP]). Отказ — null.</summary>
         private long? ExtractLongViaReflection(object oValue, string strContext,
             out string strVia)
         {
@@ -804,140 +1073,71 @@ namespace MyEplanActions
         }
 #pragma warning restore 618
 
-        /// <summary>Словарь FD-ID → FdInfo{Category,Group} (H-4b v3, rev.14.1 R2):
-        /// Project.FunctionDefinitionLibrary.FunctionDefinitions — KB-доказан; члены
-        /// FunctionDefinition.CategoryName/GroupName/MainGroup/CategoryRegion/Name/Id —
-        /// KB-доказаны (MultiLangString → ToString(), паттерн rev.5.5). Типизированный
-        /// доступ в try/catch; дамп [FD] первых 10 FD — сверка с нативным деревом
-        /// EPLAN. Сбой/пусто — словарь пуст, дерево уйдёт в fallback-префиксы.
-        /// Строится ОДИН раз за жизнь диалога (_bFdDumped): список FD — статическое
-        /// свойство проекта.</summary>
-        private void BuildFdDictionary()
-        {
-            if (_bFdDumped) return;   // дамп/словарь строим один раз за жизнь диалога
-            _bFdDumped = true;
-            _dctFd = new Dictionary<long, FdInfo>();
-            if (_oProject == null)
-            {
-                // Fix r14.1 (Important-2 ревью): ранний выход с явным [FD].
-                ProbeInfo("[FD] недоступен: проект null — дерево по префиксам имён");
-                return;
-            }
-            try
-            {
-                // KB: Project.FunctionDefinitionLibrary : FunctionDefinitionLibrary
-                // (в .MasterData), FunctionDefinitions : FunctionDefinition[] —
-                // САМ FunctionDefinition в Eplan.EplApi.DataModel (страница класса
-                // «Eplan.EplApi.DataModel Namespace / FunctionDefinition Class»;
-                // урок CS0246 п.30/63 — пространство имён сверять с компилирующимся
-                // кодом, не по «логичности»).
-                Eplan.EplApi.DataModel.FunctionDefinition[] arrFdDefs =
-                    _oProject.FunctionDefinitionLibrary.FunctionDefinitions;
-                int nCount = arrFdDefs == null ? 0 : arrFdDefs.Length;
-                ProbeInfo("[FD] FunctionDefinitions: " +
-                    nCount.ToString(CultureInfo.InvariantCulture) + " шт.");
-                if (nCount == 0) return;
-
-                int iOrdinal = 0;
-                foreach (Eplan.EplApi.DataModel.FunctionDefinition oFd in arrFdDefs)
-                {
-                    if (oFd == null) continue;
-                    long nId = -1;
-                    string strCat = null;
-                    string strGroup = null;
-                    string strMain = null;
-                    string strRegion = null;
-                    string strName = null;
-                    try { nId = oFd.Id; }
-                    catch (Exception oEx)
-                    {
-                        if (iOrdinal < 10)
-                            ProbeWarn("[FD] Id — " + oEx.GetType().Name + ": " + oEx.Message);
-                    }
-                    try { strCat = oFd.CategoryName == null ? null : oFd.CategoryName.ToString(); }
-                    catch (Exception oEx)
-                    {
-                        if (iOrdinal < 10)
-                            ProbeWarn("[FD] CategoryName — " + oEx.GetType().Name + ": " + oEx.Message);
-                    }
-                    try { strGroup = oFd.GroupName == null ? null : oFd.GroupName.ToString(); }
-                    catch (Exception oEx)
-                    {
-                        if (iOrdinal < 10)
-                            ProbeWarn("[FD] GroupName — " + oEx.GetType().Name + ": " + oEx.Message);
-                    }
-                    try { strMain = oFd.MainGroup == null ? null : oFd.MainGroup.ToString(); }
-                    catch (Exception oEx)
-                    {
-                        if (iOrdinal < 10)
-                            ProbeWarn("[FD] MainGroup — " + oEx.GetType().Name + ": " + oEx.Message);
-                    }
-                    try { strRegion = oFd.CategoryRegion == null ? null : oFd.CategoryRegion.ToString(); }
-                    catch (Exception oEx)
-                    {
-                        if (iOrdinal < 10)
-                            ProbeWarn("[FD] CategoryRegion — " + oEx.GetType().Name + ": " + oEx.Message);
-                    }
-                    try { strName = oFd.Name == null ? null : oFd.Name.ToString(); }
-                    catch (Exception oEx)
-                    {
-                        if (iOrdinal < 10)
-                            ProbeWarn("[FD] Name — " + oEx.GetType().Name + ": " + oEx.Message);
-                    }
-                    if (iOrdinal < 10)
-                    {
-                        ProbeInfo("[FD] id=" + nId.ToString(CultureInfo.InvariantCulture) +
-                            " cat='" + (strCat ?? "<null>") + "' main='" + (strMain ?? "<null>") +
-                            "' region='" + (strRegion ?? "<null>") + "' group='" +
-                            (strGroup ?? "<null>") + "' name='" + (strName ?? "<null>") + "'");
-                    }
-                    if (nId >= 0 && (!_dctFd.ContainsKey(nId)))
-                    {
-                        FdInfo oInfo = new FdInfo();
-                        oInfo.Category = strCat;
-                        oInfo.Group = strGroup;
-                        _dctFd[nId] = oInfo;
-                    }
-                    iOrdinal++;
-                }
-                ProbeInfo("[FD] словарь FD: " +
-                    _dctFd.Count.ToString(CultureInfo.InvariantCulture) + " записей");
-            }
-            catch (Exception oEx)
-            {
-                ProbeWarn("[FD] недоступен: " + oEx.GetType().Name + ": " +
-                    oEx.Message + " — дерево по префиксам имён");
-            }
-        }
-
-        // CS0618 (ruling контроллера, fix-2): GetValue(args[]-перегрузка) — см. выше.
+        // CS0618 — GetValue(args[]) внутри TryGetMemberValue.
 #pragma warning disable 618
-        private static string TryGetStringProperty(object oTarget, string strProp)
+        /// <summary>Чтение члена (свойство или поле) — reflection-проба БЕЗ
+        /// компиляционных рисков; отказ/отсутствие — null + Console-дамп ошибки.
+        /// Static: используется из статических хелперов (урок CS0120 rev.14.1).</summary>
+        private static object TryGetMemberValue(object oTarget, string strMember)
         {
+            if (oTarget == null) return null;
             try
             {
-                PropertyInfo oProp = oTarget.GetType().GetProperty(strProp);
-                if (oProp == null) return null;
-                object oValue = oProp.GetValue(oTarget, null);
-                return oValue == null ? null : oValue.ToString();
+                PropertyInfo oProp = oTarget.GetType().GetProperty(strMember);
+                if (oProp != null) return oProp.GetValue(oTarget, null);
+                FieldInfo oField = oTarget.GetType().GetField(strMember);
+                if (oField != null) return oField.GetValue(oTarget);
             }
             catch (Exception oEx)
             {
-                Console.WriteLine("SymbolBrowserDialog: «" + strProp + "» бросил — " +
-                    oEx.GetType().Name + ": " + oEx.Message);
-                return null;
+                Console.WriteLine("SymbolBrowserDialog: чтение «" + strMember +
+                    "» бросило — " + oEx.GetType().Name + ": " + oEx.Message);
             }
+            return null;
         }
 #pragma warning restore 618
 
+        /// <summary>Линейное reflection-чтение строкового свойства (TryGetMemberValue
+        /// + ToString()); отказ — null (Console-дамп внутри). Static.</summary>
+        private static string TryGetStringProperty(object oTarget, string strProp)
+        {
+            object oValue = TryGetMemberValue(oTarget, strProp);
+            return oValue == null ? null : oValue.ToString();
+        }
+
+        /// <summary>Reflection-проба имени (MDSymbol.Name / Symbol.Name KB НЕ
+        /// доказан): Name → IdentifyingName → ToString(). Только чтение.</summary>
+        private static string ResolveNameViaReflection(object oTarget)
+        {
+            string strName = TryGetStringProperty(oTarget, "Name");
+            if (!string.IsNullOrEmpty(strName)) return strName;
+            strName = TryGetStringProperty(oTarget, "IdentifyingName");
+            if (!string.IsNullOrEmpty(strName)) return strName;
+            try { return oTarget.ToString(); }
+            catch { return null; }
+        }
+
+        /// <summary>Отображаемое ИМЯ (он же возвращаемый Library): кандидаты Name →
+        /// IdentifyingName → LocationInfo (свойства НЕ доказаны KB — reflection-проба;
+        /// fix-ревью 1: путь для цепочки B здесь НЕ берётся — EnumeratePathCandidates).
+        /// Отказ всех — ToString().</summary>
+        private static string ResolveDisplayPath(object oTarget)
+        {
+            string[] arrCandidates = new string[] { "Name", "IdentifyingName", "LocationInfo" };
+            foreach (string strProp in arrCandidates)
+            {
+                string strValue = TryGetStringProperty(oTarget, strProp);
+                if (!string.IsNullOrEmpty(strValue)) return strValue;
+            }
+            try { return oTarget.ToString(); }
+            catch { return null; }
+        }
+
         /// <summary>Activator-проба конструкторов MDSymbolLibrary (сигнатуры кторов
-        /// KB НЕ доказал; класс — да): для каждого кандидата пути (порядок ниже)
-        /// формы (string path), затем (Project, string path); первая вернувшая
-        /// экземпляр — успех. MissingMethodException формы запоминается ( перегрузки
-        /// нет — повтор с другим путём бессмысленен, лог не шумим), прочие отказы
-        /// формы — Console-дамп и следующий кандидат. Ни одна комбинация — null:
-        /// цепочка B деградирует в INFO-статус диалога; OK-валидация блокирует выбор
-        /// при пустом перечислении.</summary>
+        /// KB НЕ доказал; класс — да): для каждого кандидата пути (ниже) формы
+        /// (string path), затем (Project, string path); первая вернувшая экземпляр —
+        /// успех. MissingMethodException формы запоминается; прочие отказы —
+        /// Console-дамп и следующий кандидат. Ни одна комбинация — null.</summary>
         private object TryCreateMdLibrary(SymbolLibrary oLib)
         {
             Type oType = typeof(Eplan.EplApi.MasterData.MDSymbolLibrary);
@@ -949,7 +1149,8 @@ namespace MyEplanActions
                 {
                     try
                     {
-                        object oCandidate = Activator.CreateInstance(oType, new object[] { strPath });
+                        object oCandidate = Activator.CreateInstance(oType,
+                            new object[] { strPath });
                         if (oCandidate != null) return oCandidate;
                     }
                     catch (MissingMethodException oEx)
@@ -988,9 +1189,9 @@ namespace MyEplanActions
 
         /// <summary>Кандидаты ПУТИ к библиотеке (fix-1: ОТДЕЛЬНО от отображаемого
         /// имени ResolveDisplayPath). Порядок path-first: LocationInfo (полный путь —
-        /// основной кандидат для MDSymbolLibrary(path)), затем Name, IdentifyingName
-        /// (ctor мог принимать и имя). Значения свойств НЕ доказаны KB — reflection-
-        /// проба TryGetStringProperty (graceful), пустые пропуск, дубли не зондируем.</summary>
+        /// основной кандидат для MDSymbolLibrary(path)), затем Name, IdentifyingName.
+        /// Свойства НЕ доказаны KB — reflection-проба, пустые пропуск, дубли —
+        /// не зондируем.</summary>
         private static List<string> EnumeratePathCandidates(SymbolLibrary oLib)
         {
             string[] arrPathProps = new string[] { "LocationInfo", "Name", "IdentifyingName" };
@@ -1007,8 +1208,8 @@ namespace MyEplanActions
 
         /// <summary>Число вариантов MDSymbol: KB (цитата в шапке) «public
         /// MDSymbolVariant[] Variants { get; }» — прямое обращение; бросил/null →
-        /// -1 (превью-сетка тогда — одна клетка «A»). Инстансный (Probe-канал,
-        /// фикс ревью rev.14.1: static + ProbeWarn = CS0120).</summary>
+        /// -1 (деградация: 1 enabled клетка). Инстансный (Probe-канал; фикс
+        /// ревью rev.14.1: static + ProbeWarn = CS0120).</summary>
         private int TryGetVariantCount(Eplan.EplApi.MasterData.MDSymbol oMdSym)
         {
             try
@@ -1024,111 +1225,301 @@ namespace MyEplanActions
             return -1;
         }
 
-        /// <summary>Reflection-проба имени (MDSymbol.Name KB не доказан):
-        /// Name → IdentifyingName → ToString(). Только чтение.</summary>
-        private static string ResolveNameViaReflection(object oTarget)
-        {
-            string strName = TryGetStringProperty(oTarget, "Name");
-            if (!string.IsNullOrEmpty(strName)) return strName;
-            strName = TryGetStringProperty(oTarget, "IdentifyingName");
-            if (!string.IsNullOrEmpty(strName)) return strName;
-            try { return oTarget.ToString(); }
-            catch { return null; }
-        }
+        // --- FD-словари (Project.FunctionDefinitionLibrary) ---
 
-        /// <summary>Отображаемое ИМЯ (он же возвращаемый Library): кандидаты Name →
-        /// IdentifyingName → LocationInfo (свойства НЕ доказаны KB — reflection-проба;
-        /// фикс-ревью 1: путь для цепочки B здесь НЕ берётся — EnumeratePathCandidates).
-        /// Отказ всех — ToString().</summary>
-        private static string ResolveDisplayPath(object oTarget)
+        /// <summary>Словари FD (rev.14.2, ОДИН раз за жизнь диалога; смотрят
+        /// _bFdDumped): (а) _dctFdById (Id → FdInfo, first wins — Id НЕ уникален
+        /// глобально: 1305 FD → 40 Id, дамп [FD] rev.14.1) — fallback-бакетизация
+        /// для #16018-путей; (б) НОВЫЙ _dctFdBySymbol («lib\u0001sym» → FdInfo)
+        /// из FD.BaseSymbol → SymbolLibraryName/SymbolName — ПЕРВИЧНАЯ связь
+        /// символ → FD. Поля уровней: MainGroup (Trade)/CategoryRegion (Area)/
+        /// CategoryName/GroupName/Name/Description — каждый getter в try/catch
+        /// (Description/BaseSymbol рантайм НЕ подтверждён); MultiLangString-блобы
+        /// локализуются SymbolCatalog.LocalizeMultiLang (формат «de_DE@…;ru_RU@…»
+        /// доказан дампом [FD] rev.14.1). Дамп [FD] первых 10 (формат сохранён)
+        /// + [FD-BASE] первых 10 пар BaseSymbol. Сбой/пусто — словари пусты,
+        /// A2 хмурится в fallback-пути.</summary>
+        private void BuildFdDictionary()
         {
-            string[] arrCandidates = new string[] { "Name", "IdentifyingName", "LocationInfo" };
-            foreach (string strProp in arrCandidates)
+            if (_bFdDumped) return;   // дамп/словари строим ОДИН раз за жизнь диалога
+            _bFdDumped = true;
+            _dctFdById = new Dictionary<long, FdInfo>();
+            _dctFdBySymbol = new Dictionary<string, FdInfo>();
+            if (_oProject == null)
             {
-                string strValue = TryGetStringProperty(oTarget, strProp);
-                if (!string.IsNullOrEmpty(strValue)) return strValue;
+                ProbeInfo("[FD] недоступен: проект null");
+                return;
             }
-            try { return oTarget.ToString(); }
-            catch { return null; }
+            try
+            {
+                // KB: Project.FunctionDefinitionLibrary (в .MasterData),
+                // FunctionDefinitions : FunctionDefinition[] — сам FunctionDefinition
+                // в Eplan.EplApi.DataModel (урок CS0246 п.30/63 — пространство
+                // имён сверять с компилирующимся кодом).
+                Eplan.EplApi.DataModel.FunctionDefinition[] arrFdDefs =
+                    _oProject.FunctionDefinitionLibrary.FunctionDefinitions;
+                int nCount = arrFdDefs == null ? 0 : arrFdDefs.Length;
+                ProbeInfo("[FD] FunctionDefinitions: " +
+                    nCount.ToString(CultureInfo.InvariantCulture) + " шт.");
+                if (nCount == 0) return;
+
+                int iOrdinal = 0;
+                foreach (Eplan.EplApi.DataModel.FunctionDefinition oFd in arrFdDefs)
+                {
+                    if (oFd == null) continue;
+                    long nId = -1;
+                    string strCat = null;
+                    string strGroup = null;
+                    string strMain = null;
+                    string strRegion = null;
+                    string strName = null;
+                    string strDesc = null;
+                    try { nId = oFd.Id; }
+                    catch (Exception oEx)
+                    {
+                        if (iOrdinal < 10)
+                            ProbeWarn("[FD] Id — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    try
+                    {
+                        strCat = oFd.CategoryName == null
+                            ? null : SymbolCatalog.LocalizeMultiLang(oFd.CategoryName.ToString());
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (iOrdinal < 10)
+                            ProbeWarn("[FD] CategoryName — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    try
+                    {
+                        strGroup = oFd.GroupName == null
+                            ? null : SymbolCatalog.LocalizeMultiLang(oFd.GroupName.ToString());
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (iOrdinal < 10)
+                            ProbeWarn("[FD] GroupName — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    try
+                    {
+                        strMain = oFd.MainGroup == null
+                            ? null : SymbolCatalog.LocalizeMultiLang(oFd.MainGroup.ToString());
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (iOrdinal < 10)
+                            ProbeWarn("[FD] MainGroup — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    try
+                    {
+                        strRegion = oFd.CategoryRegion == null
+                            ? null : SymbolCatalog.LocalizeMultiLang(oFd.CategoryRegion.ToString());
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (iOrdinal < 10)
+                            ProbeWarn("[FD] CategoryRegion — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    try
+                    {
+                        strName = oFd.Name == null
+                            ? null : SymbolCatalog.LocalizeMultiLang(oFd.Name.ToString());
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (iOrdinal < 10)
+                            ProbeWarn("[FD] Name — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    // Description: KB members page есть, рантайм НЕ подтверждён —
+                    // проба try/catch (отказ — только диагностика, поле описания
+                    // карточки остаётся SYMB_DESC-первичным).
+                    try
+                    {
+                        strDesc = oFd.Description == null
+                            ? null : SymbolCatalog.LocalizeMultiLang(oFd.Description.ToString());
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (iOrdinal < 10)
+                            ProbeWarn("[FD] Description — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    if (iOrdinal < 10)
+                    {
+                        ProbeInfo("[FD] id=" + nId.ToString(CultureInfo.InvariantCulture) +
+                            " cat='" + (strCat ?? "<null>") + "' main='" + (strMain ?? "<null>") +
+                            "' region='" + (strRegion ?? "<null>") + "' group='" +
+                            (strGroup ?? "<null>") + "' name='" + (strName ?? "<null>") +
+                            "' desc='" + (strDesc ?? "<null>") + "'");
+                    }
+
+                    // (а) dctFdById — first wins (Id НЕ уникален глобально; равный Id
+                    // у разных FD — аспект fallback-бакетизации, рантайм-факт rev.14.1).
+                    if (nId >= 0 && !_dctFdById.ContainsKey(nId))
+                    {
+                        FdInfo oInfo = new FdInfo();
+                        oInfo.MainGroup = strMain;
+                        oInfo.Area = strRegion;
+                        oInfo.Category = strCat;
+                        oInfo.Group = strGroup;
+                        oInfo.Name = strName;
+                        oInfo.Description = strDesc;
+                        _dctFdById[nId] = oInfo;
+                    }
+
+                    // (б) BaseSymbol → (lib\sym) → dctFdBySymbol. BaseSymbol: KB
+                    // members («Gets the best fitting SymbolVariant ...»), рантайм
+                    // НЕ подтверждён — типизированная проба в try/catch + [FD-BASE].
+                    object oBaseSymbol = null;
+                    try { oBaseSymbol = oFd.BaseSymbol; }
+                    catch (Exception oEx)
+                    {
+                        if (iOrdinal < 10)
+                            ProbeWarn("[FD-BASE] BaseSymbol FD «" + (strName ?? "<null>") +
+                                "» — " + oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    string strBaseLib = null;
+                    string strBaseSym = null;
+                    if (oBaseSymbol != null)
+                    {
+                        // SymbolLibraryName/SymbolName у MasterData.Symbol — рантайм
+                        // НЕ подтверждены; отражаем reflection-пробой (TryGetStringProperty)
+                        // БЕЗ компиляционных рисков (урок некомпилируемого угадывания).
+                        strBaseLib = TryGetStringProperty(oBaseSymbol, "SymbolLibraryName");
+                        strBaseSym = TryGetStringProperty(oBaseSymbol, "SymbolName");
+                    }
+                    if (iOrdinal < 10)
+                    {
+                        ProbeInfo("[FD-BASE] FD id=" + nId.ToString(CultureInfo.InvariantCulture) +
+                            " «" + (strName ?? "<null>") + "» → lib «" +
+                            (strBaseLib ?? "<null>") + "» sym «" + (strBaseSym ?? "<null>") + "»");
+                    }
+                    if (!string.IsNullOrEmpty(strBaseSym))
+                    {
+                        string strKey = MakeFdSymbolKey(strBaseLib, strBaseSym);
+                        if (!_dctFdBySymbol.ContainsKey(strKey))
+                        {
+                            FdInfo oInfoBySymbol = new FdInfo();
+                            oInfoBySymbol.MainGroup = strMain;
+                            oInfoBySymbol.Area = strRegion;
+                            oInfoBySymbol.Category = strCat;
+                            oInfoBySymbol.Group = strGroup;
+                            oInfoBySymbol.Name = strName;
+                            oInfoBySymbol.Description = strDesc;
+                            _dctFdBySymbol[strKey] = oInfoBySymbol;
+                        }
+                    }
+                    iOrdinal++;
+                }
+                ProbeInfo("[FD] словари FD: по Id " +
+                    _dctFdById.Count.ToString(CultureInfo.InvariantCulture) +
+                    ", по символу " + _dctFdBySymbol.Count.ToString(CultureInfo.InvariantCulture) +
+                    " записей");
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[FD] недоступен: " + oEx.GetType().Name + ": " +
+                    oEx.Message + " — FD-пути дерева отключены");
+            }
         }
 
-        // --- дерево категорий (SymbolCatalog) + поиск + предвыбор ---
+        /// <summary>Ключ обратного словаря FD: «libName\u0001symName» (разделитель
+        /// — невидимый \u0001; коллизий «libA|symB» нет).</summary>
+        private static string MakeFdSymbolKey(string strLib, string strSym)
+        {
+            return (strLib ?? string.Empty) + "\u0001" + (strSym ?? string.Empty);
+        }
 
-        /// <summary>Пересборка дерева из чистого SymbolCatalog (rev.14.1 R2: 3 уровня
-        /// как нативное EPLAN): корень — библиотека (как в TextBox), уровни —
-        /// категории (FD CategoryName / «Без категории» / fallback-префикс / «Прочие»)
-        /// и группы (FD GroupName / «—»), листья — символы (Tag = имя; дубли
-        /// сохранены). Поиск фильтрует ЛИСТЬЯ (substring, OrdinalIgnoreCase — R11);
-        /// группы/категории без совпадений скрываются; пустой поиск — полное дерево.
+        // --- дерево категорий (SymbolCatalog 5 уровней) + поиск + предвыбор ---
+
+        /// <summary>Пересборка дерева из чистого SymbolCatalog (rev.14.2, R2/RC-3):
+        /// 5 уровней Trade → Area → Категория → Группа → Определение функции,
+        /// листья — символы (Tag = имя); unmapped — «Без классификации» (или
+        /// префиксные бакеты при полном отсутствии FD-пути). Поиск фильтрует ЛИСТЬЯ
+        /// (substring, OrdinalIgnoreCase); пустые ветки скрыты; корень — библиотека.
         /// В конце — подсветка текущего символа (если он в дереве).</summary>
         private void RebuildTree()
         {
             string strFilter = _txtSearch.Text ?? string.Empty;
-            List<SymbolCatalogCategory> lstCategories =
-                SymbolCatalog.Build(_lstAllSymbols, _lstAllFdIds, _dctFd);
+            // Каталог — rev.14.2: SymbolCatalogEntry {Name, Fd} →
+            // дерево SymbolCatalogNode (5 уровней).
+            List<SymbolCatalogEntry> lstCatalogEntries = new List<SymbolCatalogEntry>();
+            foreach (SymbolEntry oEntry in _lstEntries)
+            {
+                if (oEntry == null) continue;
+                SymbolCatalogEntry oCatEntry = new SymbolCatalogEntry();
+                oCatEntry.Name = oEntry.Name;
+                oCatEntry.Fd = oEntry.Fd;
+                lstCatalogEntries.Add(oCatEntry);
+            }
+            List<SymbolCatalogNode> lstTop =
+                SymbolCatalog.Build(lstCatalogEntries, _dctFdById);
             string strRootText = string.IsNullOrEmpty(_txtLibrary.Text)
                 ? "Библиотека"
                 : _txtLibrary.Text;
 
             _treeSymbols.BeginUpdate();
             _treeSymbols.Nodes.Clear();
-            _dctCatNodeNames.Clear();     // узлы пересозданы — карты чистых имён тоже
-            _dctGroupNodeNames.Clear();
             TreeNode oRoot = new TreeNode(strRootText);
             int nShownTotal = 0;
-            foreach (SymbolCatalogCategory oCategory in lstCategories)
+            foreach (SymbolCatalogNode oNode in lstTop)
             {
-                int nShownInCategory = 0;
-                TreeNode oCat = new TreeNode(oCategory.Name);
-                foreach (SymbolCatalogGroup oGroup in oCategory.Groups)
-                {
-                    List<string> lstShown = new List<string>();
-                    foreach (string strName in oGroup.SymbolNames)
-                    {
-                        if (strFilter.Length == 0 ||
-                            strName.IndexOf(strFilter, StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            lstShown.Add(strName);
-                        }
-                    }
-                    if (lstShown.Count == 0) continue;   // группа без совпадений — скрыта
-                    TreeNode oGrp = new TreeNode(oGroup.Name + " (" +
-                        lstShown.Count.ToString(CultureInfo.InvariantCulture) + ")");
-                    _dctGroupNodeNames[oGrp] = oGroup.Name;   // чистое имя группы
-                    foreach (string strName in lstShown)
-                    {
-                        TreeNode oLeaf = new TreeNode(strName);
-                        oLeaf.Tag = strName;
-                        oGrp.Nodes.Add(oLeaf);
-                    }
-                    oCat.Nodes.Add(oGrp);
-                    nShownInCategory += lstShown.Count;
-                }
-                if (nShownInCategory == 0) continue;   // категория без совпадений — скрыта
-                oCat.Text = oCategory.Name + " (" +
-                    nShownInCategory.ToString(CultureInfo.InvariantCulture) + ")";
-                _dctCatNodeNames[oCat] = oCategory.Name;   // чистое имя категории — карточке
-                oRoot.Nodes.Add(oCat);
-                nShownTotal += nShownInCategory;
+                nShownTotal += RenderCatalogNode(oNode, strFilter, oRoot.Nodes);
             }
             if (oRoot.Nodes.Count > 0) _treeSymbols.Nodes.Add(oRoot);
-            oRoot.Expand();   // категории видны сразу (символы — по желанию клика)
+            oRoot.Expand();   // верхние уровни видны сразу (символы — по желанию клика)
             _treeSymbols.EndUpdate();
 
             _lblCount.Text = "показано " + nShownTotal.ToString(CultureInfo.InvariantCulture) +
-                " из " + _lstAllSymbols.Count.ToString(CultureInfo.InvariantCulture);
+                " из " + _lstEntries.Count.ToString(CultureInfo.InvariantCulture);
             HighlightCurrentSymbol();
         }
 
-        /// <summary>Подсветка текущего символа (_txtSymbol.Text) в дереве:
+        /// <summary>Рекурсивный рендер узла каталога (rev.14.2): Kind=Symbol —
+        /// лист (Tag = имя; FindLeaf ищет по Tag), остальные ветки БЕЗ Tag; текст
+        /// узла = Name + « (N)» (число ПОКАЗАННЫХ листьев — фильтр внутри; карты
+        /// чистых имён больше НЕ нужны — имя берётся из node.Name, карточке FD
+        /// известен из записи). Пустые ветки скрыты; возврат — число листьев.</summary>
+        private int RenderCatalogNode(SymbolCatalogNode oCatNode, string strFilter,
+            TreeNodeCollection oDest)
+        {
+            if (oCatNode == null) return 0;
+            bool bLeaf = string.Compare(oCatNode.Kind, SymbolCatalog.KIND_SYMBOL,
+                StringComparison.Ordinal) == 0;
+            if (bLeaf)
+            {
+                if (strFilter.Length > 0 &&
+                    oCatNode.Name.IndexOf(strFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    return 0;
+                }
+                TreeNode oLeaf = new TreeNode(oCatNode.Name);
+                oLeaf.Tag = oCatNode.Name;
+                oDest.Add(oLeaf);
+                return 1;
+            }
+            TreeNode oBranch = new TreeNode(oCatNode.Name);
+            int nShown = 0;
+            foreach (SymbolCatalogNode oChild in oCatNode.Children)
+            {
+                nShown += RenderCatalogNode(oChild, strFilter, oBranch.Nodes);
+            }
+            if (nShown == 0) return 0;   // ветка без совпадений — скрыта
+            oBranch.Text = oCatNode.Name + " (" +
+                nShown.ToString(CultureInfo.InvariantCulture) + ")";
+            oDest.Add(oBranch);
+            return nShown;
+        }
+
+        /// <summary>Подсветка текущего символа (_strSelectedSymbol) в дереве:
         /// точное совпадение листа (БЕЗ trim — урок п.33) — разворот пути +
-        /// выделение (вызовет AfterSelect). Нет листа — дерево остаётся без
-        /// подсветки (сохранённое имя вне дерева — без подсветки).</summary>
+        /// выделение (AfterSelect применит карточку/превью — идемпотентно). Нет
+        /// листа — дерево остаётся без подсветки (имя вне дерева — OK-валидация
+        /// скажет). Символ может быть корректно скрыт фильтром поиска — это не
+        /// ошибка: состояние сохранилось, OK-валидация идёт по _lstEntries.</summary>
         private void HighlightCurrentSymbol()
         {
-            string strName = _txtSymbol.Text;
-            if (string.IsNullOrEmpty(strName)) return;
-            TreeNode oLeaf = FindLeaf(_treeSymbols.Nodes, strName);
+            if (string.IsNullOrEmpty(_strSelectedSymbol)) return;
+            TreeNode oLeaf = FindLeaf(_treeSymbols.Nodes, _strSelectedSymbol);
             if (oLeaf == null || _treeSymbols.SelectedNode == oLeaf) return;
             TreeNode oWalk = oLeaf;
             while (oWalk != null)
@@ -1140,8 +1531,8 @@ namespace MyEplanActions
         }
 
         /// <summary>Поиск листа по Tag (точное string-совпадение, Ordinal).
-        /// Tag ставится ТОЛЬКО листьям (см. RebuildTree) — категориям/корню
-        /// Tag не назначаем.</summary>
+        /// Tag ставится ТОЛЬКО листьям (RenderCatalogNode) — ветки/корню Tag нет,
+        /// «(N)»-суффиксы дерева карточке не мешают.</summary>
         private static TreeNode FindLeaf(TreeNodeCollection oNodes, string strName)
         {
             foreach (TreeNode oNode in oNodes)
@@ -1158,16 +1549,31 @@ namespace MyEplanActions
         }
 
         /// <summary>Предвыбор текущего имени символа точным совпадением (без trim —
-        /// урок п.33): TextBox получает имя (TextChanged → подсветка листа +
-        /// карточка/превью через AfterSelect); имени нет в дереве — текст остаётся
-        /// как есть, карточка прочерками (OK-валидация проверит принадлежность).</summary>
+        /// урок п.33; rev.14.2 R5: имя — в _strSelectedSymbol, БЕЗ текстового поля):
+        /// лист есть — разворот+выделение (AfterSelect применит карточку/превью);
+        /// явное применение следует ВСЕГДА — при конструировании диалога дерево ещё
+        /// без handle, событие может не дойти; не найден — карточка по имени +
+        /// превью по каскаду (OK-валидация проверит принадлежность).</summary>
         private void SelectSymbolPrechoice(string strName)
         {
             if (string.IsNullOrEmpty(strName)) return;
-            _txtSymbol.Text = strName;
+            _strSelectedSymbol = strName;
+            TreeNode oLeaf = FindLeaf(_treeSymbols.Nodes, strName);
+            if (oLeaf != null && _treeSymbols.SelectedNode != oLeaf)
+            {
+                TreeNode oWalk = oLeaf;
+                while (oWalk != null)
+                {
+                    oWalk.Expand();
+                    oWalk = oWalk.Parent;
+                }
+                _treeSymbols.SelectedNode = oLeaf;   // AfterSelect (если стрельнул) — идемпотент
+            }
+            UpdateCardByEntry(strName);
+            RefreshPreviewGridByEntry(strName);
         }
 
-        // --- превью-сетка (DrawingService, rev.14.1 R3/R4/R5) ---
+        // --- превью-сетка (DrawingService; R3/R4/R5 + фиксированные 8 клеток) ---
 
         /// <summary>Настройки вида ОДНОГО сервиса превью (связи и мета-логика
         /// макроса не в тему диалога символа; фон — клетка сама, чёрная по R3).
@@ -1196,14 +1602,11 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Пересборка превью-СЕТКИ (rev.14.1 R5): по числу вариантов
-        /// символа (параллельный список; -1/неизвестно — одна клетка «A»; &gt;8 —
-        /// кап 8) создаются клетки с буквами A..H. Пустые Library/Name — сброс.
-        /// Отказ рендера клетки не ломает остальные и выбор символа.</summary>
-        private void RefreshPreviewGrid()
+        /// <summary>Пересборка превью-сетки по ИМЕНИ символа (rev.14.2): запись
+        /// ищется в _lstEntries; пустые Library/Name — сброс + CleanCard.</summary>
+        private void RefreshPreviewGridByEntry(string strName)
         {
             string strLib = _txtLibrary.Text;
-            string strName = _txtSymbol.Text;
             if (string.IsNullOrEmpty(strLib) || string.IsNullOrEmpty(strName))
             {
                 // Fix-минор r14.1: при сбросе превью карточка тоже очищается.
@@ -1211,105 +1614,187 @@ namespace MyEplanActions
                 ClearCard();
                 return;
             }
-            int nCount = -1;
-            int iIndex = _lstAllSymbols.IndexOf(strName);
-            if (iIndex >= 0) nCount = _lstAllVariantCounts[iIndex];
-            int nCells = nCount < 1 ? 1 : Math.Min(nCount, 8);
-            if (nCount > 8)
-                ProbeWarn("[DSPROBE] вариантов " +
-                    nCount.ToString(CultureInfo.InvariantCulture) +
-                    " > 8 — показаны первые 8");
-            BuildPreviewGrid(strLib, strName, nCells);
+            SymbolEntry oEntry = FindEntryObj(strName);
+            BuildPreviewGrid(strLib, strName, oEntry);
         }
 
-        /// <summary>Построение клеток: панель (чёрная, R3) + подпись буквы под
-        /// вариантом (R5), СВОЙ DrawingService на клетку (один сервис = один
-        /// display list); перед CreateDisplayList — Reset() (гипотеза центра R4:
-        /// display list накапливался между вызовами и уезжал в угол) + SetDefault
-        /// Viewport после (KB: «Adjusts viewport to the bounding box»).</summary>
-        private void BuildPreviewGrid(string strLib, string strName, int nCells)
+        /// <summary>Построение ВСЕХ 8 клеток A–H (rev.14.2, R3+спека): внешний
+        /// Panel чёрный (enabled) / серый (disabled, Color.FromArgb(56,56,56)); ВНУТРЕННЯЯ
+        /// панель рисования Dock=Fill добавляется ПЕРВОЙ, Label буквы Dock=Bottom
+        /// (18px) добавляется ВТОРОЙ — docking обрабатывается в обратном порядке,
+        /// метка НЕ накрывает область рисования (fix RC-2: раньше Paint получал всю
+        /// клетку, а метка снизу её занимала). У каждой клетки СВОЙ DrawingService;
+        /// Reset() перед созданием списка + SetDefaultViewport (гипотеза центра
+        /// R4). Отсутствующие варианты — disabled (без display list): фон серый,
+        /// буква серая, клик игнор. Клик по enabled — выделение (спека §16):
+        /// рамка на Paint + цвет буквы; слоты H/V НЕ трогаются. Отказ рендера
+        /// клетки не ломает остальные и выбор символа.</summary>
+        private void BuildPreviewGrid(string strLib, string strName, SymbolEntry oEntry)
         {
             DisposePreviewGrid();
+            _nSelectedCell = -1;
+            _bPathLogged = false;   // путь успеха — один раз на пересборку (шум [DSPROBE])
             _tlpPreviewGrid.SuspendLayout();
-            int nFailed = 0;
-            for (int i = 0; i < nCells; i++)
+            int nFailed = 0;   // отказ РЕНДЕРА enabled-клеток
+            int nEnabledTotal = 0;
+            for (int i = 0; i < 8; i++)
             {
                 string strLetter = ((char)('A' + i)).ToString(CultureInfo.InvariantCulture);
+                bool bEnabled = IsVariantEnabled(oEntry, i);
+                if (bEnabled) nEnabledTotal++;
+
                 Panel oCell = new Panel();
-                oCell.BackColor = Color.Black;          // R3: чёрный фон
+                oCell.BackColor = bEnabled ? Color.Black : Color.FromArgb(56, 56, 56);
                 oCell.BorderStyle = BorderStyle.FixedSingle;
                 oCell.Dock = DockStyle.Fill;
                 oCell.Margin = new Padding(1);
+
+                // ВНУТРЕННЯЯ панель рисования: Dock=Fill, добавляется ПЕРВОЙ —
+                // docking обрабатывается в обратном порядке (последний добавленный
+                // размещается первым) → метка снизу отъездит свой нижний пояс,
+                // рисование НЕ накроется (fix RC-2). Класс DrawPanel — CS1540-фикс:
+                // ResizeRedraw protected, чужому экземпляру недоступен.
+                Panel oDraw = new DrawPanel();
+                oDraw.Dock = DockStyle.Fill;
+                oDraw.BackColor = oCell.BackColor;
+                oCell.Controls.Add(oDraw);
+
                 Label oLetter = new Label();
                 oLetter.Text = strLetter;
-                oLetter.BackColor = Color.Black;
-                oLetter.ForeColor = Color.White;
+                oLetter.BackColor = oCell.BackColor;
+                oLetter.ForeColor = bEnabled ? Color.White : Color.FromArgb(160, 160, 160);
                 oLetter.TextAlign = ContentAlignment.MiddleCenter;
-                oLetter.Dock = DockStyle.Bottom;
                 oLetter.Height = 18;
+                // Fix ревью rev.14.2 (Important): Dock БЫЛ ПОТЕРЯН — метка без
+                // закрепления остаётся в (0,0) за непрозрачной панелью рисования
+                // (буквы невидимы). Dock=Bottom: docking обрабатывается в обратном
+                // порядке добавления — метка (добавлена ВТОРОЙ) резервирует нижние
+                // 18px, панель рисования (Dock=Fill, добавлена ПЕРВОЙ) занимает
+                // остаток; области не пересекаются (fix RC-2 работает).
+                oLetter.Dock = DockStyle.Bottom;
                 oCell.Controls.Add(oLetter);
 
                 DrawingService oDs = null;
                 bool bReady = false;
-                try
+                if (bEnabled)
                 {
-                    oDs = new DrawingService();
-                    ApplyPreviewSettings(oDs);
-                    bReady = BuildCellList(oDs, strLib, strName, i, strLetter);
-                }
-                catch (Exception oEx)
-                {
-                    ProbeWarn("[DSPROBE] DrawingService клетки " + strLetter + " — " +
-                        oEx.GetType().Name + ": " + oEx.Message);
-                }
-                if (!bReady)
-                {
-                    nFailed++;
-                    if (oDs != null)
-                    {
-                        try { oDs.Dispose(); }
-                        catch (Exception oEx)
-                        {
-                            ProbeWarn("[DSPROBE] Dispose клетки " + strLetter + " — " +
-                                oEx.GetType().Name + ": " + oEx.Message);
-                        }
-                        oDs = null;
-                    }
-                }
-                _lstPreviewCells.Add(oCell);
-                _lstPreviewServices.Add(oDs);
-                _lstCellReady.Add(bReady);
-
-                // Paint клетки — захват индекса (анонимный метод, C#5).
-                int iCell = i;
-                oCell.Paint += delegate(object oSender, PaintEventArgs oArgs)
-                {
-                    if (iCell >= _lstPreviewServices.Count) return;
-                    DrawingService oCellDs = _lstPreviewServices[iCell];
-                    if (oCellDs == null || !_lstCellReady[iCell]) return;
                     try
                     {
-                        oCellDs.DrawDisplayList(oArgs, oCell.ClientRectangle);
+                        oDs = new DrawingService();
+                        ApplyPreviewSettings(oDs);
+                        bReady = BuildCellList(oDs, oEntry, strLib, strName, i, strLetter);
                     }
                     catch (Exception oEx)
                     {
-                        // Отказ рендера — ProbeWarn, выбор символа не ломаем.
-                        ProbeWarn("[DSPROBE] DrawDisplayList клетка " +
-                            ((char)('A' + iCell)).ToString(CultureInfo.InvariantCulture) +
-                            " — " + oEx.GetType().Name + ": " + oEx.Message);
+                        ProbeWarn("[DSPROBE] DrawingService клетки " + strLetter + " — " +
+                            oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    if (!bReady)
+                    {
+                        nFailed++;
+                        if (oDs != null)
+                        {
+                            try { oDs.Dispose(); }
+                            catch (Exception oEx)
+                            {
+                                ProbeWarn("[DSPROBE] Dispose клетки " + strLetter + " — " +
+                                    oEx.GetType().Name + ": " + oEx.Message);
+                            }
+                            oDs = null;
+                        }
+                    }
+                }
+                _lstPreviewCells.Add(oCell);
+                _lstCellDrawPanels.Add(oDraw);
+                _lstCellLetters.Add(oLetter);
+                _lstPreviewServices.Add(oDs);
+                _lstCellReady.Add(bReady);
+                _lstCellEnabled.Add(bEnabled);
+
+                // Paint ВНУТРЕННЕЙ панели: DrawDisplayList(oArgs, ClientRectangle
+                // ВНУТРЕННЕЙ — fix RC-2; не вся клетка, метка больше не накрывает
+                // графику) + рамка выделения поверх. Захват индекса — C#5 делегат.
+                int iCell = i;
+                oDraw.Paint += delegate(object oSender, PaintEventArgs oArgs)
+                {
+                    if (iCell >= _lstPreviewServices.Count) return;
+                    DrawingService oCellDs = _lstPreviewServices[iCell];
+                    if (oCellDs != null && _lstCellReady[iCell])
+                    {
+                        try
+                        {
+                            oCellDs.DrawDisplayList(oArgs, oDraw.ClientRectangle);
+                        }
+                        catch (Exception oEx)
+                        {
+                            // Отказ рендера — ProbeWarn, выбор символа не ломаем.
+                            ProbeWarn("[DSPROBE] DrawDisplayList клетка " +
+                                ((char)('A' + iCell)).ToString(CultureInfo.InvariantCulture) +
+                                " — " + oEx.GetType().Name + ": " + oEx.Message);
+                        }
+                    }
+                    if (_nSelectedCell == iCell && _lstCellEnabled[iCell])
+                    {
+                        try
+                        {
+                            Rectangle rcSel = oDraw.ClientRectangle;
+                            rcSel.Inflate(-2, -2);
+                            using (Pen oPenSel = new Pen(Color.Gold, 2f))
+                            {
+                                oArgs.Graphics.DrawRectangle(oPenSel, rcSel);
+                            }
+                        }
+                        catch { /* рамка — украшение; отказ не мешает */ }
                     }
                 };
+                // Клик по рисуемой области / букве enabled клетки — выделение
+                // варианта (визуально); слоты H/V НЕ меняются (спека).
+                oDraw.MouseClick += delegate { SelectPreviewCell(iCell); };
+                oLetter.Click += delegate { SelectPreviewCell(iCell); };
                 _tlpPreviewGrid.Controls.Add(oCell, i % 4, i / 4);
             }
             _tlpPreviewGrid.ResumeLayout();
-            if (nFailed == nCells)
+            // Сводка пересборки вместо по-клеточных успехов (ревью rev.14.2): один
+            // [DSPROBE]-итог на выделение символа; отказы клеток — WARN выше.
+            ProbeInfo("[DSPROBE] сетка: готово " +
+                (nEnabledTotal - nFailed).ToString(CultureInfo.InvariantCulture) + " из " +
+                nEnabledTotal.ToString(CultureInfo.InvariantCulture) + " enabled / 8 клеток");
+            if (nEnabledTotal > 0 && nFailed == nEnabledTotal)
                 SetStatus("Превью недоступно: все клетки не отрисованы (см. [DSPROBE] в логе).");
         }
 
-        /// <summary>Display list ОДНОЙ клетки: Reset() → CreateDisplayList(вариант
-        /// i каскадом) → SetDefaultViewport(). true — клетка готова к отрисовке.</summary>
-        private bool BuildCellList(DrawingService oDs, string strLib, string strName,
-            int iVariant, string strLetter)
+        /// <summary>Вариант ячейки i (0..7) доступен: есть в списке VariantNr записи;
+        /// списка вариантов нет (цепочка C / записи нет при предвыборке вне
+        /// библиотеки) — только клетка A (деградация, прежний формат 1 клетка).</summary>
+        private static bool IsVariantEnabled(SymbolEntry oEntry, int i)
+        {
+            if (oEntry == null || oEntry.lstVariantNrs.Count == 0) return i == 0;
+            return oEntry.lstVariantNrs.Contains(i);
+        }
+
+        /// <summary>Панель рисования клетки с перерисовкой при ресайзе
+        /// (CS1540-фикс, ревью/прогон rev.14.2: ResizeRedraw — protected член
+        /// Control, через экземпляр ЧУЖОГО типа недоступен; внутри подкласса —
+        /// можно. DrawDisplayList «fit keeping aspect ratio» на каждый Paint,
+        /// при ресайзе без ResizeRedraw картинка не перемасштабируется).</summary>
+        private class DrawPanel : Panel
+        {
+            public DrawPanel()
+            {
+                SetStyle(ControlStyles.ResizeRedraw, true);
+            }
+        }
+
+        /// <summary>Display list ОДНОЙ клетки (готовность + каскад): Reset() →
+        /// (1) живой SymbolVariant из A2 (KB CreateDisplayList(SymbolVariant));
+        /// (2) типизированно new Symbol(SymbolLibrary)+new SymbolVariant (rev.14.1);
+        /// (3) каскад by-strings (CreateDisplayList(String,String,Int32,Project)).
+        /// true — клетка готова к отрисовке. Вызывается ТОЛЬКО для enabled-клеток
+        /// (caller-гейт bEnabled — display list disabled-клетке не нужен); успех
+        /// пути печатается ОДИН раз на пересборку сетки (_bPathLogged) — иначе
+        /// до 32 [DSPROBE]-строк на каждое выделение (шум, ревью rev.14.2).</summary>
+        private bool BuildCellList(DrawingService oDs, SymbolEntry oEntry, string strLib,
+            string strName, int iVariant, string strLetter)
         {
             try
             {
@@ -1320,10 +1805,28 @@ namespace MyEplanActions
                 ProbeWarn("[DSPROBE] Reset клетки " + strLetter + " — " +
                     oEx.GetType().Name + ": " + oEx.Message);
             }
-            Exception oErr = TryDisplayListTyped(oDs, strName, iVariant);
-            if (oErr != null)
-                oErr = TryDisplayListByStrings(oDs, strName, strLib, iVariant);
-            if (oErr != null)
+            bool bCreated = false;
+            Exception oErr = null;
+            // (1) Живой объект варианта из A2 — KB-перегрузка CreateDisplayList(SymbolVariant).
+            object oVariantObject = FindVariantObject(oEntry, iVariant);
+            if (oVariantObject != null)
+            {
+                oErr = TryDisplayListVariantObject(oDs, oVariantObject, strLetter);
+                bCreated = oErr == null;
+            }
+            // (2) Типизированная сборка заново (как rev.14.1; также для B).
+            if (!bCreated)
+            {
+                oErr = TryDisplayListTyped(oDs, strName, iVariant, strLetter);
+                bCreated = oErr == null;
+            }
+            // (3) By-strings (rev.14.0, HE_Display).
+            if (!bCreated)
+            {
+                oErr = TryDisplayListByStrings(oDs, strName, strLib, iVariant, strLetter);
+                bCreated = oErr == null;
+            }
+            if (!bCreated)
             {
                 ProbeWarn("[DSPROBE] вариант " + strLetter + " не отрисован: " +
                     oErr.GetType().Name + ": " + oErr.Message);
@@ -1333,8 +1836,191 @@ namespace MyEplanActions
             return true;
         }
 
-        /// <summary>Сброс сетки: Dispose ВСЕХ сервисов + удаление клеток
-        /// (OnFormClosing и каждая пересборка).</summary>
+        /// <summary>Отыскать ЖИВОЙ объект SymbolVariant записи по VariantNr
+        /// (A2-перечисление сохраняет пары VariantNr/объект).</summary>
+        private static object FindVariantObject(SymbolEntry oEntry, int iVariant)
+        {
+            if (oEntry == null) return null;
+            for (int i = 0; i < oEntry.lstVariantNrs.Count; i++)
+            {
+                if (oEntry.lstVariantNrs[i] == iVariant &&
+                    i < oEntry.lstVariantObjects.Count)
+                {
+                    object oVariant = oEntry.lstVariantObjects[i];
+                    if (oVariant != null) return oVariant;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>Путь 0 (rev.14.2, A2-первичный): CreateDisplayList(SymbolVariant)
+        /// на ЖИВОМ объекте из Symbol.Variants — KB-доказанная перегрузка; сборка
+        /// новых объектов не нужна. Отказ — исключение (каскад продолжится).</summary>
+        private Exception TryDisplayListVariantObject(DrawingService oDs,
+            object oVariantObject, string strLetter)
+        {
+            SymbolVariant oSymbolVariant = oVariantObject as SymbolVariant;
+            if (oSymbolVariant == null)
+            {
+                Exception oNot = new InvalidOperationException(
+                    "сохранённый объект варианта не SymbolVariant");
+                ProbeWarn("[DSPROBE] клетка " + strLetter + " — " + oNot.Message);
+                return oNot;
+            }
+            try
+            {
+                oDs.CreateDisplayList(oSymbolVariant);
+                if (!_bPathLogged)
+                {
+                    _bPathLogged = true;
+                    ProbeInfo("[DSPROBE] CreateDisplayList(SymbolVariant) — ок " +
+                        "(живой объект из Symbol.Variants, клетка " + strLetter +
+                        "; дальнейшие успехи клеток не печатаются)");
+                }
+                return null;
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[DSPROBE] CreateDisplayList(SymbolVariant-объект) — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+                return oEx;
+            }
+        }
+
+        /// <summary>Путь 1 (первичный при отсутствии живого объекта): DataModel
+        /// MasterData Symbol(oSymbolLibrary, strName) → SymbolVariant(oSymbol,
+        /// nVariant) → CreateDisplayList(SymbolVariant) — все шаги KB-доказаны.
+        /// Объект библиотеки — из _lstLibraryObjects (тот же, что использует цепочки
+        /// A2/B); не выбран — путь недоступен (исключение-заглушка, [DSPROBE]).</summary>
+        private Exception TryDisplayListTyped(DrawingService oDs, string strName,
+            int nVariant, string strLetter)
+        {
+            int iIndex = _lstLibraries.SelectedIndex;
+            SymbolLibrary oLib = (iIndex >= 0 && iIndex < _lstLibraryObjects.Count)
+                ? _lstLibraryObjects[iIndex]
+                : null;
+            if (oLib == null)
+            {
+                Exception oStub = new InvalidOperationException(
+                    "объект библиотеки не выбран из списка — типизированный путь недоступен");
+                ProbeInfo("[DSPROBE] CreateDisplayList(SymbolVariant) — " + oStub.Message);
+                return oStub;
+            }
+            try
+            {
+                Symbol oSymbol = new Symbol(oLib, strName);
+                SymbolVariant oSymbolVariant = new SymbolVariant(oSymbol, nVariant);
+                oDs.CreateDisplayList(oSymbolVariant);
+                if (!_bPathLogged)
+                {
+                    _bPathLogged = true;
+                    ProbeInfo("[DSPROBE] CreateDisplayList(SymbolVariant) — ок " +
+                        "(типизированный путь: Symbol(SymbolLibrary) + " +
+                        "SymbolVariant(Symbol,Int32), клетка " + strLetter +
+                        "; дальнейшие успехи клеток не печатаются)");
+                }
+                return null;
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[DSPROBE] CreateDisplayList(SymbolVariant) — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+                return oEx;
+            }
+        }
+
+        /// <summary>Путь 2 (запасной): CreateDisplayList(String,String,Int32,Project)
+        /// — KB-доказана (пример HE_Display: CreateDisplayList(strObj,"",0,gProject));
+        /// первый пробой — с именем библиотеки, второй — с "" вместо библиотеки.
+        /// Перегрузка с RepresentationType сознательно НЕ пробуется (не доказана —
+        /// одна гипотеза за прогон). Оба отказа — последнее исключение.</summary>
+        private Exception TryDisplayListByStrings(DrawingService oDs, string strName,
+            string strLib, int nVariant, string strLetter)
+        {
+            try
+            {
+                oDs.CreateDisplayList(strName, strLib, nVariant, _oProject);
+                if (!_bPathLogged)
+                {
+                    _bPathLogged = true;
+                    ProbeInfo("[DSPROBE] CreateDisplayList(String,String,Int32,Project)" +
+                        " — ок (имя библ: «" + strLib + "», клетка " + strLetter +
+                        "; дальнейшие успехи клеток не печатаются)");
+                }
+                return null;
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[DSPROBE] CreateDisplayList(...," + strLib + ",...) — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+            try
+            {
+                oDs.CreateDisplayList(strName, "", nVariant, _oProject);
+                if (!_bPathLogged)
+                {
+                    _bPathLogged = true;
+                    ProbeInfo("[DSPROBE] CreateDisplayList(String,String,Int32,Project)" +
+                        " — ок (пустое имя библ, паттерн HE_Display, клетка " +
+                        strLetter + "; дальнейшие успехи клеток не печатаются)");
+                }
+                return null;
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[DSPROBE] CreateDisplayList(...,\"\") — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+                return oEx;
+            }
+        }
+
+        /// <summary>Проба SetDefaultViewport ПОСЛЕ создания списка (KB: «Adjusts
+        /// viewport to the bounding box of the objects from drawing list») —
+        /// безвредна. Успех НЕ печатается (шум: 8 клеток на выделение, ревью
+        /// rev.14.2); отказ — WARN (не поле отказа рендера: список уже создан).</summary>
+        private void TrySetDefaultViewport(DrawingService oDs)
+        {
+            try
+            {
+                oDs.SetDefaultViewport();
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[DSPROBE] SetDefaultViewport — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+        }
+
+        /// <summary>Выделение клетки превью (спека §16): только enabled-клетка;
+        /// хранит индекс (_nSelectedCell); перерисовка — Invalidate панелей рисования
+        /// (Paint рисует золотую рамку) + цвет букв; слоты H/V НЕ меняются.</summary>
+        private void SelectPreviewCell(int iCellIndex)
+        {
+            if (iCellIndex < 0 || iCellIndex >= _lstCellEnabled.Count) return;
+            if (!_lstCellEnabled[iCellIndex]) return;   // disabled / отсутствующий вариант
+            if (_nSelectedCell == iCellIndex) return;   // уже выделена
+            _nSelectedCell = iCellIndex;
+            for (int i = 0; i < _lstCellLetters.Count; i++)
+            {
+                Label oLetter = _lstCellLetters[i];
+                if (oLetter != null)
+                {
+                    oLetter.ForeColor = (i == _nSelectedCell)
+                        ? Color.Gold
+                        : (_lstCellEnabled[i] ? Color.White : Color.FromArgb(160, 160, 160));
+                }
+                Panel oDraw = _lstCellDrawPanels[i];
+                if (oDraw != null)
+                {
+                    try { oDraw.Invalidate(); }
+                    catch { /* контрол уже отсоединён — не мешает */ }
+                }
+            }
+        }
+
+        /// <summary>Сброс сетки: Dispose ВСЕХ сервисов + очистка всех параллельных
+        /// списков клеток (OnFormClosing и каждая пересборка). Внутренние панели и
+        /// буквы — дети клеток, dispose'ятся рекурсивно вместе с ними.</summary>
         private void DisposePreviewGrid()
         {
             foreach (DrawingService oDs in _lstPreviewServices)
@@ -1355,103 +2041,86 @@ namespace MyEplanActions
                 catch { /* контрол уже отсоединён — не мешает */ }
             }
             _lstPreviewCells.Clear();
+            _lstCellDrawPanels.Clear();
+            _lstCellLetters.Clear();
             _lstCellReady.Clear();
+            _lstCellEnabled.Clear();
+            _nSelectedCell = -1;
             _tlpPreviewGrid.Controls.Clear();
             _tlpPreviewGrid.Invalidate();
         }
 
-        /// <summary>Путь 1 (первичный): DataModel MasterData Symbol(oSymbolLibrary,
-        /// strName) → SymbolVariant(oSymbol, nVariant) → CreateDisplayList(SymbolVariant)
-        /// — все три шага KB-доказаны (цитаты в шапке). Объект библиотеки — из
-        /// _lstLibraryObjects (тот же, что использует цепочка A); не выбран из
-        /// списка — путь недоступен (исключение-заглушка, [DSPROBE]).</summary>
-        private Exception TryDisplayListTyped(DrawingService oDs, string strName, int nVariant)
+        // --- карточка ---
+
+        /// <summary>Карточка превью (rev.14.2 R4): имя (как есть); категория =
+        /// FD.Name выбранной записи (или «—» — Fd не сопоставился/пустое имя);
+        /// описание = SYMB_DESC записи, иначе FD.Description, иначе «—».</summary>
+        private void UpdateCardByEntry(string strName)
         {
-            int iIndex = _lstLibraries.SelectedIndex;
-            SymbolLibrary oLib = (iIndex >= 0 && iIndex < _lstLibraryObjects.Count)
-                ? _lstLibraryObjects[iIndex]
-                : null;
-            if (oLib == null)
+            SymbolEntry oEntry = FindEntryObj(strName);
+            string strCategoryText = null;
+            string strDescriptionText = null;
+            if (oEntry != null)
             {
-                Exception oStub = new InvalidOperationException(
-                    "объект библиотеки не выбран из списка — типизированный путь недоступен");
-                ProbeInfo("[DSPROBE] CreateDisplayList(SymbolVariant) — " + oStub.Message);
-                return oStub;
+                if (oEntry.Fd != null && !string.IsNullOrEmpty(oEntry.Fd.Name))
+                    strCategoryText = oEntry.Fd.Name;
+                if (!string.IsNullOrEmpty(oEntry.Description))
+                    strDescriptionText = oEntry.Description;
+                else if (oEntry.Fd != null && !string.IsNullOrEmpty(oEntry.Fd.Description))
+                    strDescriptionText = oEntry.Fd.Description;
             }
-            try
-            {
-                Symbol oSymbol = new Symbol(oLib, strName);
-                SymbolVariant oSymbolVariant = new SymbolVariant(oSymbol, nVariant);
-                oDs.CreateDisplayList(oSymbolVariant);
-                ProbeInfo("[DSPROBE] CreateDisplayList(SymbolVariant) — ок " +
-                    "(типизированный путь: Symbol(SymbolLibrary) + SymbolVariant(Symbol,Int32))");
-                return null;
-            }
-            catch (Exception oEx)
-            {
-                ProbeWarn("[DSPROBE] CreateDisplayList(SymbolVariant) — " +
-                    oEx.GetType().Name + ": " + oEx.Message);
-                return oEx;
-            }
+            _lblPreviewName.Text = "Имя: " +
+                (string.IsNullOrEmpty(strName) ? "—" : strName);
+            _lblPreviewCategory.Text = "Категория: " +
+                (string.IsNullOrEmpty(strCategoryText) ? "—" : strCategoryText);
+            _lblPreviewDescription.Text = "Описание: " +
+                (string.IsNullOrEmpty(strDescriptionText) ? "—" : strDescriptionText);
         }
 
-        /// <summary>Путь 2 (запасной): CreateDisplayList(String,String,Int32,Project)
-        /// — KB-доказана (пример HE_Display: CreateDisplayList(strObj,"",0,gProject));
-        /// первый пробой — с именем библиотеки, второй — с "" вместо библиотеки.
-        /// Перегрузка с RepresentationType сознательно НЕ пробуется (план H-4b: не
-        /// доказана — одна гипотеза за прогон). Оба отказа — последнее исключение.</summary>
-        private Exception TryDisplayListByStrings(DrawingService oDs, string strName,
-            string strLib, int nVariant)
+        /// <summary>Сброс карточки в прочерки (фикс r14.1: вместе со сбросом
+        /// превью). Вызывается из RefreshPreviewGridByEntry при пустых строках и
+        /// RefreshSymbols при смене библиотеки.</summary>
+        private void ClearCard()
         {
-            try
-            {
-                oDs.CreateDisplayList(strName, strLib, nVariant, _oProject);
-                ProbeInfo("[DSPROBE] CreateDisplayList(String,String,Int32,Project) — ок" +
-                    " (имя библ: «" + strLib + "»)");
-                return null;
-            }
-            catch (Exception oEx)
-            {
-                ProbeWarn("[DSPROBE] CreateDisplayList(...," + strLib + ",...) — " +
-                    oEx.GetType().Name + ": " + oEx.Message);
-            }
-            try
-            {
-                oDs.CreateDisplayList(strName, "", nVariant, _oProject);
-                ProbeInfo("[DSPROBE] CreateDisplayList(String,String,Int32,Project) — ок" +
-                    " (пустое имя библ, паттерн HE_Display)");
-                return null;
-            }
-            catch (Exception oEx)
-            {
-                ProbeWarn("[DSPROBE] CreateDisplayList(...,\"\") — " +
-                    oEx.GetType().Name + ": " + oEx.Message);
-                return oEx;
-            }
+            _lblPreviewName.Text = "Имя: —";
+            _lblPreviewCategory.Text = "Категория: —";
+            _lblPreviewDescription.Text = "Описание: —";
         }
 
-        /// <summary>Проба SetDefaultViewport ПОСЛЕ создания списка (KB: «Adjusts
-        /// viewport to the bounding box of the objects from drawing list») —
-        /// безвредна; факт — в [DSPROBE]. Отказ — Console-дамп (не поле отказа
-        /// рендера: список уже создан).</summary>
-        private void TrySetDefaultViewport(DrawingService oDs)
+        /// <summary>Поиск записи (точное Ordinal) по имени — для карточки/OK-
+        /// валидации (rev.14.2: дубли имён сохраняются — первый побеждает).</summary>
+        private int FindEntryIndex(string strName)
         {
-            try
+            if (string.IsNullOrEmpty(strName)) return -1;
+            for (int i = 0; i < _lstEntries.Count; i++)
             {
-                oDs.SetDefaultViewport();
-                ProbeInfo("[DSPROBE] SetDefaultViewport — ок");
+                SymbolEntry oEntry = _lstEntries[i];
+                if (oEntry != null &&
+                    string.Compare(oEntry.Name, strName, StringComparison.Ordinal) == 0)
+                {
+                    return i;
+                }
             }
-            catch (Exception oEx)
-            {
-                ProbeWarn("[DSPROBE] SetDefaultViewport — " +
-                    oEx.GetType().Name + ": " + oEx.Message);
-            }
+            return -1;
         }
 
-        // --- слоты вариантов + карточка ---
+        /// <summary>Объект записи по имени (null — нет такой; карточка прочерками
+        /// «категория/описание», превью — каскад по строкам).</summary>
+        private SymbolEntry FindEntryObj(string strName)
+        {
+            int iIndex = FindEntryIndex(strName);
+            if (iIndex >= 0) return _lstEntries[iIndex];
+            return null;
+        }
 
-        /// <summary>rev.14.1 (R6): слоты — ComboBox букв A-H (всегда 8; решение
-        /// пользователя: «Вариантов может быть всего 8 у любого символа»). Буква =
+        private void SetStatus(string strText)
+        {
+            _lblStatus.Text = strText;
+        }
+
+        // --- слоты вариантов ---
+
+        /// <summary>Слоты — ComboBox букв A-H (всегда 8; rev.14.1 R6). Буква =
         /// (char)('A'+индекс); наружу Variant*/настройки — числа (индексы).</summary>
         private static void FillVariantCombo(ComboBox oComboBox)
         {
@@ -1476,46 +2145,13 @@ namespace MyEplanActions
             oComboBox.SelectedIndex = nValue;
         }
 
-        /// <summary>Карточка превью: имя (как есть), категория (чистое имя узла-
-        /// категории или «—»), описание символа (SYMB_DESC #16011, R7; счётчик
-        /// «вариантов» удалён по R7).</summary>
-        private void UpdateCard(string strName, string strCategory)
-        {
-            _lblPreviewName.Text = "Имя: " +
-                (string.IsNullOrEmpty(strName) ? "—" : strName);
-            _lblPreviewCategory.Text = "Категория: " +
-                (string.IsNullOrEmpty(strCategory) ? "—" : strCategory);
-            string strDesc = null;
-            int iIndex = _lstAllSymbols.IndexOf(strName);
-            if (iIndex >= 0 && iIndex < _lstAllDescriptions.Count)
-                strDesc = _lstAllDescriptions[iIndex];
-            _lblPreviewDescription.Text = "Описание: " +
-                (string.IsNullOrEmpty(strDesc) ? "—" : strDesc);
-        }
-
-        /// <summary>Сброс карточки в прочерки (фикс r14.1: минорный пункт 5 ревью
-        /// — вместе со сбросом превью). Вызывается из RefreshPreviewGrid при
-        /// пустых Library/Name.</summary>
-        private void ClearCard()
-        {
-            _lblPreviewName.Text = "Имя: —";
-            _lblPreviewCategory.Text = "Категория: —";
-            _lblPreviewDescription.Text = "Описание: —";
-        }
-
-        private void SetStatus(string strText)
-        {
-            _lblStatus.Text = strText;
-        }
-
-        // --- Layout (H-4b: 2 колонки ~55%/45%; паттерн MainDialog) ---
+        // --- Layout (rev.14.2: 2 колонки ~50%/50%; паттерн MainDialog) ---
 
         private static Label LabelOf(string strText)
         {
             Label oLabel = new Label();
             oLabel.Text = strText;
             oLabel.AutoSize = true;
-            // rev.14.1 R8: подпись прямо над полем (верхний отступ 0).
             oLabel.Margin = new Padding(3, 0, 3, 0);
             return oLabel;
         }
@@ -1532,8 +2168,8 @@ namespace MyEplanActions
             oPanel.Controls.Add(oControl, 0, oPanel.RowCount - 1);
         }
 
-        /// <summary>Строка с КОНКРЕТНОЙ высотой (превью-панель фиксированной
-        /// высоты ~260 по плану H-4b).</summary>
+        /// <summary>Строка с КОНКРЕТНОЙ высотой (превью-сетка фиксированной
+        /// высоты: 2 ряда по ~170 — как решено для 8 клеток).</summary>
         private static void AddRowFixed(TableLayoutPanel oPanel, Control oControl, int nHeight)
         {
             oPanel.RowCount++;
@@ -1542,10 +2178,11 @@ namespace MyEplanActions
             oPanel.Controls.Add(oControl, 0, oPanel.RowCount - 1);
         }
 
-        /// <summary>Layout (rev.14.1): контент — TableLayoutPanel 2 колонки
-        /// (~55%/45%), слева — библиотеки/поиск/дерево/имя (read-only), справа —
-        /// превью-сетка A-H и карточка; ниже — слоты H/V (комбо букв), статусная
-        /// строка (на всю ширину), кнопки (как rev.13.1).</summary>
+        /// <summary>Layout (rev.14.2, R3): контент — TableLayoutPanel 2 колонки
+        /// (50/50), слева — библиотека/список/поиск/дерево 5 уровней/счётчик (поле
+        /// «Имя выбранного символа» УДАЛЕНО — R5); справа — превью-сетка 8 клеток
+        /// (2×170) и карточка; внизу — слоты H/V (комбо букв), статус, кнопки.
+        /// ClientSize 1120×800.</summary>
         private void BuildLayout(Button btnOk, Button btnCancel)
         {
             TableLayoutPanel root = new TableLayoutPanel();
@@ -1554,51 +2191,48 @@ namespace MyEplanActions
             root.ColumnCount = 1;
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
 
-            // Контент: 2 колонки 55/45.
+            // Контент: 2 колонки 50/50 (rev.14.2: 1120 ширины — колонки поровну).
             TableLayoutPanel oContent = new TableLayoutPanel();
             oContent.ColumnCount = 2;
-            oContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
-            oContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
+            oContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            oContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
             oContent.Dock = DockStyle.Fill;
             oContent.AutoSize = true;
 
-            // ЛЕВО: библиотека/список/поиск/дерево/счётчик/имя (как rev.13.1 + дерево).
+            // ЛЕВО: библиотека/список/поиск/дерево/счётчик.
             TableLayoutPanel oLeft = new TableLayoutPanel();
             oLeft.Dock = DockStyle.Fill;
             oLeft.ColumnCount = 1;
             oLeft.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
             AddRow(oLeft, LabelOf("Библиотека (проекта; имя можно ввести вручную):"), false);
             AddRow(oLeft, _txtLibrary, true);
-            _lstLibraries.Height = 88;
+            _lstLibraries.Height = 110;
             _lstLibraries.HorizontalScrollbar = true;
             AddRow(oLeft, _lstLibraries, true);
             AddRow(oLeft, LabelOf("Поиск символа (подстрока):"), false);
             AddRow(oLeft, _txtSearch, true);
-            AddRow(oLeft, LabelOf("Символы (дерево: библиотека → категория → группа → " +
-                "символ; двойной клик — выбрать):"), false);
-            _treeSymbols.Height = 180;
+            AddRow(oLeft, LabelOf("Дерево: Trade → Area → Категория → Группа → " +
+                "Определение функции → символ; двойной клик — выбрать:"), false);
+            _treeSymbols.Height = 340;
             // HSCROLL у TreeView автоматический (свойства HorizontalScrollbar нет — CS1061).
             AddRow(oLeft, _treeSymbols, true);
             AddRow(oLeft, _lblCount, false);
-            AddRow(oLeft, LabelOf("Имя выбранного символа:"), false);
-            AddRow(oLeft, _txtSymbol, true);
 
-            // ПРАВО: превью-сетка (rev.14.1 R3-R5: до 8 клеток A-H, фон чёрный) +
-            // карточка (имя/категория/описание).
+            // ПРАВО: превью-сетка (8 клеток A-H, дискретные 2×170) + карточка.
             TableLayoutPanel oRight = new TableLayoutPanel();
             oRight.Dock = DockStyle.Fill;
             oRight.ColumnCount = 1;
             oRight.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-            AddRow(oRight, LabelOf("Превью"), false);
+            AddRow(oRight, LabelOf("Превью (A–H; выделение — клик по клетке):"), false);
             _tlpPreviewGrid.ColumnCount = 4;
             for (int iCol = 0; iCol < 4; iCol++)
                 _tlpPreviewGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
             _tlpPreviewGrid.RowCount = 2;
             for (int iRow = 0; iRow < 2; iRow++)
-                _tlpPreviewGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 110f));
+                _tlpPreviewGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 170f));
             _tlpPreviewGrid.Dock = DockStyle.Fill;
             _tlpPreviewGrid.BackColor = Color.Black;
-            AddRowFixed(oRight, _tlpPreviewGrid, 228);
+            AddRowFixed(oRight, _tlpPreviewGrid, 352);
             _lblPreviewName.AutoSize = true;
             _lblPreviewCategory.AutoSize = true;
             _lblPreviewDescription.AutoSize = true;
@@ -1627,7 +2261,7 @@ namespace MyEplanActions
             AddRow(root, pnlVariants, false);
 
             _lblStatus.AutoSize = true;
-            _lblStatus.MaximumSize = new Size(780, 0);
+            _lblStatus.MaximumSize = new Size(1050, 0);
             AddRow(root, _lblStatus, false);
 
             FlowLayoutPanel pnlButtons = new FlowLayoutPanel();
