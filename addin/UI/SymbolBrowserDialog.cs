@@ -16,7 +16,57 @@ namespace MyEplanActions
     /// 1–7 прогона rev.14.1; спека category_and_prewiev.md; rev.14.3 — строгий
     /// три-состояний клеток превью (bVariantsKnown + SymbolCatalog.IsCellEnabled),
     /// OK-гейты слотов H/V, пробы [SYMFDMAP-KEY]/[FD-BASE-SUM], дедуп двойного
-    /// перечисления библиотеки в ctor и сдвоенной сетки предвыборки):
+    /// перечисления библиотеки в ctor; rev.14.4 — FD-мост [FDLIB]
+    /// GetBaseSymbolFromSpecifiedSymbolLibrary (пер-либ обратный словарь
+    /// _dctFdBySymbolPerLib: FD → символ В ЗАДАННУЮ библиотеку — покрытие
+    /// однополюсной GOST_single_symbol, где BaseSymbol и #16018 пусты: 0 из 796,
+    /// прогон rev.14.3) с первичным путём лукапа FDLIB > BaseSymbol > 16018 и
+    /// дедупом сетки в RefreshPreviewGridByEntry; rev.14.5 — MDS-до-заполнение
+    /// [MDFD]: гипотеза — FD-привязка «небазовых» символов (625 из 796 — не
+    /// best-fitting ни одного FD, прогон rev.14.4: FDLIB дал 171) хранится на
+    /// MDSymbol-УРОВНЕ (не на DataModel Symbol): MDSymbolPropertyList.
+    /// SYMB_MAINFUNCTION «Main function # 16018» / SYMB_DESC «Symbol
+    /// description # 16011»; пер-либ карты _dctMdFdIdByName/_dctMdDescByName
+    /// до-заполняют FD/описания записей, путь расширен меткой «FDLIB+MDSymbol»;
+    /// [FDLIB] отказы расщеплены (из них пустых — Invoke вернул не-Symbol/null;
+    /// дублей — first-wins)); rev.14.7 — MDSymbolLibrary.Open(file, Mode.ReadOnly)
+    /// по FILENAME (KB 2.9: Open(String)/Open(String, Mode) — статические,
+    /// параметр «filename of the library that will be opened»; Mode: ReadOnly=1
+    /// «database is read-only», Exclusive=3; исключение BaseException «readonly
+    /// database opened in exclusive mode») перед [MDCREATE]-фабрикой: лог
+    /// rev.14.6 показал имя («GOST_single_symbol») ≠ filename; файл-кандидаты —
+    /// голое «имя.esl» + каталоги символов из настроек
+    /// {USER|COMPANY|SYSTEM}.MANAGEMENT.DIRECTORIES.SYMBOLS (пробы [MDDIRS],
+    /// Settings.GetStringSetting(path, idx): BaseException «setting is not
+    /// defined» / «path doesn't exist» при отсутствии пути)); rev.14.9 —
+    /// [MDPATH]: ПЕРВЫЙ filename-кандидат — каталог из PathInfo.Symbols
+    /// (KB 2.9: «Returns default Symbols directory» — string; исключение —
+    /// BaseException «directory cannot be obtained from settings»; ctor
+    /// PathInfo() public, но помечен «Should be used by ProjectManager
+    /// only!» — проба рантаймом, отказ ctor/Symbols — ProbeWarn [MDPATH]
+    /// и продолжаем без него), затем Settings-каталоги, голое «имя.esl»
+    /// последним; [MDDIRS] диагностика: прочие исключения пути — строка
+    /// «'<path>' — <Type>: <msg>» (одна на путь, кап 3) и одна строка
+    /// «итог: N каталогов (список: …)»); rev.14.10 — [SYSENT]: ПЕРВЫЙ
+    /// filename-кандидат — полный путь системной .esl из системного пула
+    /// мастер-данных Masterdata.SystemEntries (KB API 2.9: «Returns the
+    /// file names of all master data in the system master data pool» —
+    /// StringCollection; библиотеки символов .esl — master data, их пути
+    /// есть в системном пуле; боевой прецедент: 
+    /// spike/TerminalStripReportSpike.cs:623 — Masterdata().SystemEntries
+    /// перечислял системные формы .f11 БЕЗ исключений, прогоны Этапа 1;
+    /// Masterdata — IDisposable → try/catch/finally, Dispose в finally
+    /// с null-гейтом; отказ перечисления — ОДИН ProbeWarn [SYSENT] +
+    /// продолжаем прежними источниками; пробы [SYSENT] кап 5 строк —
+    /// итог «esl-файлов в системном пуле: N», сэмплы «пример: 'путь'»
+    /// ×3 (пул без .esl — первые 3 ЛЮБЫЕ записи: диагностика формата
+    /// пула), вердикт «имя → 'путь'» / WARN «'имя' в системном пуле
+    /// НЕ найден»). Урок rev.14.9: системный пул ≠ PathInfo.Symbols —
+    /// тот возвращает ПОЛЬЗОВАТЕЛЬСКИЙ «default Symbols directory»,
+    /// а системная GOST_single_symbol.esl живёт в системном каталоге
+    /// Symbols установки ([MDOPEN] rev.14.9: «Невозможно открыть
+    /// библиотеку символов …»). Новый порядок кандидатов:
+    /// SystemEntries → PathInfo → Settings → голое «имя.esl»:
     /// выбор библиотеки +
     /// ДЕРЕВО «Trade → Area → Категория → Группа → Определение функции → символ»
     /// (5 уровней по FunctionDefinition) + ПРЕВЬЮ-СЕТКА ФИКСИРОВАННО 8 клеток A–H
@@ -36,10 +86,12 @@ namespace MyEplanActions
     ///   (рантайм-доказано rev.14.1) → элементы as MasterData.Symbol; для каждого:
     ///   варианты — ТИПИРОВАННО Symbol.Variants : SymbolVariant[] (KB страницы
     ///   Symbol~Variants; VariantNr + живые объекты для CreateDisplayList), FD —
-    ///   обратный словарь _dctFdBySymbol (ключ = вариант.SymbolLibraryName +
-    ///   "\u0001" + вариант.SymbolName; fallback: SYMB_MAINFUNCTION #16018 через
-    ///   reflection-пробу Properties на Symbol), описание — SYMB_DESC #16011 той же
-    ///   пробой; НИ ОДНОГО Symbol-объекта — отказ A2;
+    ///   КЛАССИФИКАЦИЯ SymbolProps [SYMFUNC-CAT] (rev.14.8 — свойства САМОГО
+    ///   символа FUNC_*: cat+group непусты → FdInfo на месте, путь «SymbolProps»,
+    ///   первичный), иначе обратные словари [FDLIB]/BaseSymbol (rev.14.4:
+    ///   FDLIB первичен; fallback: SYMB_MAINFUNCTION #16018 через
+    ///   reflection-пробу Properties на Symbol), описание — SYMB_DESC #16011
+    ///   той же пробой; НИ ОДНОГО Symbol-объекта — отказ A2;
     /// - B (fallback): MDSymbolLibrary.Symbols (KB rev.13.1) — FD #16018 →
     ///   _dctFdById, число вариантов MDSymbol.Variants, SYMB_DESC;
     /// - C (последняя): names-only («Symbols» → строки / «Names») — деградация:
@@ -88,7 +140,8 @@ namespace MyEplanActions
     /// и каждая пересборка.
     /// === Строки статуса и пробы ===
     /// Пробы [FD]/[FD-BASE]/[FD-BASE-SUM]/[SYMFDMAP]/[SYMFDMAP-KEY]/
-    /// [SYMFDMAP-DESC]/[DSPROBE] — дублированный канал Console + DiagnosticLogger
+    /// [SYMFDMAP-DESC]/[SYMFUNC-CAT]/[SYMFUNC-CAT-SUM]/[DSPROBE] — дублированный
+    /// канал Console + DiagnosticLogger
     /// (урок прогона rev.14.0: только-Console был невидим в terminal_strip_addin.log!).
     /// R6: статус на успехе пустой.
     /// KB-факты API 2.9 (www.eplan.help):
@@ -108,6 +161,33 @@ namespace MyEplanActions
     ///   Description/BaseSymbol — KB members page; Id/кат/группа/имя рантайм-
     ///   подтверждены дампом [FD] rev.14.1; Description/BaseSymbol — рантайм ещё НЕ
     ///   подтвержден (try/catch + [FD-BASE] первых 10);
+    /// - rev.14.4 [FDLIB]: FunctionDefinition.GetBaseSymbolFromSpecifiedSymbolLibrary(
+    ///   SymbolLibrary) — KB members page FunctionDefinition: «public Symbol
+    ///   GetBaseSymbolFromSpecifiedSymbolLibrary(SymbolLibrary symbolLibrary)» —
+    ///   «A symbol library to get a symbol from. This may be a library from system
+    ///   master data» — FD → мост символа В ЗАДАННУЮ библиотеку (гипотеза
+    ///   однополюсной GOST_single_symbol); рантайм НЕ подтверждён — reflection-
+    ///   Invoke (тип параметра не угадываем — урок CS0246/CS1503), try/catch
+    ///   + [FDLIB]/[FDLIB-SAMPLE], отказ — честная деградация (fallback остаётся);
+    /// - rev.14.5 [MDFD]: MDSymbolPropertyList.SYMB_MAINFUNCTION — «Main
+    ///   function # 16018» на MDSymbol-УРОВНЕ (KB страница
+    ///   MDSymbolPropertyList~SYMB_MAINFUNCTION, локальная база 28.09; rev.14.3
+    ///   доказал: у DataModel Symbol тот же #16018 == null на DataModel-
+    ///   обёртке) + SYMB_DESC «Symbol description # 16011» — до-заполнение
+    ///   несопоставленных записей pass'ом по MDSymbolLibrary.Symbols;
+    /// - rev.14.8 [SYMFUNC-CAT]: ВСЕ 4 члена — на SymbolPropertyList
+    ///   (DataModel.MasterData; наш Activator-проб уже строит этот список):
+    ///   FUNC_CATEGORY #20115 «Function definition: Category» —
+    ///   PropertyValue(MultiLangString), read-only; FUNC_CATEGORY_REGION
+    ///   #20088 «Function definition: Area» — PropertyValue(MultiLangString),
+    ///   read-only; FUNC_GROUP #20116 «Function definition: Group» —
+    ///   PropertyValue(MultiLangString), read-only; FUNC_CATEGORY_GROUP_ID
+    ///   #20188 — PropertyValue(System.String) «Outputs the function definition
+    ///   in the "Category / Group / Function definition" format» — готовая
+    ///   строка классификации (KB 2.9, локальная база 28.09). Это свойства
+    ///   САМОГО символа о его FD-классификации — то, чем EPLAN строит нативное
+    ///   дерево (rev.14.2 читал по тому же списку только #16018 → null и
+    ///   SYMB_DESC); catgroup-парсер — SymbolCatalog.ExtractFdNameFromCategoryGroup.
     /// - MasterData.Symbol(SymbolLibrary, String) + SymbolVariant(Symbol, Int32) —
     ///   конструкторы KB (вход display list клетек B/C-цепочек);
     /// - HEServices.DrawingService: ctor(); CreateDisplayList (SymbolVariant[, bool]);
@@ -160,7 +240,7 @@ namespace MyEplanActions
             public readonly List<int> lstVariantNrs = new List<int>();
             public readonly List<object> lstVariantObjects = new List<object>();
             public FdInfo Fd;                                  // null — не сопоставился
-            public string strFdPath;                           // «BaseSymbol»|«16018»|«MDSymbol»|null
+            public string strFdPath;                           // «SymbolProps»|«FDLIB»|«BaseSymbol»|«16018»|«MDSymbol»|null
             public string Description;
         }
         private List<SymbolEntry> _lstEntries = new List<SymbolEntry>();
@@ -187,9 +267,40 @@ namespace MyEplanActions
         // (б) «lib\u0001sym» → FdInfo — ПЕРВИЧНАЯ связь символ → FD через FD.BaseSymbol.
         private Dictionary<long, FdInfo> _dctFdById;
         private Dictionary<string, FdInfo> _dctFdBySymbol;
+        // rev.14.4 [FDLIB]: живые ссылки FD (пара FdInfo + объект FunctionDefinition)
+        // — копятся в BuildFdDictionary; потребитель — BuildFdLibDictionary
+        // (GetBaseSymbolFromSpecifiedSymbolLibrary по КАЖДОМУ FD в заданную
+        // библиотеку — мост, которого нет у BaseSymbol-словаря).
+        private List<KeyValuePair<FdInfo, Eplan.EplApi.DataModel.FunctionDefinition>> _lstFdRefs;
+        // rev.14.4 [FDLIB]: ленивый пер-библиотечный обратный словарь (имя
+        // библиотеки → «lib\u0001sym» → FdInfo); строится BuildFdLibDictionary
+        // при первом появлении библиотеки в RefreshSymbols (одна запись на имя —
+        // повторные перечисления той же библиотеки кэш НЕ пересобирают).
+        private Dictionary<string, Dictionary<string, FdInfo>> _dctFdBySymbolPerLib;
         private int _nFdMapped;
         private int _nFdViaBase;
         private int _nFdVia16018;
+        // rev.14.4 [FDLIB]: путь сопоставления рекордов A2 через пер-либ словарь.
+        private int _nFdViaFdlb;
+        // rev.14.8 [SYMFUNC-CAT]: путь классификации SymbolProps (свойства
+        // САМОГО символа FUNC_*) + кап [SYMFUNC-CAT]-проб рядовых символов.
+        // ОБА обнуляются ResetFdMatchCounters — кап на ПЕРЕЧИСЛЕНИЕ, не навсегда
+        // (повторный RefreshSymbols печатает первые 10 заново).
+        private int _nFdViaSymProps;
+        private int _nCatProbes;
+        // rev.14.5 [MDFD]: ленивые пер-библиотечные карты MDSymbol (имя
+        // библиотеки → имя символа → …): (а) fdId > 0 — SYMB_MAINFUNCTION
+        // (#16018) с MDSymbol-УРОВНЯ (осн. гипотеза прогона); (б) локализованный
+        // SYMB_DESC — per-symbol описание точнее FD.Description. Строятся ОДИН
+        // раз на библиотеку в TryFillFdViaMasterData (кэш-hit — записи
+        // наполняются молча, без [MDFD]-строк).
+        private Dictionary<string, Dictionary<string, long>> _dctMdFdIdByName;
+        private Dictionary<string, Dictionary<string, string>> _dctMdDescByName;
+        // rev.14.5 [MDFD]: счётчики до-заполнения текущего перечисления
+        // (ResetFdMatchCounters обнуляет каждый RefreshSymbols; кэш-hit
+        // инкрементирует заново).
+        private int _nFdViaMd;
+        private int _nDescViaMd;
         private string _strFdPath = "нет";   // путь сопоставления [SYMFDMAP] текущего перечисления
 
         // Превью-сетка (RC-2 fix): ВСЕГДА 8 фиксированных клеток (4×2); параллельные
@@ -532,6 +643,12 @@ namespace MyEplanActions
         ///    отключены (варианты неизвестны), категории-префиксы.
         /// R6: на успехе статус НЕ печатается (пустой); деградация C и отказ всех —
         /// честные статусы. [SYMFDMAP]-сводка после каждой успешной цепочки.
+        /// rev.14.4: ПЕРЕД A2 — ленивая сборка пер-либ FD-словаря [FDLIB]
+        /// (BuildFdLibDictionary: мост GetBaseSymbolFromSpecifiedSymbolLibrary,
+        /// кэш _dctFdBySymbolPerLib по имени библиотеки — повторный пропуск).
+        /// rev.14.5: ПОСЛЕ успешной A2 — TryFillFdViaMasterData [MDFD]:
+        /// MDS-до-заполнение FD/SYMB_DESC у записей без них (карты
+        /// _dctMdFdIdByName/_dctMdDescByName, кэш по имени библиотеки).
         /// Никаких мутаций (диалог только читает).</summary>
         private void RefreshSymbols()
         {
@@ -557,12 +674,42 @@ namespace MyEplanActions
             }
             SymbolLibrary oLib = _lstLibraryObjects[iIndex];
 
+            // rev.14.4 [FDLIB]: пер-библиотечный FD-словарь строится ЛЕНИВО перед
+            // перечислением (кэш по имени — повторный вызов той же библиотеки
+            // пропускает построение); имя — TryGetStringProperty(oLib, "Name").
+            string strLibName = TryGetStringProperty(oLib, "Name");
+            BuildFdLibDictionary(oLib, strLibName);
+
             // A2 (первичная): ПОЛНЫЕ записи Symbol (варианты/FD/описание).
             if (TryEnumerateViaDataModelTyped(oLib))
             {
-                _strFdPath = _nFdViaBase > 0
-                    ? "BaseSymbol"
-                    : (_nFdVia16018 > 0 ? "16018" : "нет");
+                // rev.14.5 [MDFD]: MDS-до-заполнение FD/SYMB_DESC у записей без них
+                // (после успешного перечисления A2, ДО расчёта пути/сводки/дерева;
+                // кэш-hit — молча из карт).
+                TryFillFdViaMasterData(oLib, strLibName);
+
+                // rev.14.5: приоритет пути FDLIB > BaseSymbol > MDSymbol > 16018
+                // (переписано с тернарника — читаемая if-цепочка; метки сохранены;
+                // FDLIB и MDSymbol оба ненулевые → «FDLIB+MDSymbol»).
+                // rev.14.8: SymbolProps ПЕРВЫЙ (классификация FUNC_* свойства
+                // САМОГО символа); сработали оба пути → комбо
+                // «SymbolProps+FDLIB».
+                if (_nFdViaSymProps > 0 && _nFdViaFdlb > 0)
+                    _strFdPath = "SymbolProps+FDLIB";
+                else if (_nFdViaSymProps > 0)
+                    _strFdPath = "SymbolProps";
+                else if (_nFdViaFdlb > 0 && _nFdViaMd > 0)
+                    _strFdPath = "FDLIB+MDSymbol";
+                else if (_nFdViaFdlb > 0)
+                    _strFdPath = "FDLIB";
+                else if (_nFdViaBase > 0)
+                    _strFdPath = "BaseSymbol";
+                else if (_nFdViaMd > 0)
+                    _strFdPath = "MDSymbol";
+                else if (_nFdVia16018 > 0)
+                    _strFdPath = "16018";
+                else
+                    _strFdPath = "нет";
                 ProbeFdSummary();
                 RebuildTree();
                 SetStatus(string.Empty);   // R6: успех — статус пустой
@@ -603,6 +750,11 @@ namespace MyEplanActions
             _nFdMapped = 0;
             _nFdViaBase = 0;
             _nFdVia16018 = 0;
+            _nFdViaFdlb = 0;   // rev.14.4 [FDLIB]
+            _nFdViaSymProps = 0;   // rev.14.8 [SYMFUNC-CAT]
+            _nCatProbes = 0;   // rev.14.8: кап проб — на перечисление, не навсегда
+            _nFdViaMd = 0;     // rev.14.5 [MDFD]
+            _nDescViaMd = 0;   // rev.14.5 [MDFD]
             _strFdPath = "нет";
         }
 
@@ -628,8 +780,8 @@ namespace MyEplanActions
         /// Для каждого символа: имя (ResolveNameViaReflection), варианты —
         /// ТИПИРОВАННО Symbol.Variants : SymbolVariant[] (KB): номера VariantNr
         /// 0..7 (вне — не в сетку A–H) + ЖИВЫЕ объекты вариантов (для
-        /// CreateDisplayList), FD — обратный словарь BaseSymbol, fallback #16018
-        /// (Properties-проба), описание — SYMB_DESC (та же проба). [DSPROBE]:
+        /// CreateDisplayList), FD — обратные словари [FDLIB]/BaseSymbol, fallback
+        /// #16018 (Properties-проба), описание — SYMB_DESC (та же проба). [DSPROBE]:
         /// какая форма сработала («Symbols → N объектов Symbol»). Только чтение.</summary>
         private bool TryEnumerateViaDataModelTyped(SymbolLibrary oLib)
         {
@@ -708,10 +860,20 @@ namespace MyEplanActions
                             oEx.GetType().Name + ": " + oEx.Message, iOrdinal - 1);
                     }
 
-                    // FD записи: (1) ПЕРВИЧНО — обратный словарь по lib/sym первого
-                    // варианта (KB SymbolVariant.SymbolLibraryName/SymbolName);
-                    // (2) fallback — SYMB_MAINFUNCTION #16018 через Properties-пробу.
-                    if (oEntry.lstVariantNrs.Count > 0 && oEntry.lstVariantObjects.Count > 0)
+                    // FD записи: (1) ПЕРВИЧНО — классификация SymbolProps
+                    // [SYMFUNC-CAT] (rev.14.8): свойства САМОГО символа FUNC_*
+                    // (KB 2.9, локальная база) — cat+group непусты → FdInfo на
+                    // месте, путь «SymbolProps». Не дала — прежние пути:
+                    // (2) пер-либ словарь [FDLIB] (rev.14.4) по lib/sym первого
+                    // варианта; (3) fallback — BaseSymbol-обратный словарь;
+                    // (4) SYMB_MAINFUNCTION #16018 через Properties-пробу.
+                    if (oEntry.Fd == null)
+                    {
+                        TryClassifyViaSymbolProps(oEntry, oSymbol, strName,
+                            iOrdinal - 1);
+                    }
+                    if (oEntry.Fd == null &&
+                        oEntry.lstVariantNrs.Count > 0 && oEntry.lstVariantObjects.Count > 0)
                     {
                         object oFirstVariant = oEntry.lstVariantObjects[0];
                         string strVarLib = TryGetStringProperty(oFirstVariant, "SymbolLibraryName");
@@ -732,23 +894,45 @@ namespace MyEplanActions
                         }
                         if (!string.IsNullOrEmpty(strVarLib) && !string.IsNullOrEmpty(strVarSym))
                         {
+                            string strKey = MakeFdSymbolKey(strVarLib, strVarSym);
                             FdInfo oInfoFd = null;
-                            bool bHit = _dctFdBySymbol != null &&
-                                _dctFdBySymbol.TryGetValue(
-                                    MakeFdSymbolKey(strVarLib, strVarSym), out oInfoFd);
+                            // rev.14.4: ПЕРВИЧНЫЙ лукап — пер-либ словарь [FDLIB]
+                            // (FD → GetBaseSymbolFromSpecifiedSymbolLibrary(oLib)):
+                            // покрывает однополюсные библиотеки, где BaseSymbol
+                            // «best fitting» указывает в полнолинейные (прогон
+                            // rev.14.3: GOST_single_symbol — 0 пар BaseSymbol).
+                            bool bHitFdlb = _dctFdBySymbolPerLib != null &&
+                                _dctFdBySymbolPerLib.ContainsKey(strVarLib) &&
+                                _dctFdBySymbolPerLib[strVarLib] != null &&
+                                _dctFdBySymbolPerLib[strVarLib].TryGetValue(strKey, out oInfoFd);
+                            bool bHitBase = !bHitFdlb && _dctFdBySymbol != null &&
+                                _dctFdBySymbol.TryGetValue(strKey, out oInfoFd);
+                            bool bHit = bHitFdlb || bHitBase;
                             Probe("[SYMFDMAP-KEY] «" + strName + "» вар[0] тип=" +
                                 oFirstVariant.GetType().Name + " lib='" +
                                 (strVarLib ?? "<null>") + "' sym='" +
                                 (strVarSym ?? "<null>") + "' → ключ " +
                                 (bHit
-                                    ? "НАЙДЕН (FD «" + (oInfoFd == null ? "<null>" : oInfoFd.Name) + "»)"
+                                    ? "НАЙДЕН " +
+                                      (bHitFdlb
+                                          ? "(FDLIB, FD «" + (oInfoFd == null ? "<null>" : oInfoFd.Name) + "»)"
+                                          : "(FD «" + (oInfoFd == null ? "<null>" : oInfoFd.Name) + "»)")
                                     : "нет в словаре"),
                                 iOrdinal - 1);
                             if (bHit)
                             {
-                                oEntry.Fd = oInfoFd;
-                                oEntry.strFdPath = "BaseSymbol";
-                                _nFdViaBase++;
+                                if (bHitFdlb)
+                                {
+                                    oEntry.Fd = oInfoFd;
+                                    oEntry.strFdPath = "FDLIB";
+                                    _nFdViaFdlb++;
+                                }
+                                else
+                                {
+                                    oEntry.Fd = oInfoFd;
+                                    oEntry.strFdPath = "BaseSymbol";
+                                    _nFdViaBase++;
+                                }
                             }
                         }
                     }
@@ -785,6 +969,26 @@ namespace MyEplanActions
                 ProbeInfo("[DSPROBE] A2: «Symbols» → " +
                     nSymbols.ToString(CultureInfo.InvariantCulture) +
                     " объектов MasterData.Symbol");
+                // rev.14.8 [SYMFUNC-CAT-SUM]: итог классификации SymbolProps за
+                // перечисление — одна строка, капа нет. N — записей
+                // strFdPath=="SymbolProps", M — всего записей A2, X — FDLIB,
+                // Z — остальные (N+X+Z = M; попадают и BaseSymbol/16018-пути,
+                // и действительно неклассифицированные). Подсчёт локальный по
+                // _lstEntries (в A2 список содержит только записи перечисления).
+                int nSumProps = 0;
+                foreach (SymbolEntry oSumEntry in _lstEntries)
+                {
+                    if (oSumEntry != null && oSumEntry.strFdPath == "SymbolProps")
+                        nSumProps++;
+                }
+                ProbeInfo("[SYMFUNC-CAT-SUM] классификация SymbolProps: " +
+                    nSumProps.ToString(CultureInfo.InvariantCulture) + " из " +
+                    _lstEntries.Count.ToString(CultureInfo.InvariantCulture) +
+                    " символов (FDLIB " +
+                    _nFdViaFdlb.ToString(CultureInfo.InvariantCulture) +
+                    ", без классификации " +
+                    (_lstEntries.Count - nSumProps - _nFdViaFdlb)
+                        .ToString(CultureInfo.InvariantCulture) + ")");
                 return true;
             }
             catch (Exception oEx)
@@ -930,6 +1134,107 @@ namespace MyEplanActions
             oEntry.nVariantCount = -1;
             oEntry.bVariantsKnown = false;
             _lstEntries.Add(oEntry);
+        }
+
+        /// <summary>rev.14.8 [SYMFUNC-CAT]: ПЕРВИЧНАЯ классификация FD через
+        /// свойства САМОГО Symbol — FUNC_CATEGORY #20115 / FUNC_CATEGORY_REGION
+        /// #20088 / FUNC_GROUP #20116 (PropertyValue(MultiLangString), read-only)
+        /// и FUNC_CATEGORY_GROUP_ID #20188 (PropertyValue(System.String), формат
+        /// «Category / Group / Function definition») на SymbolPropertyList
+        /// (DataModel.MasterData — наш Activator-проб GetSymbolPropertyListViaProbes
+        /// его уже строит). cat+group непусты → FdInfo на месте: MainGroup=null,
+        /// Area=region, Category=cat, Group=group, Name — последний сегмент
+        /// catgroup по " / " (SymbolCatalog.ExtractFdNameFromCategoryGroup; null →
+        /// group), Description=null; strFdPath="SymbolProps". Печать [SYMFUNC-CAT]
+        /// «имя»: cat=… region=… group=… catgroup=… — ВСЕГДА для CABDCP2/CABDCP3
+        /// (точечные, кап не тратят), иначе первые 10 рядовых (поле _nCatProbes —
+        /// обнуляется ResetFdMatchCounters, т.е. на перечисление). Первые три —
+        /// LocalizeMultiLang от ToString (блоб MultiLangString, формат доказан);
+        /// catgroup — сырая строка. Пустые свойства — НОРМА: false БЕЗ WARN
+        /// (видно в [SYMFUNC-CAT]/[SYMFUNC-CAT-SUM]). Инстансный (Probe-канал,
+        /// поля класса).</summary>
+        private bool TryClassifyViaSymbolProps(SymbolEntry oEntry, object oSymbol,
+            string strName, int iOrdinal)
+        {
+            if (oSymbol == null) return false;
+            object oProps = GetSymbolPropertyListViaProbes(oSymbol, strName);
+            if (oProps == null) return false;
+            try
+            {
+                object oValCat = TryGetMemberValue(oProps, "FUNC_CATEGORY");
+                object oValRegion = TryGetMemberValue(oProps, "FUNC_CATEGORY_REGION");
+                object oValGroup = TryGetMemberValue(oProps, "FUNC_GROUP");
+                object oValCatGroup = TryGetMemberValue(oProps, "FUNC_CATEGORY_GROUP_ID");
+                // PropertyValue.ToString() → строка (MultiLangString-блоб / String);
+                // null/пусто → null. Первые три — локализация, catgroup — сырая.
+                string strCat = ValueToStringOrNull(oValCat);
+                string strRegion = ValueToStringOrNull(oValRegion);
+                string strGroup = ValueToStringOrNull(oValGroup);
+                string strCatGroup = ValueToStringOrNull(oValCatGroup);
+                string strCatLoc = string.IsNullOrEmpty(strCat)
+                    ? null : SymbolCatalog.LocalizeMultiLang(strCat);
+                string strRegionLoc = string.IsNullOrEmpty(strRegion)
+                    ? null : SymbolCatalog.LocalizeMultiLang(strRegion);
+                string strGroupLoc = string.IsNullOrEmpty(strGroup)
+                    ? null : SymbolCatalog.LocalizeMultiLang(strGroup);
+
+                // Спайк: точечные CABDCP2/CABDCP3 — ВСЕГДА; рядовые — первые 10
+                // (iOrdinal 0-based; кап — поле класса, точечные не тратят).
+                // Точечные печатаются ProbeInfo НАПРЯМУЮ: Probe(text, iOrdinal)
+                // внутри глушит iOrdinal >= 10 (кап helper'а), а точечные обязаны
+                // печататься при ЛЮБОМ ординале.
+                bool bPointName =
+                    string.Compare(strName, "CABDCP2", StringComparison.Ordinal) == 0 ||
+                    string.Compare(strName, "CABDCP3", StringComparison.Ordinal) == 0;
+                if (bPointName || (iOrdinal < 10 && _nCatProbes < 10))
+                {
+                    if (!bPointName) _nCatProbes++;
+                    string strText = "[SYMFUNC-CAT] «" + strName + "»: cat='" +
+                        (strCatLoc ?? "<null>") + "' region='" +
+                        (strRegionLoc ?? "<null>") + "' group='" +
+                        (strGroupLoc ?? "<null>") + "' catgroup='" +
+                        (strCatGroup ?? "<null>") + "'";
+                    if (bPointName) ProbeInfo(strText);
+                    else Probe(strText, iOrdinal);
+                }
+
+                // Классификация: cat И group непусты → FdInfo на месте.
+                if (string.IsNullOrEmpty(strCatLoc) || string.IsNullOrEmpty(strGroupLoc))
+                    return false;
+                FdInfo oFd = new FdInfo();
+                oFd.MainGroup = null;
+                oFd.Area = strRegionLoc;
+                oFd.Category = strCatLoc;
+                oFd.Group = strGroupLoc;
+                string strFdName = SymbolCatalog.ExtractFdNameFromCategoryGroup(strCatGroup);
+                oFd.Name = strFdName ?? strGroupLoc;
+                oFd.Description = null;
+                oEntry.Fd = oFd;
+                oEntry.strFdPath = "SymbolProps";
+                _nFdViaSymProps++;
+                // _nFdMapped++ ЗДЕСЬ НЕ НУЖЕН: единственный вызов метода — внутри
+                // цикла A2 ДО хвоста «_lstEntries.Add(oEntry); if (oEntry.Fd !=
+                // null) _nFdMapped++;» — хвост сосчитает и эту запись (паттерн
+                // rev.14.5: in-loop пути считает хвост цикла; пост-loop
+                // до-заполнения (TryFillFdViaMasterData) инкрементируют сами).
+                // Инкремент в методе дал бы двойной счёт [SYMFDMAP].
+                return true;
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[SYMFUNC-CAT] «" + strName + "» FUNC_* через Symbol.Properties — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+                return false;
+            }
+        }
+
+        /// <summary>PropertyValue → строка (ToString) без локализации: null-объект
+        /// или пустой результат → null (rev.14.8 [SYMFUNC-CAT]).</summary>
+        private static string ValueToStringOrNull(object oVal)
+        {
+            if (oVal == null) return null;
+            string strRaw = oVal.ToString();
+            return string.IsNullOrEmpty(strRaw) ? null : strRaw;
         }
 
         /// <summary>FD-ID символа в цепочке A2 — FALLBACK #16018 c DataModel Symbol:
@@ -1252,18 +1557,435 @@ namespace MyEplanActions
             catch { return null; }
         }
 
-        /// <summary>Activator-проба конструкторов MDSymbolLibrary (сигнатуры кторов
-        /// KB НЕ доказал; класс — да): для каждого кандидата пути (ниже) формы
-        /// (string path), затем (Project, string path); первая вернувшая экземпляр —
-        /// успех. MissingMethodException формы запоминается; прочие отказы —
-        /// Console-дамп и следующий кандидат. Ни одна комбинация — null.</summary>
+        /// <summary>rev.14.7: каталоги символов из настроек (кандидаты USER/
+        /// COMPANY/SYSTEM.MANAGEMENT.DIRECTORIES.SYMBOLS — пробы покажут, какой
+        /// определён). Для каждого setting-пути — 0-based индексы 0..9 через
+        /// Settings.GetStringSetting(strPath, idx) (KB 2.9: инстансный —
+        /// new Settings(); BaseException «setting is not defined» при отсутствии
+        /// пути / «path doesn't exist» — Settings-объект ЛОКАЛЬНЫЙ (Dispose у
+        /// ISettings не доказан — без using-новинок); строка «не определён» —
+        /// ОДНА на ПУТЬ (флаг), не на индекс; прочие отказы индекса
+        /// (за пределами списка значений setting может бросить другое) —
+        /// rev.14.9: НЕ тихо — строка "[MDDIRS] '<path>' — <Type>: <msg>"
+        /// (флаг bPathGenFail, одна на путь, отдельный кап nErrProbes 3;
+        /// тихий break остаётся) + после цикла строка
+        /// "[MDDIRS] итог: N каталогов (список: 'a'; 'b' …)"). Непустые значения — в список (dedup через
+        /// IndexOf, хвостовые слэши не трогаем: тримится в потребителе). Проба
+        /// [MDDIRS] '&lt;path&gt;'[&lt;idx&gt;] = '&lt;dir&gt;' — кап 8 строк суммарно
+        /// (nDirProbes). Probe-канал: метод СТАТИЧЕСКИЙ (точка расширения) —
+        /// логгер передаётся параметром (урок CS0120 rev.14.1: у статических
+        /// методов нет _oLogger).</summary>
+        private static List<string> EnumerateSymbolDirectories(DiagnosticLogger oLogger)
+        {
+            List<string> lstDirs = new List<string>();
+            string[] arrSettingPaths = new string[]
+            {
+                "USER.MANAGEMENT.DIRECTORIES.SYMBOLS",
+                "COMPANY.MANAGEMENT.DIRECTORIES.SYMBOLS",
+                "SYSTEM.MANAGEMENT.DIRECTORIES.SYMBOLS"
+            };
+            int nDirProbes = 0; // кап 8 строк [MDDIRS] суммарно
+            // rev.14.9: ошибки путей — отдельный кап 3 (nErrProbes), строка
+            // на ПУТЬ; рядовые значения продолжают печатать под nDirProbes.
+            int nErrProbes = 0;
+            // (фикс ревью M1) один инстанс Settings на весь вызов — чтения
+            // stateless, три инстанса на путь были лишними.
+            Eplan.EplApi.Base.Settings oSettingsShared = null;
+            try
+            {
+                oSettingsShared = new Eplan.EplApi.Base.Settings();
+            }
+            catch (Exception oEx)
+            {
+                Console.WriteLine("[MDDIRS] Settings() отказ — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+                if (oLogger != null) oLogger.Log("[MDDIRS] Settings() отказ — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+            foreach (string strPath in arrSettingPaths)
+            {
+                bool bPathUndefined = false; // строка «не определён» — одна на путь
+                bool bPathGenFail = false; // rev.14.9: строка прочих ошибок — одна на путь (сброс per-путь)
+                Eplan.EplApi.Base.Settings oSettings = oSettingsShared;
+                if (oSettings == null) continue;
+                for (int nIdx = 0; nIdx <= 9; nIdx++)
+                {
+                    string strValue = null;
+                    try
+                    {
+                        strValue = oSettings.GetStringSetting(strPath, nIdx);
+                    }
+                    catch (Eplan.EplApi.Base.BaseException)
+                    {
+                        // Setting-путь не определён («setting is not defined» /
+                        // «path doesn't exist») — ОДНА строка на ПУТЬ (флаг),
+                        // не на индекс; индексы того же смысла — выход из цикла.
+                        if (!bPathUndefined)
+                        {
+                            bPathUndefined = true;
+                            string strMsg = "[MDDIRS] '" + strPath + "' — не определён";
+                            Console.WriteLine(strMsg);
+                            if (oLogger != null) oLogger.Log(strMsg);
+                        }
+                        break;
+                    }
+                    catch (Exception oEx)
+                    {
+                        // rev.14.9: прочие отказы индекса — НЕ тихо: ОДНА
+                        // строка на ПУТЬ (флаг bPathGenFail, сбрасывается
+                        // per-путь) под отдельным капом 3 (nErrProbes —
+                        // общий nDirProbes не трогаем): путь/тип/сообщение
+                        // (урок rev.14.8: тихий break оставил [MDDIRS] без
+                        // единой строки — источник каталога не опознан).
+                        if (!bPathGenFail && nErrProbes < 3)
+                        {
+                            bPathGenFail = true;
+                            nErrProbes++;
+                            string strMsg = "[MDDIRS] '" + strPath + "' — " +
+                                oEx.GetType().Name + ": " + oEx.Message;
+                            Console.WriteLine(strMsg);
+                            if (oLogger != null) oLogger.Log(strMsg);
+                        }
+                        break;
+                    }
+                    if (string.IsNullOrEmpty(strValue)) continue;
+                    if (lstDirs.IndexOf(strValue) < 0) lstDirs.Add(strValue);
+                    if (nDirProbes < 8)
+                    {
+                        nDirProbes++;
+                        string strMsg = "[MDDIRS] '" + strPath + "'[" +
+                            nIdx.ToString(CultureInfo.InvariantCulture) +
+                            "] = '" + strValue + "'";
+                        Console.WriteLine(strMsg);
+                        if (oLogger != null) oLogger.Log(strMsg);
+                    }
+                }
+            }
+            // rev.14.9: итог — ОДНА строка (N + список через «; »), капа нет.
+            string strDirsSummary = "[MDDIRS] итог: " +
+                lstDirs.Count.ToString(CultureInfo.InvariantCulture) +
+                " каталогов (список: " +
+                (lstDirs.Count > 0 ? "'" + string.Join("'; '", lstDirs) + "'" : "—") +
+                ")";
+            Console.WriteLine(strDirsSummary);
+            if (oLogger != null) oLogger.Log(strDirsSummary);
+            return lstDirs;
+        }
+
+        /// <summary>Проба получения MDSymbolLibrary. rev.14.10: порядок
+        /// filename-кандидатов — (0) ПОЛНЫЙ ПУТЬ системной .esl из
+        /// Masterdata.SystemEntries (KB 2.9: «Returns the file names of all
+        /// master data in the system master data pool» — StringCollection;
+        /// new Eplan.EplApi.HEServices.Masterdata() + перечисление — в try,
+        /// Dispose — в finally с null-гейтом; совпадение — EndsWith('\\'+имя.esl)
+        /// ИЛИ EndsWith(имя.esl) (запись без пути) — В НАЧАЛО
+        /// lstFileCandidates (dedup IndexOf, как в Settings-цикле); отказ
+        /// перечисления — ОДИН ProbeWarn [SYSENT]; пробы [SYSENT] кап 5
+        /// строк: итог N, сэмплы ×3, вердикт; N=0 — сэмплы ЛЮБЫХ записей —
+        /// формат пула, вход следующей гипотезы), (1) каталог из
+        /// PathInfo.Symbols (KB 2.9:
+        /// «Returns default Symbols directory» — string; отказ —
+        /// BaseException «directory cannot be obtained from settings»;
+        /// ctor PathInfo() public, но помечен «Should be used by
+        /// ProjectManager only!» — проба рантаймом: отказ ctor ИЛИ Symbols —
+        /// ProbeWarn [MDPATH], кап 3 — nPathProbes, продолжаем без него),
+        /// (2) Settings-каталоги
+        /// {USER|COMPANY|SYSTEM}.MANAGEMENT.DIRECTORIES.SYMBOLS
+        /// (EnumerateSymbolDirectories), (3) голое «имя.esl» — ПОСЛЕДНИМ
+        /// (вдруг MD сам резолвит имя); хвостовой \ каталога тримится; имя,
+        /// уже оканчивающееся на .esl — расширение НЕ дублируется.
+        /// rev.14.10: пункты нумеруются теперь (0)/(1)/(2)/(3) — SystemEntries
+        /// ВПЕРЕДИ; порядок попыток на файл прежний: (a) для каждого файла —
+        /// MDSymbolLibrary.Open(file, Mode.ReadOnly) → Open(file) — ПРЯМЫЕ
+        /// типизированные вызовы (KB 2.9:-static, «Opens an existing symbol
+        /// library», параметр — filename), дальше на отказ. (b) существующий
+        /// [MDCREATE]-путь: статическая фабрика MDSymbolLibrary.Create →
+        /// Activator-ветки ctor(string)/(Project,string) по кандидатам имени
+        /// EnumeratePathCandidates (LocationInfo→Name→IdentifyingName). Причина
+        /// нового пункта (1)/(2) — лог rev.14.6: «[MDCREATE] путь=
+        /// 'GOST_single_symbol' → MDInvalidHandleException: S030006Недействительный
+        /// ид. номер» — фабрика отработала, но имя ≠ filename. Проба [MDOPEN]
+        /// файлов: успех «файл='…' → ок», отказ «файл='…' → &lt;Exception&gt;: &lt;msg&gt;»
+        /// (кап 6 — nOpenProbes; попытки за капом продолжаются, только их строки
+        /// НЕ печатаются); закрытие открытой библиотеки НЕ зовём — чтение
+        /// одноразовое (Mode.ReadOnly: Mode=1 «database is read-only»; объект
+        /// живёт до конца жизни диалога). Старый путь: resolving фабрики ОДИН
+        /// раз через Type.GetMethod по имени «Create»; null → ОДИН ProbeWarn —
+        /// не должен случиться: метод KB-доказан. Activator-формы ctor(string)
+        /// and ctor(Project, string) ОСТАВЛЕНЫ ПОСЛЕ фабрики как fallback БЕЗ
+        /// изменений — рантайм rev.14.5 (лог строки 59–60: «Конструктор для типа
+        /// … не найден» обе формы) опроверг их существование в 2.9; флаги
+        /// MissingMethodException гасят после первой пробы. Пробы [MDCREATE]
+        /// (ТОЛЬКО статическая ветка, кап 4 строки — nCreateProbes): успех
+        /// «путь='…' → ок», отказ «путь='…' → &lt;ExceptionType&gt;: &lt;msg&gt;» — одна
+        /// строка на попытку. Ни одна комбинация — null.</summary>
         private object TryCreateMdLibrary(SymbolLibrary oLib)
         {
             Type oType = typeof(Eplan.EplApi.MasterData.MDSymbolLibrary);
+            int nCreateProbes = 0;
+            MethodInfo oCreate = null;
+            // ОДИН ProbeWarn на отвал resolving'а — независимо от причины
+            // (исключение GetMethod ИЛИ null-результат: метод не найден).
+            string strCreateFail = null;
+            try
+            {
+                oCreate = oType.GetMethod("Create");
+            }
+            catch (Exception oEx)
+            {
+                strCreateFail = oEx.GetType().Name + ": " + oEx.Message;
+                oCreate = null;
+            }
+            if (oCreate == null)
+            {
+                if (strCreateFail == null) strCreateFail = "метод не найден";
+                ProbeWarn("[MDCREATE] статическая фабрика MDSymbolLibrary.Create недоступна — " +
+                    strCreateFail);
+            }
+
+            // rev.14.7: ПЕРЕД кандидами ПУТИ — кандидаты ФАЙЛА из настроек
+            // каталогов символов: Open(file, Mode.ReadOnly)/Open(file) — прямые
+            // типизированные вызовы. Открытую библиотеку НЕ закрываем — чтение
+            // одноразовое (Mode.ReadOnly: база уже читается EPLAN; у
+            // MDSymbolLibrary нет документированного Close в 2.9; объект живёт
+            // в кэше rev.14.5 до конца жизни диалога, EPLAN сам приберёт).
+            string strLibName = TryGetStringProperty(oLib, "Name");
+            int nOpenProbes = 0; // кап 6 строк [MDOPEN] суммарно
+            if (!string.IsNullOrEmpty(strLibName))
+            {
+                string strFileName = strLibName.EndsWith(".esl")
+                    ? strLibName
+                    : strLibName + ".esl";
+                List<string> lstFileCandidates = new List<string>();
+                // rev.14.10: САМЫЙ канонический источник — системный пул
+                // мастер-данных Masterdata.SystemEntries (KB 2.9: «Returns the
+                // file names of all master data in the system master data
+                // pool» — StringCollection; библиотеки символов .esl — master
+                // data → полные пути системного каталога установки). Боевой
+                // прецедент: spike/TerminalStripReportSpike.cs:623 — то же
+                // перечисление (формы .f11) без исключений. Совпадение —
+                // запись кончается на «\имя.esl» (полный путь) ИЛИ «имя.esl»
+                // (имя без пути) → ПЕРВЫЙ filename-кандидат (вставка ДО
+                // PathInfo ниже). Dedup — IndexOf, как в Settings-цикле.
+                // Отказ перечисления — ОДИН ProbeWarn [SYSENT], работаем
+                // дальше прежними источниками. Masterdata — IDisposable по
+                // KB → Dispose в finally (null-гейт).
+                Eplan.EplApi.HEServices.Masterdata oMasterData = null;
+                try
+                {
+                    oMasterData = new Eplan.EplApi.HEServices.Masterdata();
+                    System.Collections.Specialized.StringCollection lstSysEntries =
+                        oMasterData.SystemEntries;
+                    int nEslTotal = 0;
+                    string strSysMatch = null;
+                    // имя без «.esl» — для вердикта [SYSENT]
+                    string strNameBare = strFileName.EndsWith(".esl", StringComparison.OrdinalIgnoreCase)
+                        ? strFileName.Substring(0, strFileName.Length - 4)
+                        : strFileName;
+                    List<string> lstEslSamples = new List<string>();
+                    // первые ЛЮБЫЕ записи — если .esl в пуле нет (диагностика
+                    // формата записей пула — вход следующей гипотезы)
+                    List<string> lstAnySamples = new List<string>();
+                    foreach (object oEntry in lstSysEntries)
+                    {
+                        string strEntry = oEntry as string;
+                        if (string.IsNullOrEmpty(strEntry)) continue;
+                        if (lstAnySamples.Count < 3) lstAnySamples.Add(strEntry);
+                        if (!strEntry.EndsWith(".esl", StringComparison.OrdinalIgnoreCase)) continue;
+                        nEslTotal++;
+                        if (lstEslSamples.Count < 3) lstEslSamples.Add(strEntry);
+                        if (strSysMatch != null) continue;
+                        if (strEntry.EndsWith("\\" + strFileName, StringComparison.OrdinalIgnoreCase) ||
+                            strEntry.EndsWith(strFileName, StringComparison.OrdinalIgnoreCase))
+                            strSysMatch = strEntry;
+                    }
+                    ProbeInfo("[SYSENT] esl-файлов в системном пуле: " + nEslTotal);
+                    if (strSysMatch != null && lstFileCandidates.IndexOf(strSysMatch) < 0)
+                        lstFileCandidates.Add(strSysMatch); // ПЕРВЫЙ кандидат
+                    List<string> lstShownSamples = (nEslTotal > 0)
+                        ? lstEslSamples
+                        : lstAnySamples;
+                    foreach (string strSample in lstShownSamples)
+                        ProbeInfo("[SYSENT] пример: '" + strSample + "'");
+                    if (strSysMatch != null)
+                        ProbeInfo("[SYSENT] " + strNameBare + " → '" + strSysMatch + "'");
+                    else
+                        ProbeWarn("[SYSENT] '" + strNameBare +
+                            "' в системном пуле НЕ найден (" + nEslTotal +
+                            " esl-файлов, в т.ч. сэмплы)");
+                }
+                catch (Exception oEx)
+                {
+                    ProbeWarn("[SYSENT] перечисление — " +
+                        oEx.GetType().Name + ": " + oEx.Message);
+                }
+                finally
+                {
+                    if (oMasterData != null)
+                    {
+                        try { oMasterData.Dispose(); }
+                        catch { }   // конвенция проекта — безымянный catch (CS0168)
+                    }
+                }
+                // rev.14.10: следующий кандидат (после SystemEntries) — каталог
+                // символов из PathInfo (KB 2.9: Symbols «Returns default
+                // Symbols directory»; ctor PathInfo() public, но «Should be
+                // used by ProjectManager only!» — рантайм может отказаться:
+                // проба в try/catch). Отказ ctor/Symbols — ProbeWarn [MDPATH]
+                // (кап 3 — nPathProbes), работаем дальше без него.
+                int nPathProbes = 0; // rev.14.9: кап 3 строк [MDPATH]
+                string strPathInfoDir = null;
+                Eplan.EplApi.DataModel.PathInfo oPathInfo = null;
+                try
+                {
+                    oPathInfo = new Eplan.EplApi.DataModel.PathInfo();
+                }
+                catch (Exception oEx)
+                {
+                    if (nPathProbes < 3)
+                    {
+                        nPathProbes++;
+                        ProbeWarn("[MDPATH] PathInfo() — " +
+                            oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                }
+                if (oPathInfo != null)
+                {
+                    try
+                    {
+                        strPathInfoDir = oPathInfo.Symbols;
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (nPathProbes < 3)
+                        {
+                            nPathProbes++;
+                            ProbeWarn("[MDPATH] Symbols — " +
+                                oEx.GetType().Name + ": " + oEx.Message);
+                        }
+                        strPathInfoDir = null;
+                    }
+                    if (!string.IsNullOrEmpty(strPathInfoDir))
+                    {
+                        ProbeInfo("[MDPATH] каталог символов='" + strPathInfoDir + "'");
+                        lstFileCandidates.Add(strPathInfoDir.TrimEnd('\\') +
+                            "\\" + strFileName); // ВТОРОЙ кандидат (после [SYSENT])
+                    }
+                }
+                List<string> lstDirs = EnumerateSymbolDirectories(_oLogger);
+                foreach (string strDir in lstDirs)
+                {
+                    // (фикс ревью M-dedup) PathInfo.Symbols почти наверняка
+                    // совпадёт с одним из Settings-каталогов — без общего dedup
+                    // дубликат давал бы 2 идентичные [MDOPEN]-попытки.
+                    string strDirTrim = strDir.TrimEnd('\\');
+                    string strFile = strDirTrim + "\\" + strFileName;
+                    if (lstFileCandidates.IndexOf(strFile) < 0)
+                        lstFileCandidates.Add(strFile);
+                }
+                // rev.14.9: голое «имя.esl» — ПОСЛЕДНИМ кандидатом (вдруг MD
+                // сам резолвит имя; урок rev.14.8 — оба файла без каталога);
+                // rev.14.10: перед ним SystemEntries/PathInfo/Settings;
+                // (фикс ревью) гейт dedup — если пул вернул запись без пути,
+                // голое имя уже в списке (иначе лишняя дубль-попытка [MDOPEN]).
+                if (lstFileCandidates.IndexOf(strFileName) < 0)
+                    lstFileCandidates.Add(strFileName);
+                foreach (string strFile in lstFileCandidates)
+                {
+                    // Порядок попыток на файл: Open(ReadOnly) → Open(). Один
+                    // [MDOPEN]-печат на попытку (ок / null / отказ), кап 6 —
+                    // попытки за капом ПРОДОЛЖАЮТСЯ (ищем файл), строки НЕ печатаются.
+                    Eplan.EplApi.MasterData.MDSymbolLibrary oOpenLib = null;
+                    try
+                    {
+                        oOpenLib = Eplan.EplApi.MasterData.MDSymbolLibrary.Open(strFile,
+                            Eplan.EplApi.MasterData.MDSymbolLibrary.Mode.ReadOnly);
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (nOpenProbes < 6)
+                        {
+                            nOpenProbes++;
+                            ProbeInfo("[MDOPEN] файл='" + strFile + "' → " +
+                                oEx.GetType().Name + ": " + oEx.Message);
+                        }
+                        oOpenLib = null;
+                    }
+                    if (oOpenLib != null)
+                    {
+                        if (nOpenProbes < 6)
+                        {
+                            nOpenProbes++;
+                            ProbeInfo("[MDOPEN] файл='" + strFile + "' → ок");
+                        }
+                        return oOpenLib;
+                    }
+                    try
+                    {
+                        oOpenLib = Eplan.EplApi.MasterData.MDSymbolLibrary.Open(strFile);
+                    }
+                    catch (Exception oEx)
+                    {
+                        if (nOpenProbes < 6)
+                        {
+                            nOpenProbes++;
+                            ProbeInfo("[MDOPEN] файл='" + strFile + "' → " +
+                                oEx.GetType().Name + ": " + oEx.Message);
+                        }
+                        oOpenLib = null;
+                    }
+                    if (oOpenLib != null)
+                    {
+                        if (nOpenProbes < 6)
+                        {
+                            nOpenProbes++;
+                            ProbeInfo("[MDOPEN] файл='" + strFile + "' → ок");
+                        }
+                        return oOpenLib;
+                    }
+                }
+            }
+
             bool bStringFormMissing = false;
             bool bProjectFormMissing = false;
             foreach (string strPath in EnumeratePathCandidates(oLib))
             {
+                // rev.14.6: статическая фабрика — первый кандидат на каждый путь
+                // (после rev.14.7 [MDOPEN]-проб файлов — fallback по имени).
+                // Один [MDCREATE]-печат на попытку (ок / null / исключение), кап 4.
+                // TargetInvocationException (Invoke оборачивает отказ самого
+                // Create) — разворот InnerException: без него дамп «target of an
+                // invocation» бесполезен для следующей гипотезы (цель пробы).
+                if (oCreate != null && nCreateProbes < 4)
+                {
+                    nCreateProbes++;
+                    try
+                    {
+                        object oMdCandidate = oCreate.Invoke(null,
+                            new object[] { strPath });
+                        if (oMdCandidate != null)
+                        {
+                            ProbeInfo("[MDCREATE] путь='" + strPath + "' → ок");
+                            return oMdCandidate;
+                        }
+                        ProbeInfo("[MDCREATE] путь='" + strPath + "' → null (Create вернул null)");
+                    }
+                    catch (TargetInvocationException oEx)
+                    {
+                        Exception oInner = oEx.InnerException;
+                        if (oInner != null)
+                            ProbeInfo("[MDCREATE] путь='" + strPath + "' → " +
+                                oInner.GetType().Name + ": " + oInner.Message);
+                        else
+                            ProbeInfo("[MDCREATE] путь='" + strPath + "' → " +
+                                oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                    catch (Exception oEx)
+                    {
+                        ProbeInfo("[MDCREATE] путь='" + strPath + "' → " +
+                            oEx.GetType().Name + ": " + oEx.Message);
+                    }
+                }
                 if (!bStringFormMissing)
                 {
                     try
@@ -1351,7 +2073,9 @@ namespace MyEplanActions
         /// глобально: 1305 FD → 40 Id, дамп [FD] rev.14.1) — fallback-бакетизация
         /// для #16018-путей; (б) НОВЫЙ _dctFdBySymbol («lib\u0001sym» → FdInfo)
         /// из FD.BaseSymbol → SymbolLibraryName/SymbolName — ПЕРВИЧНАЯ связь
-        /// символ → FD. Поля уровней: MainGroup (Trade)/CategoryRegion (Area)/
+        /// символ → FD. rev.14.4: в том же цикле каждый FD даёт пару
+        /// (FdInfo, живой FunctionDefinition) в _lstFdRefs — источник моста
+        /// [FDLIB] (BuildFdLibDictionary). Поля уровней: MainGroup (Trade)/CategoryRegion (Area)/
         /// CategoryName/GroupName/Name/Description — каждый getter в try/catch
         /// (Description/BaseSymbol рантайм НЕ подтверждён); MultiLangString-блобы
         /// локализуются SymbolCatalog.LocalizeMultiLang (формат «de_DE@…;ru_RU@…»
@@ -1364,6 +2088,8 @@ namespace MyEplanActions
             _bFdDumped = true;
             _dctFdById = new Dictionary<long, FdInfo>();
             _dctFdBySymbol = new Dictionary<string, FdInfo>();
+            _lstFdRefs = new List<KeyValuePair<FdInfo,
+                Eplan.EplApi.DataModel.FunctionDefinition>>();   // rev.14.4 [FDLIB]
             // rev.14.3: счётчик попыток записи пары по strBaseLib ([FD-BASE-SUM];
             // ключ null/пустой lib — тоже считаем, как попытку — категория «<пусто>»).
             Dictionary<string, int> dctBaseLibs = new Dictionary<string, int>();
@@ -1476,17 +2202,23 @@ namespace MyEplanActions
 
                     // (а) dctFdById — first wins (Id НЕ уникален глобально; равный Id
                     // у разных FD — аспект fallback-бакетизации, рантайм-факт rev.14.1).
+                    // rev.14.4 [FDLIB]: FdInfo строится ДО first-wins-гейта — пара
+                    // (FdInfo, живой FD) кладётся в _lstFdRefs ДЛЯ КАЖДОГО FD цикла
+                    // (1305 FD; first-wins-ветка сохранила бы лишь 40 — Id-дубли
+                    // проигнорировались бы мостом).
+                    FdInfo oInfo = new FdInfo();
+                    oInfo.MainGroup = strMain;
+                    oInfo.Area = strRegion;
+                    oInfo.Category = strCat;
+                    oInfo.Group = strGroup;
+                    oInfo.Name = strName;
+                    oInfo.Description = strDesc;
                     if (nId >= 0 && !_dctFdById.ContainsKey(nId))
                     {
-                        FdInfo oInfo = new FdInfo();
-                        oInfo.MainGroup = strMain;
-                        oInfo.Area = strRegion;
-                        oInfo.Category = strCat;
-                        oInfo.Group = strGroup;
-                        oInfo.Name = strName;
-                        oInfo.Description = strDesc;
                         _dctFdById[nId] = oInfo;
                     }
+                    _lstFdRefs.Add(new KeyValuePair<FdInfo,
+                        Eplan.EplApi.DataModel.FunctionDefinition>(oInfo, oFd));
 
                     // (б) BaseSymbol → (lib\sym) → dctFdBySymbol. BaseSymbol: KB
                     // members («Gets the best fitting SymbolVariant ...»), рантайм
@@ -1531,14 +2263,10 @@ namespace MyEplanActions
                             dctBaseLibs[strLibBucket] = 1;
                         if (!_dctFdBySymbol.ContainsKey(strKey))
                         {
-                            FdInfo oInfoBySymbol = new FdInfo();
-                            oInfoBySymbol.MainGroup = strMain;
-                            oInfoBySymbol.Area = strRegion;
-                            oInfoBySymbol.Category = strCat;
-                            oInfoBySymbol.Group = strGroup;
-                            oInfoBySymbol.Name = strName;
-                            oInfoBySymbol.Description = strDesc;
-                            _dctFdBySymbol[strKey] = oInfoBySymbol;
+                            // rev.14.4: FdInfo уже построен выше (oInfo — одна
+                            // конструкция на FD; ориг. oInfoBySymbol дублировал
+                            // сборку полей — поведение идентично).
+                            _dctFdBySymbol[strKey] = oInfo;
                         }
                     }
                     iOrdinal++;
@@ -1587,6 +2315,393 @@ namespace MyEplanActions
         private static string MakeFdSymbolKey(string strLib, string strSym)
         {
             return (strLib ?? string.Empty) + "\u0001" + (strSym ?? string.Empty);
+        }
+
+        /// <summary>[FDLIB] rev.14.4 — пер-библиотечный обратный словарь FD: для
+        /// КАЖДОГО FD из _lstFdRefs — reflection-проба
+        /// FunctionDefinition.GetBaseSymbolFromSpecifiedSymbolLibrary(oLib) (KB
+        /// members FunctionDefinition: мост FD → Symbol В ЗАДАННУЮ библиотеку;
+        /// рантайм НЕ подтверждён — Invoke в try/catch, НЕ угадываем тип параметра —
+        /// урок CS0246/CS1503). Результат — Symbol: имя TryGetStringProperty(oSym,
+        /// "Name") (null/пусто — пропуск с подсчётом), пара «lib\u0001sym» → FdInfo
+        /// (тот же ключ MakeFdSymbolKey, что у BaseSymbol-словаря). Ленивый кэш
+        /// _dctFdBySymbolPerLib: запись на ИМЯ библиотеки — повторные перечисления
+        /// той же библиотеки построение пропускают (вызов-гейт в RefreshSymbols).
+        /// Пробы: [FDLIB] ОДНА строка на построение (FD N → пар M, отказов K
+        /// (из них пустых N — Invoke вернул не-Symbol/null), без имени J,
+        /// дублей Z — first-wins) + [FDLIB-SAMPLE] первых 5 пар; НЕ печатаем на
+        /// каждый FD. Инвариант (rev.14.5, ветки цикла не пересекаются и
+        /// исчерпывают пары цикла): M + K + J + Z == nFd — проверка арифметики
+        /// отказов (метод недоступен / «пустой ответ» / Invoke бросил),
+        /// без-имени и дублей.
+        /// Отказ метода (NoSuchMethod) — один ProbeWarn на цикл, честная
+        /// деградация (fallback BaseSymbol/16018 остаётся). strLibName пуст —
+        /// словарь не строится + один ProbeWarn.</summary>
+        private void BuildFdLibDictionary(SymbolLibrary oLib, string strLibName)
+        {
+            if (string.IsNullOrEmpty(strLibName))
+            {
+                ProbeWarn("[FDLIB] имя библиотеки пусто — пер-либ словарь не строится");
+                return;
+            }
+            if (_dctFdBySymbolPerLib == null)
+                _dctFdBySymbolPerLib = new Dictionary<string, Dictionary<string, FdInfo>>();
+            if (_dctFdBySymbolPerLib.ContainsKey(strLibName)) return;   // кэш: уже построен
+            // (фикс ревью M3): пустой _lstFdRefs — до вставки кэша, иначе пустой
+            // словарь кэшировался бы навсегда при вырожденном порядке инициализации.
+            if (_lstFdRefs == null || _lstFdRefs.Count == 0)
+            {
+                ProbeInfo("[FDLIB] lib='" + strLibName + "': FD 0 → пар 0, " +
+                    "отказов 0 (из них пустых 0), без имени 0, дублей 0");
+                return;
+            }
+            Dictionary<string, FdInfo> dctLib = new Dictionary<string, FdInfo>();
+            _dctFdBySymbolPerLib[strLibName] = dctLib;
+            int nFd = 0;
+            int nPairs = 0;
+            int nFail = 0;
+            int nNoName = 0;
+            // rev.14.5 [FDLIB]: счётчики расщеплены, ветки цикла не пересекаются:
+            // (а) nFail — «метод недоступен» (NoSuchMethod) ИЛИ Invoke бросил;
+            // (б) nNull — «пустой ответ»: Invoke вернул null / не-Symbol (FD не
+            //     представлен в заданной библиотеке);
+            // (в) nNoName — Symbol без имени;
+            // (г) nDup — дубликат ключа (first-wins continue, раньше был молча:
+            //     прогона rev.14.4: 171+983+0 = 1154 ≠ FD 1305 — недостающие 151).
+            // Инвариант: nPairs + nFail + nNull + nNoName + nDup == nFd.
+            int nNull = 0;
+            int nDup = 0;
+            int nSample = 0;
+            bool bWarned = false;   // ProbeWarn «метод недоступен» — один на цикл
+            bool bWarnedInvoke = false;   // (фикс ревью M1) первый Invoke-отказ — строка диагностики
+            foreach (KeyValuePair<FdInfo, Eplan.EplApi.DataModel.FunctionDefinition>
+                oRef in _lstFdRefs)
+            {
+                if (oRef.Key == null || oRef.Value == null) continue;
+                nFd++;
+                try
+                {
+                    MethodInfo oMethod = oRef.Value.GetType().GetMethod(
+                        "GetBaseSymbolFromSpecifiedSymbolLibrary");
+                    if (oMethod == null)
+                    {
+                        if (!bWarned)
+                        {
+                            bWarned = true;
+                            ProbeWarn("[FDLIB] метод GetBaseSymbolFromSpecifiedSymbolLibrary " +
+                                "недоступен (NoSuchMethod) — мост отключён, fallback " +
+                                "BaseSymbol/16018 остаётся");
+                        }
+                        nFail++;
+                        continue;
+                    }
+                    object oSymRaw = oMethod.Invoke(oRef.Value,
+                        new object[] { oLib });
+                    Symbol oSym = oSymRaw as Symbol;
+                    if (oSym == null)
+                    {
+                        // rev.14.5 [FDLIB]: НЕ «отказ» (Invoke сработал) — FD не
+                        // представлен в заданной библиотеке (null/посторонний
+                        // тип) — «пустой ответ» в свою графу.
+                        nNull++;
+                        continue;
+                    }
+                    string strSymName = TryGetStringProperty(oSym, "Name");
+                    if (string.IsNullOrEmpty(strSymName))
+                    {
+                        nNoName++;
+                        continue;
+                    }
+                    string strKey = MakeFdSymbolKey(strLibName, strSymName);
+                    if (dctLib.ContainsKey(strKey))
+                    {
+                        // rev.14.5 [FDLIB]: дубли теперь ВИДЕНЫ (first-wins — как в
+                        // dctFdById/dctFdBySymbol; раньше ветка не считалась).
+                        nDup++;
+                        continue;   // first wins
+                    }
+                    dctLib[strKey] = oRef.Key;
+                    nPairs++;
+                    if (nSample < 5)
+                    {
+                        nSample++;
+                        ProbeInfo("[FDLIB-SAMPLE] FD «" +
+                            (oRef.Key.Name ?? "<null>") + "» → sym «" + strSymName + "»");
+                    }
+                }
+                catch (Exception oEx)
+                {
+                    nFail++;
+                    // (фикс ревью M1/M2): флаг-гейт вместо nFail==1 — отказ
+                    // GetMethod (nFail уже ≥1) не гасил диагностику Invoke-отказа;
+                    // текст «мост (GetMethod/Invoke)» — catch покрывает оба вызова.
+                    if (!bWarnedInvoke)
+                    {
+                        bWarnedInvoke = true;
+                        ProbeWarn("[FDLIB] FD «" + (oRef.Key.Name ?? "<null>") +
+                            "» мост (GetMethod/Invoke) — " + oEx.GetType().Name + ": " +
+                            oEx.Message);
+                    }
+                }
+            }
+            // rev.14.5 [FDLIB]: инвариант после всех веток — M+K+N+J+Z == nFd
+            // (пары+отказы+пустые+без-имени+дубли). Отклонение (теоретический
+            // случай пропущенной ветки) — честный ProbeWarn с числами.
+            int nSum = nPairs + nFail + nNull + nNoName + nDup;
+            if (nSum != nFd)
+            {
+                ProbeWarn("[FDLIB] ИНВАРИАНТ нарушен: пар " +
+                    nPairs.ToString(CultureInfo.InvariantCulture) + " + отказов " +
+                    nFail.ToString(CultureInfo.InvariantCulture) + " + пустых " +
+                    nNull.ToString(CultureInfo.InvariantCulture) + " + без имени " +
+                    nNoName.ToString(CultureInfo.InvariantCulture) + " + дублей " +
+                    nDup.ToString(CultureInfo.InvariantCulture) + " = " +
+                    nSum.ToString(CultureInfo.InvariantCulture) + " ≠ FD " +
+                    nFd.ToString(CultureInfo.InvariantCulture));
+            }
+            ProbeInfo("[FDLIB] lib='" + strLibName + "': FD " +
+                nFd.ToString(CultureInfo.InvariantCulture) + " → пар " +
+                nPairs.ToString(CultureInfo.InvariantCulture) + ", отказов " +
+                nFail.ToString(CultureInfo.InvariantCulture) + ", пустых " +
+                nNull.ToString(CultureInfo.InvariantCulture) + ", без имени " +
+                nNoName.ToString(CultureInfo.InvariantCulture) + ", дублей " +
+                nDup.ToString(CultureInfo.InvariantCulture) +
+                " (инвариант: пары+отказы+пустые+без-имени+дубли == FD)");
+        }
+
+        /// <summary>[MDFD] rev.14.5 — MDS-до-заполнение записей FD/описаниями из
+        /// пер-библиотечных MDSymbol-карт: (а) SYMB_MAINFUNCTION #16018 «Main
+        /// function # 16018» с MDSymbol-УРОВНЯ (KB страница
+        /// MDSymbolPropertyList~SYMB_MAINFUNCTION — локальная база 28.09; rev.14.3
+        /// доказал: у DataModel Symbol тот же #16018 == null на обёртке) — карта
+        /// имя символа → fdId > 0; (б) SYMB_DESC «Symbol description # 16011» —
+        /// карта имя → локализованный блоб. Кэш-гейт по ИМЕНИ библиотеки: ОБЕ карты
+        /// строятся ОДИН раз (TryCreateMdLibrary — статическая фабрика
+        /// MDSymbolLibrary.Create(string), Activator-ctor-пробы — fallback;
+        /// Symbols — KB-доказанное свойство, обход в try/catch; у TryGetFdId/
+        /// TryGetSymbDesc свои Probe-капы). Повторное перечисление той же
+        /// библиотеки — кэш-hit: записи наполняются молча, БЕЗ [MDFD]-печатей.
+        /// Наполнение _lstEntries: (а) запись БЕЗ FD → fdId → _dctFdById
+        /// (first-wins; Id НЕ уникален глобально: 1305 FD → 40 Id — риск неверного
+        /// FD фиксируется пробами [MDFD-KEY], критерий — сверка пользователя с
+        /// нативным браузером) → Fd + strFdPath="MDSymbol" + _nFdViaMd;
+        /// (б) ЛЮБАЯ запись с пустым Description (вкл. Fd!=null) — SYMB_DESC из
+        /// карты (+ _nDescViaMd; per-symbol описание точнее FD.Description —
+        /// UpdateCardByEntry приоритетен entry.Description).
+        /// Пробы (единожды на ПОСТРОЕНИЕ карт): [MDFD] ОДНА строка после
+        /// наполнения; [MDFD-KEY] ×10 — первые БЕЗ-FD имена (собраны ДО наполнения)
+        /// → id=… → dctFdById НАЙДЕН/ПРОМАХ / id нет; [MDFD-DESC] ×5 первых
+        /// непустых. Отказ строителя — ProbeWarn «MDSymbolLibrary недоступен» +
+        /// пустые карты в кэш (честная деградация; rev.14.4-состояние дерева
+        /// сохраняется) + [MDFD]-строка с нулями. strLibName пуст — один
+        /// ProbeWarn, ничего не строится. Только чтение исходников.</summary>
+        private void TryFillFdViaMasterData(SymbolLibrary oLib, string strLibName)
+        {
+            if (string.IsNullOrEmpty(strLibName))
+            {
+                ProbeWarn("[MDFD] имя библиотеки пусто — MDS-до-заполнение отключено");
+                return;
+            }
+            if (_dctMdFdIdByName == null)
+                _dctMdFdIdByName = new Dictionary<string, Dictionary<string, long>>();
+            if (_dctMdDescByName == null)
+                _dctMdDescByName = new Dictionary<string, Dictionary<string, string>>();
+            int nMdCount = 0;
+            int nDupId = 0;
+            Dictionary<string, long> dctId;
+            Dictionary<string, string> dctDesc;
+            bool bJustBuilt = false;
+            if (!_dctMdFdIdByName.ContainsKey(strLibName))
+            {
+                // Строим ОБЕ карты разом; вставка в кэш ПОСЛЕ обхода — частичные
+                // карты (при исключении в середине) тоже кэшируются: повторные
+                // RefreshSymbols не спамят и не пересобирают.
+                Dictionary<string, long> dctIdNew = new Dictionary<string, long>();
+                Dictionary<string, string> dctDescNew = new Dictionary<string, string>();
+                object oMdLib = TryCreateMdLibrary(oLib);
+                if (oMdLib == null)
+                {
+                    ProbeWarn("[MDFD] MDSymbolLibrary недоступен — MDS-до-заполнение отключено");
+                    ProbeInfo("[MDFD] lib='" + strLibName + "': MDSymbol 0 → id 0, " +
+                        "id-промахов 0, desc 0; заполнено FD 0, desc 0");
+                    _dctMdFdIdByName[strLibName] = dctIdNew;
+                    _dctMdDescByName[strLibName] = dctDescNew;
+                    return;
+                }
+                try
+                {
+                    Eplan.EplApi.MasterData.MDSymbol[] arrSymbols =
+                        ((Eplan.EplApi.MasterData.MDSymbolLibrary)oMdLib).Symbols;
+                    int iOrdinalMd = 0;   // капы TryGetFdId/TryGetSymbDesc по symbol-порядку
+                    if (arrSymbols != null)
+                    {
+                        foreach (Eplan.EplApi.MasterData.MDSymbol oMdSym in arrSymbols)
+                        {
+                            if (oMdSym == null) continue;
+                            string strSymName = ResolveNameViaReflection(oMdSym);
+                            if (string.IsNullOrEmpty(strSymName)) continue;
+                            nMdCount++;
+                            long? nFdId = TryGetFdId(oMdSym, iOrdinalMd, strSymName);
+                            if (nFdId.HasValue && nFdId.Value > 0)
+                            {
+                                if (dctIdNew.ContainsKey(strSymName))
+                                    nDupId++;   // first wins; дубли ВИДЕНЫ одной WARN
+                                else
+                                    dctIdNew[strSymName] = nFdId.Value;
+                            }
+                            // TryGetSymbDesc возвращает RAW блоб (ToString()) —
+                            // локализуем SymbolCatalog.LocalizeMultiLang (формат
+                            // «de_DE@…;ru_RU@…»); пусто после локализации — не в карту.
+                            string strRawDesc = TryGetSymbDesc(oMdSym, iOrdinalMd, strSymName);
+                            if (!string.IsNullOrEmpty(strRawDesc))
+                            {
+                                string strLocalized = SymbolCatalog.LocalizeMultiLang(strRawDesc);
+                                if (!string.IsNullOrEmpty(strLocalized))
+                                {
+                                    // first-wins — конвенция дубликатов имён совпадает
+                                    // с id-картой (у дублей desc идентичен).
+                                    if (!dctDescNew.ContainsKey(strSymName))
+                                        dctDescNew[strSymName] = strLocalized;
+                                }
+                            }
+                            iOrdinalMd++;
+                        }
+                    }
+                }
+                catch (Exception oEx)
+                {
+                    ProbeWarn("[MDFD] обход MDSymbolLibrary «" + strLibName + "» — " +
+                        oEx.GetType().Name + ": " + oEx.Message);
+                }
+                if (nDupId > 0)
+                {
+                    ProbeWarn("[MDFD] lib='" + strLibName + "': id-дублей " +
+                        nDupId.ToString(CultureInfo.InvariantCulture) +
+                        " first-wins (разные MDSymbol с одним #16018?)");
+                }
+                _dctMdFdIdByName[strLibName] = dctIdNew;
+                _dctMdDescByName[strLibName] = dctDescNew;
+                dctId = dctIdNew;
+                dctDesc = dctDescNew;
+                bJustBuilt = true;
+            }
+            else
+            {
+                // Кэш-hit: карты уже построены — наполняем молча.
+                dctId = _dctMdFdIdByName[strLibName];
+                dctDesc = _dctMdDescByName[strLibName];
+            }
+            // Сэмплы [MDFD-KEY] — первые 10 имён БЕЗ FD на входе, ДО наполнения
+            // (сняты в отдельный список; исходы эквивалентны веткам цикла ниже).
+            List<string> lstKeySamples = new List<string>();
+            if (bJustBuilt)
+            {
+                foreach (SymbolEntry oEntry in _lstEntries)
+                {
+                    if (lstKeySamples.Count >= 10) break;
+                    if (oEntry == null || oEntry.Fd != null) continue;
+                    if (string.IsNullOrEmpty(oEntry.Name)) continue;
+                    lstKeySamples.Add(oEntry.Name);
+                }
+            }
+            // Наполнение записей (после построения и на кэш-hit):
+            // (а) Fd == null → id-карта → _dctFdById (first-wins);
+            // (б) пустое Description (ЛЮБАЯ запись, вкл. Fd!=null) → desc-карта.
+            int nIdMiss = 0;
+            int nNoId = 0;
+            foreach (SymbolEntry oEntry in _lstEntries)
+            {
+                if (oEntry == null) continue;
+                if (oEntry.Fd == null && !string.IsNullOrEmpty(oEntry.Name))
+                {
+                    long nMdId;
+                    if (dctId.TryGetValue(oEntry.Name, out nMdId))
+                    {
+                        FdInfo oInfoFd;
+                        if (_dctFdById != null && _dctFdById.TryGetValue(nMdId, out oInfoFd))
+                        {
+                            oEntry.Fd = oInfoFd;
+                            oEntry.strFdPath = "MDSymbol";
+                            _nFdViaMd++;
+                            // (fix ревью Important) счётчик общей сводки [SYMFDMAP]:
+                            // без него «сопоставлено» печатает только A2-хиты,
+                            // а MDS-наполнение осталось бы невидимым.
+                            _nFdMapped++;
+                        }
+                        else
+                        {
+                            nIdMiss++;   // id в карте — dctFdById промах
+                        }
+                    }
+                    else
+                    {
+                        nNoId++;   // имя отсутствует в MDS-карте id
+                    }
+                }
+                if (string.IsNullOrEmpty(oEntry.Description) &&
+                    !string.IsNullOrEmpty(oEntry.Name))
+                {
+                    string strMdDesc;
+                    if (dctDesc.TryGetValue(oEntry.Name, out strMdDesc) &&
+                        !string.IsNullOrEmpty(strMdDesc))
+                    {
+                        oEntry.Description = strMdDesc;
+                        _nDescViaMd++;
+                    }
+                }
+            }
+            if (bJustBuilt)
+            {
+                // [MDFD-KEY] ×10: имя → id → dctFdById НАЙДЕН/ПРОМАХ / id нет.
+                foreach (string strKeyName in lstKeySamples)
+                {
+                    long nKeyId;
+                    if (!dctId.TryGetValue(strKeyName, out nKeyId))
+                    {
+                        ProbeInfo("[MDFD-KEY] «" + strKeyName + "» → id нет");
+                    }
+                    else
+                    {
+                        FdInfo oKeyFd;
+                        if (_dctFdById != null && _dctFdById.TryGetValue(nKeyId, out oKeyFd))
+                        {
+                            ProbeInfo("[MDFD-KEY] «" + strKeyName + "» → id=" +
+                                nKeyId.ToString(CultureInfo.InvariantCulture) +
+                                " → dctFdById НАЙДЕН (FD «" +
+                                (oKeyFd == null ? "<null>" : oKeyFd.Name) + "»)");
+                        }
+                        else
+                        {
+                            ProbeInfo("[MDFD-KEY] «" + strKeyName + "» → id=" +
+                                nKeyId.ToString(CultureInfo.InvariantCulture) +
+                                " → dctFdById ПРОМАХ (id=" +
+                                nKeyId.ToString(CultureInfo.InvariantCulture) + ")");
+                        }
+                    }
+                }
+                // [MDFD-DESC] ×5: первые НЕПУСТЫЕ описания MDS-карты (карта хранит
+                // только непустые — условие избыточно-безопасное).
+                int nDescSample = 0;
+                foreach (KeyValuePair<string, string> oDescPair in dctDesc)
+                {
+                    if (nDescSample >= 5) break;
+                    if (string.IsNullOrEmpty(oDescPair.Value)) continue;
+                    ProbeInfo("[MDFD-DESC] «" + oDescPair.Key + "» → «" +
+                        oDescPair.Value + "»");
+                    nDescSample++;
+                }
+                // [MDFD] — ОДНА строка после наполнения: N=записей MDS-обхода,
+                // M=размер id-карты, K=id-промахов (_dctFdById), D=размер
+                // desc-карты; счётчики fill — текущего перечисления.
+                ProbeInfo("[MDFD] lib='" + strLibName + "': MDSymbol " +
+                    nMdCount.ToString(CultureInfo.InvariantCulture) + " → id " +
+                    dctId.Count.ToString(CultureInfo.InvariantCulture) +
+                    ", id-промахов " + nIdMiss.ToString(CultureInfo.InvariantCulture) +
+                    ", desc " + dctDesc.Count.ToString(CultureInfo.InvariantCulture) +
+                    "; заполнено FD " +
+                    _nFdViaMd.ToString(CultureInfo.InvariantCulture) + ", desc " +
+                    _nDescViaMd.ToString(CultureInfo.InvariantCulture));
+            }
         }
 
         // --- дерево категорий (SymbolCatalog 5 уровней) + поиск + предвыбор ---
@@ -1780,7 +2895,11 @@ namespace MyEplanActions
         /// ищется в _lstEntries; пустые Library/Name — сброс + ClearCard.
         /// rev.14.3 Task 5: после сборки (в т.ч. при полном отказе рендера —
         /// клетки уже стоят, повторный apply не нужен) ключ _strPreviewGridKey
-        /// запоминается для гейта ApplySelection.</summary>
+        /// запоминается для гейта ApplySelection. rev.14.4: дедуп перенесён сюда —
+        /// единая точка: ОДНА строка [DSPROBE] «сетка» на предвыбор (факт прогона
+        /// rev.14.3: сетка строилась 2× при предвыборе через UpdateCardByEntry-
+        /// каскад; гейт здесь покрывает ВСЕ повторные вызовы этого метода с тем же
+        /// именем; ApplySelection-гейт остаётся).</summary>
         private void RefreshPreviewGridByEntry(string strName)
         {
             string strLib = _txtLibrary.Text;
@@ -1792,6 +2911,10 @@ namespace MyEplanActions
                 _strPreviewGridKey = string.Empty;   // сетки нет — ключ гасится
                 return;
             }
+            // rev.14.4: дедуп — сетка для этого имени УЖЕ построена (ключ ставится
+            // после BuildPreviewGrid ниже): повторный вызов тем же именем ничего
+            // не перестраивает (одна [DSPROBE] «сетка» на предвыбор).
+            if (_strPreviewGridKey == strName) return;
             SymbolEntry oEntry = FindEntryObj(strName);
             BuildPreviewGrid(strLib, strName, oEntry);
             _strPreviewGridKey = strName;   // сетка построена для этого имени

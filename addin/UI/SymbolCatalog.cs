@@ -445,6 +445,23 @@ namespace MyEplanActions
             return string.Empty;
         }
 
+        /// <summary>Имя FD из FUNC_CATEGORY_GROUP_ID (#20188, rev.14.8): KB-формат
+        /// «Category / Group / Function definition» — имя определения функции это
+        /// ПОСЛЕДНИЙ сегмент по разделителю " / " (пробел-слэш-пробел). Правила
+        /// (решение по плану rev.14.8): null/пусто → null; разделителя нет → null;
+        /// последний сегмент после Trim пустой → null — строго ПОСЛЕДНИЙ сегмент,
+        /// «последний непустой» НЕ ищем (хвост " / " и пустой сегмент — null);
+        /// сегмент Trim'ится. Чистая статика (компилируется и в tests/).</summary>
+        public static string ExtractFdNameFromCategoryGroup(string strCatGroup)
+        {
+            if (string.IsNullOrEmpty(strCatGroup)) return null;
+            string strSep = " / ";
+            int nPos = strCatGroup.LastIndexOf(strSep, StringComparison.Ordinal);
+            if (nPos < 0) return null;
+            string strName = strCatGroup.Substring(nPos + strSep.Length).Trim();
+            return strName.Length == 0 ? null : strName;
+        }
+
         /// <summary>Текст одного элемента блоба: strLang==null — «любой язык»
         /// (элемент без '@' тоже кандидат); иначе текст элемента, чей язык совпал
         /// (OrdinalIgnoreCase); не совпал/пусто — string.Empty.</summary>

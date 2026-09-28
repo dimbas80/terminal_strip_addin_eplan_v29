@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-28 Этап 8 rev.14.3 (H-4b v5: пробы [SYMFDMAP-KEY]/[FD-BASE-SUM] FD-лукапа, строгие клетки реальный VariantNr/неизвестно-disabled, OK-гейты слотов H/V, поиск по FD-полям индексно-рекурсивный, дедуп 2× перечисления и сдвоенной сетки)";
+        private const string BUILD_STAMP = "2026-09-28 Этап 8 rev.14.10 (H-4b v10: [SYSENT] Masterdata.SystemEntries — полный путь системной .esl для Open(file, ReadOnly); обр. rev.14.9: [MDPATH] PathInfo.Symbols — каталог символов для Open(file, ReadOnly); диагностика [MDDIRS] (исключения/итог); обр. rev.14.8: [SYMFUNC-CAT] FUNC_CATEGORY/REGION/GROUP/CATEGORY_GROUP_ID (#20115/20088/20116/20188) на Symbol.Properties — спайк + первичный путь классификации SymbolProps; обр. rev.14.7: [MDDIRS] каталоги символов из настроек + MDSymbolLibrary.Open(file, Mode.ReadOnly) по filename)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -101,7 +101,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.14.3 (H-4b v5: пробы [SYMFDMAP-KEY]/[FD-BASE-SUM] FD-лукапа, строгие клетки реальный VariantNr/неизвестно-disabled, OK-гейты слотов H/V, поиск по FD-полям индексно-рекурсивный, дедуп 2× перечисления и сдвоенной сетки)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.14.10 (H-4b v10: [SYSENT] Masterdata.SystemEntries — полный путь системной .esl для Open(file, ReadOnly); обр. rev.14.9: [MDPATH] PathInfo.Symbols — каталог символов для Open(file, ReadOnly); диагностика [MDDIRS] (исключения/итог); обр. rev.14.8: [SYMFUNC-CAT] FUNC_CATEGORY/REGION/GROUP/CATEGORY_GROUP_ID (#20115/20088/20116/20188) на Symbol.Properties — спайк + первичный путь классификации SymbolProps; обр. rev.14.7: [MDDIRS] каталоги символов из настроек + MDSymbolLibrary.Open(file, Mode.ReadOnly) по filename)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
