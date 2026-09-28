@@ -13,7 +13,11 @@ using Label = System.Windows.Forms.Label;
 namespace MyEplanActions
 {
     /// <summary>Браузер символов кабеля v4 (Этап 8, H-4b v4, rev.14.2 — замечания
-    /// 1–7 прогона rev.14.1; спека category_and_prewiev.md): выбор библиотеки +
+    /// 1–7 прогона rev.14.1; спека category_and_prewiev.md; rev.14.3 — строгий
+    /// три-состояний клеток превью (bVariantsKnown + SymbolCatalog.IsCellEnabled),
+    /// OK-гейты слотов H/V, пробы [SYMFDMAP-KEY]/[FD-BASE-SUM], дедуп двойного
+    /// перечисления библиотеки в ctor и сдвоенной сетки предвыборки):
+    /// выбор библиотеки +
     /// ДЕРЕВО «Trade → Area → Категория → Группа → Определение функции → символ»
     /// (5 уровней по FunctionDefinition) + ПРЕВЬЮ-СЕТКА ФИКСИРОВАННО 8 клеток A–H
     /// (VariantNr 0..7; отсутствующие — disabled, не кликабельны; клик = визуальное
@@ -39,7 +43,8 @@ namespace MyEplanActions
     /// - B (fallback): MDSymbolLibrary.Symbols (KB rev.13.1) — FD #16018 →
     ///   _dctFdById, число вариантов MDSymbol.Variants, SYMB_DESC;
     /// - C (последняя): names-only («Symbols» → строки / «Names») — деградация:
-    ///   1 enabled клетка A, категории по префиксу, FunInfo без описаний.
+    ///   клетки отключены (варианты неизвестны), категории по префиксу, FunInfo
+    ///   без описаний.
     /// Отказ всех — прежний статус-текст ошибки. R6: на УСПЕХЕ статус НЕ печатается
     /// (пустой); статусы ошибок/деградации сохранены.
     /// === FD-словари (BuildFdDictionary) ===
@@ -79,12 +84,13 @@ namespace MyEplanActions
     /// Int32,Project), строка с именем библ и «»; рев.14.0, HE_Display), у каждой
     /// клетки СВОЙ DrawingService (один сервис = один display list); Reset перед
     /// каждым созданием + SetDefaultViewport (гипотеза центра R4 rev.14.1);
-    /// деградация chain C → 1 enabled клетка; Dispose всех сервисов — OnFormClosing
+    /// деградация chain C → все клетки disabled (варианты неизвестны); Dispose всех сервисов — OnFormClosing
     /// и каждая пересборка.
     /// === Строки статуса и пробы ===
-    /// Пробы [FD]/[FD-BASE]/[SYMFDMAP]/[SYMFDMAP-DESC]/[DSPROBE] — дублированный
-    /// канал Console + DiagnosticLogger (урок прогона rev.14.0: только-Console
-    /// был невидим в terminal_strip_addin.log!). R6: статус на успехе пустой.
+    /// Пробы [FD]/[FD-BASE]/[FD-BASE-SUM]/[SYMFDMAP]/[SYMFDMAP-KEY]/
+    /// [SYMFDMAP-DESC]/[DSPROBE] — дублированный канал Console + DiagnosticLogger
+    /// (урок прогона rev.14.0: только-Console был невидим в terminal_strip_addin.log!).
+    /// R6: статус на успехе пустой.
     /// KB-факты API 2.9 (www.eplan.help):
     /// - Project.SymbolLibraries — «public SymbolLibrary[] SymbolLibraries { get; }»
     ///   — KB-доказан (rev.13.1);
@@ -142,10 +148,15 @@ namespace MyEplanActions
         // rev.14.2: записи символов (RC-1): имя + варианты (номера и ЖИВЫЕ объекты
         // SymbolVariant из A2) + резолв FD (BaseSymbol-обратный словарь → fallback
         // #16018 → MDSymbol #16018 → цепочка C без FD) + описание SYMB_DESC.
+        // rev.14.3: флаг bVariantsKnown — строгий три-состояний клеток (п.93).
         private sealed class SymbolEntry
         {
             public string Name;
             public int nVariantCount;                          // -1 — неизвестно (деградация)
+            /// <summary>true — Symbol.Variants прочитан успешно (даже при 0
+            /// вариантов); false — сбой чтения / chain C / запись вне списка
+            /// (строгий три-состояний клеток: false ⇒ все клетки disabled).</summary>
+            public bool bVariantsKnown;
             public readonly List<int> lstVariantNrs = new List<int>();
             public readonly List<object> lstVariantObjects = new List<object>();
             public FdInfo Fd;                                  // null — не сопоставился
@@ -158,6 +169,17 @@ namespace MyEplanActions
         // выбранного символа» удалено из layout; имя задаётся ТОЛЬКО выбором
         // листа дерева/программной предвыборкой).
         private string _strSelectedSymbol = string.Empty;
+
+        // rev.14.3 Task 5 (дедуп, фикс ревью C1): факт прогона rev.14.2 — двойной
+        // обход библиотеки (2×796). Рантайм-тайминг подписки: SelectExact в
+        // LoadLibraries стреляет событием ДО подписки (подписчик не видит), а
+        // реальный вторый обход — отложенная доставка события на ShowDialog.
+        // Дедуп по ИДЕНТИЧНОСТИ перечисленной библиотеки: обработчик пропускает
+        // повтор, если перечислена та же SymbolLibrary; ctor после явного
+        // RefreshSymbols выставляет идентичность — отложенный обработчик увидит
+        // ту же библиотеку и пропустит. Смена на ДРУГУЮ библиотеку (другой
+        // объект) — перечисляет; null при начале. Ровно одно перечисление.
+        private SymbolLibrary _oEnumeratedLib;
 
         // rev.14.2: словари FD (проект; строятся ОДИН раз за жизнь диалога):
         // (а) Id → FdInfo — fallback-бакетизация (Id НЕ уникален глобально: 1305 FD
@@ -184,6 +206,12 @@ namespace MyEplanActions
         private bool _bPathLogged;
         private readonly List<bool> _lstCellEnabled = new List<bool>();
         private int _nSelectedCell = -1;   // выделенная клетка (клик = выбор варианта)
+        // rev.14.3 Task 5 (гейт ApplySelection): имя, для которого превью-сетка
+        // УЖЕ построена (ставится в RefreshPreviewGridByEntry после
+        // BuildPreviewGrid — в т.ч. при полном отказе рендера: клетки уже стоят);
+        // сброс — при разборке сетки пустыми строками и при смене библиотеки
+        // (RefreshSymbols). Повторный AfterSelect того же имени сетку не пересобирает.
+        private string _strPreviewGridKey = string.Empty;
 
         // Пробы [FD]/[FD-BASE]/[SYMFDMAP]/[SYMFDMAP-DESC]/[DSPROBE] — Console +
         // DiagnosticLogger (урок прогона rev.14.0: только-Console был невидим).
@@ -244,8 +272,19 @@ namespace MyEplanActions
 
             // (3) Символы: цепочки перечисления для предвыбранной библиотеки,
             // затем программная предвыборка имени (FindLeaf/карточка/превью).
+            // rev.14.3 Task 5 (дедуп, фикс ревью C1): явный вызов при предвыборе —
+            // первичный перечислитель (событие на SelectExact теряется до подписки);
+            // после него фиксируем идентичность — отложенный обработчик (Handle
+            // создался к ShowDialog) увидит ту же библиотеку и пропустит.
+            // Нет предвыбора (SelectedIndex<0) — не перечисляем (список пуст,
+            // прежняя семантика).
             if (_lstLibraries.SelectedIndex >= 0)
+            {
                 RefreshSymbols();
+                int iSel = _lstLibraries.SelectedIndex;
+                _oEnumeratedLib = (iSel >= 0 && iSel < _lstLibraryObjects.Count)
+                    ? _lstLibraryObjects[iSel] : null;
+            }
             SelectSymbolPrechoice(strName);
 
             // (4) Кнопки: «ОК» — валидация в Click (DialogResult=OK ставится ТОЛЬКО
@@ -317,9 +356,17 @@ namespace MyEplanActions
 
         // --- обработчики ---
 
+        /// <summary>Смена библиотеки (пользователь или отложенная доставка события
+        /// после ctor): путь в поле → RefreshSymbols. rev.14.3 Task 5 (дедуп,
+        /// фикс ревью C1): та же SymbolLibrary, что уже перечислена (ReferenceEquals),
+        /// — пропуск (перечисление актуально); другая/null — перечисляет.</summary>
         private void LstLibrariesOnSelectedIndexChanged(object oSender, EventArgs oArgs)
         {
             int iIndex = _lstLibraries.SelectedIndex;
+            SymbolLibrary oLib = (iIndex >= 0 && iIndex < _lstLibraryObjects.Count)
+                ? _lstLibraryObjects[iIndex] : null;
+            if (ReferenceEquals(oLib, _oEnumeratedLib)) return;
+            _oEnumeratedLib = oLib;
             if (iIndex >= 0 && iIndex < _lstLibraryObjects.Count)
                 _txtLibrary.Text = _lstLibraryObjects[iIndex] == null
                     ? string.Empty
@@ -337,10 +384,16 @@ namespace MyEplanActions
         }
 
         /// <summary>Применение выбранного имени (rev.14.2 R5): состояние + карточка
-        /// (из SymbolEntry по имени) + превью-сетка по записи (каскад).</summary>
+        /// (из SymbolEntry по имени) + превью-сетка по записи (каскад). rev.14.3
+        /// Task 5: гейт «то же имя И сетка уже построена для него» — повторный
+        /// AfterSelect (HighlightCurrentSymbol/предвыбор уже ставили SelectedNode)
+        /// сетку заново не строит; при смене символа ключ обновится в
+        /// RefreshPreviewGridByEntry.</summary>
         private void ApplySelection(string strName)
         {
             if (string.IsNullOrEmpty(strName)) return;
+            if (_strSelectedSymbol == strName && _strPreviewGridKey == strName)
+                return;   // гейт: карточка+сетка уже применены к этому имени
             _strSelectedSymbol = strName;
             UpdateCardByEntry(strName);
             RefreshPreviewGridByEntry(strName);
@@ -380,6 +433,35 @@ namespace MyEplanActions
                 MessageBox.Show(this,
                     "Выбранный символ отсутствует в списке текущей библиотеки — " +
                     "выберите символ из дерева.",
+                    Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            // rev.14.3 (п.93): варианты неизвестны (сбой чтения Symbol.Variants /
+            // chain C / names-only) — OK блокирован: выбор слота по клетке не даст
+            // реального варианта, падение на уровне пайплайна недопустимо.
+            SymbolEntry oEntry = FindEntryObj(SymbolName);
+            if (oEntry != null && !oEntry.bVariantsKnown)
+            {
+                MessageBox.Show(this,
+                    "Варианты выбранного символа неизвестны (перечислены только " +
+                    "имена) — выбор варианта невозможен.",
+                    Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            // rev.14.3 (п.93): слоты должны указывать на РЕАЛЬНЫЙ вариант записи
+            // (клетка i ↔ VariantNr == i, тот же индекс 0..7) — иначе пайплайн
+            // получит слот без варианта (гейт строится на ==).
+            if (oEntry != null && (!oEntry.lstVariantNrs.Contains(VariantH) ||
+                !oEntry.lstVariantNrs.Contains(VariantV)))
+            {
+                MessageBox.Show(this,
+                    "У символа нет варианта слота H/V (" +
+                    VariantH.ToString(CultureInfo.InvariantCulture) +
+                    "=" + ((char)('A' + VariantH)).ToString(CultureInfo.InvariantCulture) +
+                    " / " +
+                    VariantV.ToString(CultureInfo.InvariantCulture) +
+                    "=" + ((char)('A' + VariantV)).ToString(CultureInfo.InvariantCulture) +
+                    ") — выберите слот реального варианта.",
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -446,8 +528,8 @@ namespace MyEplanActions
         ///     варианты + FD + SYMB_DESC — ПОЛНАЯ запись);
         /// B)  MDSymbolLibrary.Symbols (KB; FD #16018 → dctFdById, варианты числом,
         ///     SYMB_DESC);
-        /// C)  names-only («Symbols» → строки / «Names») — деградация: 1 клетка A,
-        ///    категории-префиксы.
+        /// C)  names-only («Symbols» → строки / «Names») — деградация: клетки
+        ///    отключены (варианты неизвестны), категории-префиксы.
         /// R6: на успехе статус НЕ печатается (пустой); деградация C и отказ всех —
         /// честные статусы. [SYMFDMAP]-сводка после каждой успешной цепочки.
         /// Никаких мутаций (диалог только читает).</summary>
@@ -463,6 +545,7 @@ namespace MyEplanActions
             // имя не соответствует новому списку; stale-выбор гасим (OK не вернул бы
             // пару библ/имя, которой нет); карточка — прочерки.
             _strSelectedSymbol = string.Empty;
+            _strPreviewGridKey = string.Empty;   // rev.14.3: ключ сетки — за выбором
             ClearCard();
 
             int iIndex = _lstLibraries.SelectedIndex;
@@ -498,14 +581,16 @@ namespace MyEplanActions
                 return;
             }
 
-            // Цепочка C: names-only — деградация (1 клетка A, префиксные бакеты).
+            // Цепочка C: names-only — деградация (клетки отключены: варианты
+            // неизвестны, префиксные бакеты).
             if (TryEnumerateNamesOnly(oLib))
             {
                 _strFdPath = "нет";
                 ProbeFdSummary();
                 RebuildTree();
-                SetStatus("Деградация: получены только ИМЕНА символов (без вариантов, " +
-                    "FD и описаний) — категории по префиксу, превью — клетка A.");
+                SetStatus("Деградация: получены только имена символов (без вариантов, " +
+                    "FD и описаний) — категории по префиксу. Варианты неизвестны — " +
+                    "клетки превью отключены (выбор невозможен; подробности [DSPROBE]).");
                 return;
             }
 
@@ -592,6 +677,9 @@ namespace MyEplanActions
                         SymbolVariant[] arrVars = oSymbol.Variants;
                         if (arrVars != null)
                         {
+                            // rev.14.3: чтение Variants УСПЕШНО — варианты известны
+                            // (даже при 0 вариантов); строгий три-состояний клеток.
+                            oEntry.bVariantsKnown = true;
                             oEntry.nVariantCount = arrVars.Length;
                             foreach (SymbolVariant oVar in arrVars)
                             {
@@ -613,6 +701,9 @@ namespace MyEplanActions
                     }
                     catch (Exception oEx)
                     {
+                        // rev.14.3: сбой чтения Symbol.Variants — варианты
+                        // НЕИЗВЕСТНЫ → все клетки disabled (не «только A»).
+                        oEntry.bVariantsKnown = false;
                         Probe("[SYMFDMAP] Symbol.Variants «" + strName + "» — " +
                             oEx.GetType().Name + ": " + oEx.Message, iOrdinal - 1);
                     }
@@ -625,12 +716,35 @@ namespace MyEplanActions
                         object oFirstVariant = oEntry.lstVariantObjects[0];
                         string strVarLib = TryGetStringProperty(oFirstVariant, "SymbolLibraryName");
                         string strVarSym = TryGetStringProperty(oFirstVariant, "SymbolName");
+                        // rev.14.3: гипотеза прогона — различить «пустые lib/sym»
+                        // и «ключ есть / промах словаря» (0 из 796 при 279 пар).
+                        // Проба ДО IsNullOrEmpty-гейта: пустой случай обязан быть
+                        // ВИДЕН в логе (иначе ячейка «молчит» четырёхзначно, п.94).
+                        if (string.IsNullOrEmpty(strVarLib) ||
+                            string.IsNullOrEmpty(strVarSym))
+                        {
+                            Probe("[SYMFDMAP-KEY] «" + strName + "» вар[0] тип=" +
+                                oFirstVariant.GetType().Name + " lib='" +
+                                (strVarLib ?? "<null>") + "' sym='" +
+                                (strVarSym ?? "<null>") +
+                                "' → lookup НЕ выполнялся (пустые lib/sym)",
+                                iOrdinal - 1);
+                        }
                         if (!string.IsNullOrEmpty(strVarLib) && !string.IsNullOrEmpty(strVarSym))
                         {
-                            FdInfo oInfoFd;
-                            if (_dctFdBySymbol != null &&
+                            FdInfo oInfoFd = null;
+                            bool bHit = _dctFdBySymbol != null &&
                                 _dctFdBySymbol.TryGetValue(
-                                    MakeFdSymbolKey(strVarLib, strVarSym), out oInfoFd))
+                                    MakeFdSymbolKey(strVarLib, strVarSym), out oInfoFd);
+                            Probe("[SYMFDMAP-KEY] «" + strName + "» вар[0] тип=" +
+                                oFirstVariant.GetType().Name + " lib='" +
+                                (strVarLib ?? "<null>") + "' sym='" +
+                                (strVarSym ?? "<null>") + "' → ключ " +
+                                (bHit
+                                    ? "НАЙДЕН (FD «" + (oInfoFd == null ? "<null>" : oInfoFd.Name) + "»)"
+                                    : "нет в словаре"),
+                                iOrdinal - 1);
+                            if (bHit)
                             {
                                 oEntry.Fd = oInfoFd;
                                 oEntry.strFdPath = "BaseSymbol";
@@ -710,6 +824,9 @@ namespace MyEplanActions
                     SymbolEntry oEntry = new SymbolEntry();
                     oEntry.Name = strName;
                     oEntry.nVariantCount = nVariantCount;
+                    // rev.14.3: (п.93) Variants прочитан (=число) → известен;
+                    // сбой/отказ чтения (-1) → неизвестен (все клетки disabled).
+                    oEntry.bVariantsKnown = (nVariantCount >= 0);
                     int nCells = nVariantCount < 0 ? 0 : Math.Min(nVariantCount, 8);
                     for (int i = 0; i < nCells; i++) oEntry.lstVariantNrs.Add(i);
                     // FD: словарь по Id (16018 — FD-Id; первый FD с этим Id выигрывает:
@@ -744,8 +861,8 @@ namespace MyEplanActions
         /// перечисления у DataModel SymbolLibrary (имена членов НЕ доказаны KB —
         /// только проба). Значение — string[] или Array элементов (имена —
         /// ResolveDisplayPath); записи БЕЗ вариантов/FD/описания (деградация:
-        /// 1 клетка A, префиксные бакеты SymbolCatalog). Пустой/отказной результат
-        /// кандидата — следующий; всё не удалось — false.</summary>
+        /// клетки отключены (варианты неизвестны), префиксные бакеты SymbolCatalog).
+        /// Пустой/отказной результат кандидата — следующий; всё не удалось — false.</summary>
         private bool TryEnumerateNamesOnly(SymbolLibrary oLib)
         {
             string[] arrCandidateProps = new string[] { "Symbols", "Names" };
@@ -803,13 +920,15 @@ namespace MyEplanActions
         }
 #pragma warning restore 618
 
-        /// <summary>Деградационная запись (цепочка C): имя, variants неизвестно
-        /// (-1), FD=null (префиксные бакеты), описание=null.</summary>
+        /// <summary>Деградационная запись (цепочка C): имя, варианты НЕИЗВЕСТНЫ
+        /// (nVariantCount=-1, bVariantsKnown=false — все клетки disabled, rev.14.3),
+        /// FD=null (префиксные бакеты), описание=null.</summary>
         private void AddNamesOnlyEntry(string strName)
         {
             SymbolEntry oEntry = new SymbolEntry();
             oEntry.Name = strName;
             oEntry.nVariantCount = -1;
+            oEntry.bVariantsKnown = false;
             _lstEntries.Add(oEntry);
         }
 
@@ -1208,8 +1327,8 @@ namespace MyEplanActions
 
         /// <summary>Число вариантов MDSymbol: KB (цитата в шапке) «public
         /// MDSymbolVariant[] Variants { get; }» — прямое обращение; бросил/null →
-        /// -1 (деградация: 1 enabled клетка). Инстансный (Probe-канал; фикс
-        /// ревью rev.14.1: static + ProbeWarn = CS0120).</summary>
+        /// -1 (деградация: варианты неизвестны, клетки disabled — rev.14.3).
+        /// Инстансный (Probe-канал; фикс ревью rev.14.1: static + ProbeWarn = CS0120).</summary>
         private int TryGetVariantCount(Eplan.EplApi.MasterData.MDSymbol oMdSym)
         {
             try
@@ -1245,6 +1364,9 @@ namespace MyEplanActions
             _bFdDumped = true;
             _dctFdById = new Dictionary<long, FdInfo>();
             _dctFdBySymbol = new Dictionary<string, FdInfo>();
+            // rev.14.3: счётчик попыток записи пары по strBaseLib ([FD-BASE-SUM];
+            // ключ null/пустой lib — тоже считаем, как попытку — категория «<пусто>»).
+            Dictionary<string, int> dctBaseLibs = new Dictionary<string, int>();
             if (_oProject == null)
             {
                 ProbeInfo("[FD] недоступен: проект null");
@@ -1395,7 +1517,18 @@ namespace MyEplanActions
                     }
                     if (!string.IsNullOrEmpty(strBaseSym))
                     {
+                        // rev.14.3: инкремент при КАЖДОЙ попытке записи пары (до
+                        // ContainsKey-гейта) — расклад ключей по библиотекам для
+                        // сверки с [SYMFDMAP-KEY].
                         string strKey = MakeFdSymbolKey(strBaseLib, strBaseSym);
+                        // нормализация null/пустого lib в категорию «<пусто>»
+                        // (Dictionary<string,int> null-ключ не принимает)
+                        string strLibBucket = string.IsNullOrEmpty(strBaseLib)
+                            ? "<пусто>" : strBaseLib;
+                        if (dctBaseLibs.ContainsKey(strLibBucket))
+                            dctBaseLibs[strLibBucket]++;
+                        else
+                            dctBaseLibs[strLibBucket] = 1;
                         if (!_dctFdBySymbol.ContainsKey(strKey))
                         {
                             FdInfo oInfoBySymbol = new FdInfo();
@@ -1410,10 +1543,37 @@ namespace MyEplanActions
                     }
                     iOrdinal++;
                 }
+                // rev.14.3: расклад попыток записи пар по базовым библиотекам
+                // (каждая попытка, вкл. дубли BaseSymbol) — сортировка по убыванию,
+                // кап 8, хвост «+X ещё».
+                string strJoined = string.Empty;
+                List<KeyValuePair<string, int>> lstLibs =
+                    new List<KeyValuePair<string, int>>(dctBaseLibs);
+                lstLibs.Sort(delegate(KeyValuePair<string, int> oA,
+                    KeyValuePair<string, int> oB)
+                {
+                    return oB.Value - oA.Value;   // по убыванию count
+                });
+                for (int iLib = 0; iLib < lstLibs.Count; iLib++)
+                {
+                    if (iLib == 8)
+                    {
+                        strJoined += " (+" +
+                            (lstLibs.Count - 8).ToString(CultureInfo.InvariantCulture) +
+                            " ещё)";
+                        break;
+                    }
+                    strJoined += (iLib == 0 ? string.Empty : ", ") + lstLibs[iLib].Key +
+                        "=" + lstLibs[iLib].Value.ToString(CultureInfo.InvariantCulture);
+                }
                 ProbeInfo("[FD] словари FD: по Id " +
                     _dctFdById.Count.ToString(CultureInfo.InvariantCulture) +
                     ", по символу " + _dctFdBySymbol.Count.ToString(CultureInfo.InvariantCulture) +
                     " записей");
+                ProbeInfo("[FD-BASE-SUM] BaseSymbol-словарь: " +
+                    _dctFdBySymbol.Count.ToString(CultureInfo.InvariantCulture) +
+                    " пар; библиотеки (кап 8 по убыванию; попытки записи вкл. дубли): " +
+                    (strJoined.Length == 0 ? "<пусто>" : strJoined));
             }
             catch (Exception oEx)
             {
@@ -1431,12 +1591,16 @@ namespace MyEplanActions
 
         // --- дерево категорий (SymbolCatalog 5 уровней) + поиск + предвыбор ---
 
-        /// <summary>Пересборка дерева из чистого SymbolCatalog (rev.14.2, R2/RC-3):
-        /// 5 уровней Trade → Area → Категория → Группа → Определение функции,
-        /// листья — символы (Tag = имя); unmapped — «Без классификации» (или
-        /// префиксные бакеты при полном отсутствии FD-пути). Поиск фильтрует ЛИСТЬЯ
-        /// (substring, OrdinalIgnoreCase); пустые ветки скрыты; корень — библиотека.
-        /// В конце — подсветка текущего символа (если он в дереве).</summary>
+        /// <summary>Пересборка дерева из чистого SymbolCatalog (rev.14.2, R2/RC-3;
+        /// rev.14.3: SYMB_DESC записи — в SearchIndex листа): 5 уровней Trade →
+        /// Area → Категория → Группа → Определение функции, листья — символы
+        /// (Tag = имя); unmapped — «Без классификации» (или префиксные бакеты при
+        /// полном отсутствии FD-пути). Поиск — индексно-рекурсивный: лист
+        /// совпадает по SearchIndex (имя + FD-поля + SYMB_DESC), ветка — по
+        /// своему SearchIndex; совпавшая ветка показывает ВСЕХ детей (рестарт
+        /// фильтра), непустые без self-match ветки фильтруют листья рекурсивно;
+        /// пустые ветки скрыты; корень — библиотека. В конце — подсветка
+        /// текущего символа (если он в дереве).</summary>
         private void RebuildTree()
         {
             string strFilter = _txtSearch.Text ?? string.Empty;
@@ -1449,6 +1613,7 @@ namespace MyEplanActions
                 SymbolCatalogEntry oCatEntry = new SymbolCatalogEntry();
                 oCatEntry.Name = oEntry.Name;
                 oCatEntry.Fd = oEntry.Fd;
+                oCatEntry.Description = oEntry.Description;   // SYMB_DESC — в SearchIndex листа (rev.14.3)
                 lstCatalogEntries.Add(oCatEntry);
             }
             List<SymbolCatalogNode> lstTop =
@@ -1474,36 +1639,40 @@ namespace MyEplanActions
             HighlightCurrentSymbol();
         }
 
-        /// <summary>Рекурсивный рендер узла каталога (rev.14.2): Kind=Symbol —
-        /// лист (Tag = имя; FindLeaf ищет по Tag), остальные ветки БЕЗ Tag; текст
-        /// узла = Name + « (N)» (число ПОКАЗАННЫХ листьев — фильтр внутри; карты
-        /// чистых имён больше НЕ нужны — имя берётся из node.Name, карточке FD
-        /// известен из записи). Пустые ветки скрыты; возврат — число листьев.</summary>
+        /// <summary>Рекурсивный рендер узла каталога (rev.14.2; rev.14.3 —
+        /// индексно-рекурсивный фильтр): Kind=Symbol — лист (Tag = имя; FindLeaf
+        /// ищет по Tag), остальные ветки БЕЗ Tag; текст узла = Name + « (N)»
+        /// (N — число ПОКАЗАННЫХ листьев subtree). Фильтр: лист совпадает по
+        /// SearchIndex (имя + FD-поля + SYMB_DESC, substring, OrdinalIgnoreCase);
+        /// ветка, чей SearchIndex сам совпал (например, FD-имя/описание),
+        /// показывает ВСЕХ детей — фильтр для детей рестартует на пустой;
+        /// иначе пустые ветки скрыты; возврат — число листьев.</summary>
         private int RenderCatalogNode(SymbolCatalogNode oCatNode, string strFilter,
             TreeNodeCollection oDest)
         {
             if (oCatNode == null) return 0;
             bool bLeaf = string.Compare(oCatNode.Kind, SymbolCatalog.KIND_SYMBOL,
                 StringComparison.Ordinal) == 0;
+            string strHaystack = oCatNode.SearchIndex ?? oCatNode.Name;
+            bool bSelfMatch = strFilter.Length > 0 &&
+                strHaystack.IndexOf(strFilter, StringComparison.OrdinalIgnoreCase) >= 0;
             if (bLeaf)
             {
-                if (strFilter.Length > 0 &&
-                    oCatNode.Name.IndexOf(strFilter, StringComparison.OrdinalIgnoreCase) < 0)
-                {
-                    return 0;
-                }
+                if (strFilter.Length > 0 && !bSelfMatch) return 0;   // пустой фильтр — все листья
                 TreeNode oLeaf = new TreeNode(oCatNode.Name);
                 oLeaf.Tag = oCatNode.Name;
                 oDest.Add(oLeaf);
                 return 1;
             }
             TreeNode oBranch = new TreeNode(oCatNode.Name);
+            string strChildFilter = bSelfMatch ? string.Empty : strFilter;
             int nShown = 0;
             foreach (SymbolCatalogNode oChild in oCatNode.Children)
             {
-                nShown += RenderCatalogNode(oChild, strFilter, oBranch.Nodes);
+                nShown += RenderCatalogNode(oChild, strChildFilter, oBranch.Nodes);
             }
-            if (nShown == 0) return 0;   // ветка без совпадений — скрыта
+            if (nShown == 0) return 0;   // ветка без листьев — скрыта; self-match с 0
+            // детей не различим от пустой (поддерева нет — скрывать нечего)
             oBranch.Text = oCatNode.Name + " (" +
                 nShown.ToString(CultureInfo.InvariantCulture) + ")";
             oDest.Add(oBranch);
@@ -1549,25 +1718,30 @@ namespace MyEplanActions
         }
 
         /// <summary>Предвыбор текущего имени символа точным совпадением (без trim —
-        /// урок п.33; rev.14.2 R5: имя — в _strSelectedSymbol, БЕЗ текстового поля):
-        /// лист есть — разворот+выделение (AfterSelect применит карточку/превью);
-        /// явное применение следует ВСЕГДА — при конструировании диалога дерево ещё
-        /// без handle, событие может не дойти; не найден — карточка по имени +
-        /// превью по каскаду (OK-валидация проверит принадлежность).</summary>
+        /// урок п.33; rev.14.2 R5: имя — в _strSelectedSymbol, БЕЗ текстового поля).
+        /// rev.14.3 Task 5 (дедуп): лист найден — ТОЛЬКО разворот+выделение,
+        /// карточку/превью применит AfterSelect → ApplySelection (единожды);
+        /// явный apply — только когда листа в дереве НЕТ (имя вне перечисления /
+        /// скрыто фильтром): карточка по имени + превью по каскаду (OK-валидация
+        /// проверит принадлежность).</summary>
         private void SelectSymbolPrechoice(string strName)
         {
             if (string.IsNullOrEmpty(strName)) return;
             _strSelectedSymbol = strName;
             TreeNode oLeaf = FindLeaf(_treeSymbols.Nodes, strName);
-            if (oLeaf != null && _treeSymbols.SelectedNode != oLeaf)
+            if (oLeaf != null)
             {
-                TreeNode oWalk = oLeaf;
-                while (oWalk != null)
+                if (_treeSymbols.SelectedNode != oLeaf)
                 {
-                    oWalk.Expand();
-                    oWalk = oWalk.Parent;
+                    TreeNode oWalk = oLeaf;
+                    while (oWalk != null)
+                    {
+                        oWalk.Expand();
+                        oWalk = oWalk.Parent;
+                    }
+                    _treeSymbols.SelectedNode = oLeaf;   // AfterSelect → ApplySelection единожды
                 }
-                _treeSymbols.SelectedNode = oLeaf;   // AfterSelect (если стрельнул) — идемпотент
+                return;   // applied через AfterSelect (или уже был выделен)
             }
             UpdateCardByEntry(strName);
             RefreshPreviewGridByEntry(strName);
@@ -1603,7 +1777,10 @@ namespace MyEplanActions
         }
 
         /// <summary>Пересборка превью-сетки по ИМЕНИ символа (rev.14.2): запись
-        /// ищется в _lstEntries; пустые Library/Name — сброс + CleanCard.</summary>
+        /// ищется в _lstEntries; пустые Library/Name — сброс + ClearCard.
+        /// rev.14.3 Task 5: после сборки (в т.ч. при полном отказе рендера —
+        /// клетки уже стоят, повторный apply не нужен) ключ _strPreviewGridKey
+        /// запоминается для гейта ApplySelection.</summary>
         private void RefreshPreviewGridByEntry(string strName)
         {
             string strLib = _txtLibrary.Text;
@@ -1612,10 +1789,12 @@ namespace MyEplanActions
                 // Fix-минор r14.1: при сбросе превью карточка тоже очищается.
                 DisposePreviewGrid();
                 ClearCard();
+                _strPreviewGridKey = string.Empty;   // сетки нет — ключ гасится
                 return;
             }
             SymbolEntry oEntry = FindEntryObj(strName);
             BuildPreviewGrid(strLib, strName, oEntry);
+            _strPreviewGridKey = strName;   // сетка построена для этого имени
         }
 
         /// <summary>Построение ВСЕХ 8 клеток A–H (rev.14.2, R3+спека): внешний
@@ -1763,13 +1942,16 @@ namespace MyEplanActions
                 SetStatus("Превью недоступно: все клетки не отрисованы (см. [DSPROBE] в логе).");
         }
 
-        /// <summary>Вариант ячейки i (0..7) доступен: есть в списке VariantNr записи;
-        /// списка вариантов нет (цепочка C / записи нет при предвыборке вне
-        /// библиотеки) — только клетка A (деградация, прежний формат 1 клетка).</summary>
+        /// <summary>Строгий три-состояний гейт клетки i (0..7), решение пользователя
+        /// (summary п.93): запись есть → делегация SymbolCatalog.IsCellEnabled —
+        /// bVariantsKnown=false (сбой чтения Variants) или известный ПУСТОЙ список
+        /// вариантов (0 шт.) → ВСЕ клетки disabled; известный список варианта →
+        /// только реальные VariantNr. «Неизвестно → есть только A» ЗАПРЕЩЕНО.
+        /// Записи нет (oEntry null, предвыборка вне библиотеки) — false.</summary>
         private static bool IsVariantEnabled(SymbolEntry oEntry, int i)
         {
-            if (oEntry == null || oEntry.lstVariantNrs.Count == 0) return i == 0;
-            return oEntry.lstVariantNrs.Contains(i);
+            if (oEntry == null) return false;
+            return SymbolCatalog.IsCellEnabled(oEntry.bVariantsKnown, oEntry.lstVariantNrs, i);
         }
 
         /// <summary>Панель рисования клетки с перерисовкой при ресайзе

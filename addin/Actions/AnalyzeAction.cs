@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-27 Этап 8 rev.14.2 (H-4b v4: дерево Trade→Area→Категория→Группа→FD, 8 фиксированных клеток A-H с disabled и выделением, BaseSymbol-словарь, LocalizeMultiLang, выбор без текст-поля, spike off)";
+        private const string BUILD_STAMP = "2026-09-28 Этап 8 rev.14.3 (H-4b v5: пробы [SYMFDMAP-KEY]/[FD-BASE-SUM] FD-лукапа, строгие клетки реальный VariantNr/неизвестно-disabled, OK-гейты слотов H/V, поиск по FD-полям индексно-рекурсивный, дедуп 2× перечисления и сдвоенной сетки)";
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -101,7 +101,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.14.2 (H-4b v4: дерево Trade→Area→Категория→Группа→FD, 8 фиксированных клеток A-H с disabled и выделением, BaseSymbol-словарь, LocalizeMultiLang, выбор без текст-поля, spike off)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.14.3 (H-4b v5: пробы [SYMFDMAP-KEY]/[FD-BASE-SUM] FD-лукапа, строгие клетки реальный VariantNr/неизвестно-disabled, OK-гейты слотов H/V, поиск по FD-полям индексно-рекурсивный, дедуп 2× перечисления и сдвоенной сетки)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,

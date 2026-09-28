@@ -47,6 +47,11 @@ namespace MyEplanActions
         /// <summary>Определение функции (null — не сопоставился → «Без классификации»/
         /// fallback-бакеты).</summary>
         public FdInfo Fd;
+
+        /// <summary>Символьное описание (SYMB_DESC; rev.14.3): входит в поисковый
+        /// индекс Symbol-листа (SymbolCatalogNode.SearchIndex); null допустим —
+        /// SYMB_DESC может не читаться (заполняет диалог в RebuildTree).</summary>
+        public string Description;
     }
 
     /// <summary>Узел дерева каталога (rev.14.2, спека §19–§21): 5 уровней
@@ -65,6 +70,15 @@ namespace MyEplanActions
         /// <summary>Описание (содержательно только для Kind=Fd — FD.Description;
         /// для карточки rev.14.2 branch-карточки читает Fd-узел напрямую из записи).</summary>
         public string Description;
+
+        /// <summary>Поисковый индекс узла (rev.14.3, фильтр поиска каталога):
+        /// заполняется в Build — Symbol-лист: имя + разделитель + FD-поля×6
+        /// (MainGroup, Area, Category, Group, Fd.Name, Fd.Description) +
+        /// символьный Description; Fd-ветка: Name + разделитель + Description;
+        /// прочие ветки и бакеты: просто Name. Разделитель — «\u0001» (как
+        /// MakeFdSymbolKey SymbolBrowserDialog); сегменты null-safe; после Build
+        /// не null.</summary>
+        public string SearchIndex;
 
         /// <summary>true — fallback-узел («Прочие», префиксные бакеты,
         /// «Без классификации»); false — узел FD-пути.</summary>
@@ -103,7 +117,10 @@ namespace MyEplanActions
     ///     классификации» — последними; списки Symbol-листьев НЕ сортируются
     ///     (исходный порядок библиотеки, дубли сохраняются).
     /// LocalizeMultiLang — парсер MultiLangString-блоба (ru_RU → en_US → de_DE →
-    /// первый непустой).</summary>
+    /// первый непустой). rev.14.3 (аддитивно): SymbolCatalogEntry.Description
+    /// (SYMB_DESC), SymbolCatalogNode.SearchIndex (заполняется в Build, после
+    /// Build не null), IsCellEnabled — строгий три-состояние клеток превью
+    /// (решение пользователя, summary п.93).</summary>
     public static class SymbolCatalog
     {
         /// <summary>Имя бакета-«отстойника»: пустой префикс / пустой вход.</summary>
@@ -155,7 +172,8 @@ namespace MyEplanActions
                 if (oEntry == null) continue;
                 if (oEntry.Fd != null)
                 {
-                    AddToFdTree(lstMappedTop, oEntry.Name, oEntry.Fd);
+                    AddToFdTree(lstMappedTop, oEntry.Name, oEntry.Fd,
+                        oEntry.Description);
                 }
                 else
                 {
@@ -163,7 +181,10 @@ namespace MyEplanActions
                     {
                         oUnclassified = MakeBucket(STR_UNCLASSIFIED);
                     }
-                    oUnclassified.Children.Add(MakeLeaf(oEntry.Name));
+                    SymbolCatalogNode oLeaf = MakeLeaf(oEntry.Name);
+                    oLeaf.SearchIndex = MakeLeafSearchIndex(oEntry.Name, oEntry.Fd,
+                        oEntry.Description);
+                    oUnclassified.Children.Add(oLeaf);
                 }
             }
 
@@ -181,11 +202,29 @@ namespace MyEplanActions
             return BuildPrefixBuckets(lstEntries);
         }
 
+        /// <summary>Клетка превью A–H активна? Строгий три-состояние «известен /
+        /// есть / неизвестен» (решение пользователя, summary п.93): клетка
+        /// nVariantNr (A=0 … H=7) включена ТОЛЬКО если варианты ИЗВЕСТНЫ
+        /// (bVariantsKnown=true — Symbol.Variants прочитан успешно, пусть даже
+        /// при 0 вариантах) И список реальных VariantNr не null И содержит
+        /// nVariantNr. «Неизвестно → есть только клетка A» ЗАПРЕЩЕНО:
+        /// bVariantsKnown=false → false (все клетки выключены); известный пустой
+        /// список (0 реальных вариантов) → false (все клетки выключены);
+        /// null-список → false.</summary>
+        public static bool IsCellEnabled(bool bVariantsKnown,
+            List<int> lstVariantNrs, int nVariantNr)
+        {
+            if (!bVariantsKnown) return false;
+            if (lstVariantNrs == null) return false;
+            return lstVariantNrs.Contains(nVariantNr);
+        }
+
         /// <summary>Mapped-запись: путь Trade→Area→Category→Group (пустые уровни
         /// пропускаются) → Fd-узел (имя FD.Name, пустое — «—») → лист символа
-        /// (дубли сохраняются).</summary>
+        /// (дубли сохраняются). strEntryDescription — символьный SYMB_DESC входной
+        /// записи: входит в SearchIndex листа (rev.14.3).</summary>
         private static void AddToFdTree(List<SymbolCatalogNode> lstMappedTop,
-            string strName, FdInfo oFd)
+            string strName, FdInfo oFd, string strEntryDescription)
         {
             List<SymbolCatalogNode> lstLevel = lstMappedTop;
 
@@ -214,12 +253,17 @@ namespace MyEplanActions
             string strFdName = string.IsNullOrEmpty(oFd.Name) ? STR_DASH : oFd.Name;
             SymbolCatalogNode oFdNode = FindOrMake(lstLevel, strFdName, KIND_FD,
                 oFd.Description);
-            oFdNode.Children.Add(MakeLeaf(strName));
+            SymbolCatalogNode oLeaf = MakeLeaf(strName);
+            oLeaf.SearchIndex = MakeLeafSearchIndex(strName, oFd,
+                strEntryDescription);
+            oFdNode.Children.Add(oLeaf);
         }
 
         /// <summary>Поиск/создание дочернего узла: уникальность — по (Kind, имя)
         /// OrdinalIgnoreCase (спека: уникальность узлов по имени уровня; Fd-узел —
-        /// по (путь групп + FD.Name), что даёт поиск внутри нужной группы).</summary>
+        /// по (путь групп + FD.Name), что даёт поиск внутри нужной группы).
+        /// rev.14.3: SearchIndex ветки заполняется сразу (Fd-узел — Name +
+        /// «\u0001» + Description; прочие ветки — Name).</summary>
         private static SymbolCatalogNode FindOrMake(List<SymbolCatalogNode> lstSiblings,
             string strName, string strKind, string strDescription)
         {
@@ -235,8 +279,45 @@ namespace MyEplanActions
             oMade.Name = strName;
             oMade.Kind = strKind;
             oMade.Description = strDescription;
+            oMade.SearchIndex = MakeFdNodeSearchIndex(strName, strDescription,
+                strKind == KIND_FD);
             lstSiblings.Add(oMade);
             return oMade;
+        }
+
+        /// <summary>SearchIndex Symbol-листа (rev.14.3): имя + «\u0001» + FD-блок
+        /// (MainGroup, Area, Category, Group, Fd.Name, Fd.Description — null-safe)
+        /// + «\u0001» + символьный Description. FD-блок при Fd==null опускается;
+        /// поиск по описанию работает и вне FD (Name + «\u0001» + Description);
+        /// Fd==null и Description==null → ровно Name (CaseSearchIndexLeafNoFd,
+        /// без хвостового разделителя); поиск «выключатель» → OLS.</summary>
+        private static string MakeLeafSearchIndex(string strName, FdInfo oFd,
+            string strEntryDescription)
+        {
+            if (oFd == null)
+            {
+                return strEntryDescription == null
+                    ? strName
+                    : strName + "\u0001" + strEntryDescription;
+            }
+            return strName
+                + "\u0001"
+                + (oFd.MainGroup ?? string.Empty)
+                + "\u0001" + (oFd.Area ?? string.Empty)
+                + "\u0001" + (oFd.Category ?? string.Empty)
+                + "\u0001" + (oFd.Group ?? string.Empty)
+                + "\u0001" + (oFd.Name ?? string.Empty)
+                + "\u0001" + (oFd.Description ?? string.Empty)
+                + "\u0001" + (strEntryDescription ?? string.Empty);
+        }
+
+        /// <summary>SearchIndex ветки/бакета (rev.14.3): Fd-узел — Name +
+        /// «\u0001» + Description; прочие ветки и бакеты — просто Name.</summary>
+        private static string MakeFdNodeSearchIndex(string strName,
+            string strDescription, bool bIsFd)
+        {
+            if (bIsFd) return strName + "\u0001" + (strDescription ?? string.Empty);
+            return strName;
         }
 
         /// <summary>(б) префиксные fallback-бакеты (цепочка C): ведущая нецифровая
@@ -261,29 +342,36 @@ namespace MyEplanActions
                     dctBuckets[strKey] = oBucket;
                     lstTop.Add(oBucket);
                 }
-                oBucket.Children.Add(MakeLeaf(strName));
+                SymbolCatalogNode oLeaf = MakeLeaf(strName);
+                oLeaf.SearchIndex = MakeLeafSearchIndex(strName, oEntry.Fd,
+                    oEntry.Description);
+                oBucket.Children.Add(oLeaf);
             }
             SortBranches(lstTop);
             return lstTop;
         }
 
         /// <summary>Fallback-бакет («Прочие», префикс, «Без классификации»):
-        /// Kind=Group, IsFallback=true.</summary>
+        /// Kind=Group, IsFallback=true. rev.14.3: SearchIndex = Name.</summary>
         private static SymbolCatalogNode MakeBucket(string strName)
         {
             SymbolCatalogNode oBucket = new SymbolCatalogNode();
             oBucket.Name = strName;
             oBucket.Kind = KIND_GROUP;
             oBucket.IsFallback = true;
+            oBucket.SearchIndex = strName;
             return oBucket;
         }
 
-        /// <summary>Лист-символ: Kind=Symbol, без детей.</summary>
+        /// <summary>Лист-символ: Kind=Symbol, без детей; SearchIndex-дефолт =
+        /// имя (контракт «после Build не null» не зависит от call-site — минимор
+        /// ревью rev.14.3 Task 1; call-sites перезаписывают поверх).</summary>
         private static SymbolCatalogNode MakeLeaf(string strName)
         {
             SymbolCatalogNode oLeaf = new SymbolCatalogNode();
             oLeaf.Name = strName;
             oLeaf.Kind = KIND_SYMBOL;
+            oLeaf.SearchIndex = strName;
             return oLeaf;
         }
 
