@@ -303,6 +303,15 @@ namespace MyEplanActions
         // инкрементирует заново).
         private int _nFdViaMd;
         private int _nDescViaMd;
+        // rev.14.11 [SYMFUNC-MD]: пер-библиотечные карты MD-классификации
+        // (имя библиотеки → имя символа → [catLoc, regionLoc, grpLoc, catGroupRaw]).
+        // Кэш-контракт rev.14.5: карты вставляются в кэш ПОСЛЕ обхода (частичные —
+        // тоже кэшируются, чтобы не спамить), кэш-hit — наполнение молча.
+        private Dictionary<string, Dictionary<string, string[]>> _dctMdClsByName;
+        // rev.14.11: счётчик наполнения FD через MD-классификацию + кап рядовых
+        // [SYMFUNC-MD]-проб (10 на перечисление; оба обнуляет ResetFdMatchCounters).
+        private int _nFdViaMdProps;
+        private int _nMdCatProbes;
         private string _strFdPath = "нет";   // путь сопоставления [SYMFDMAP] текущего перечисления
 
         // Превью-сетка (RC-2 fix): ВСЕГДА 8 фиксированных клеток (4×2); параллельные
@@ -696,7 +705,14 @@ namespace MyEplanActions
                 // rev.14.8: SymbolProps ПЕРВЫЙ (классификация FUNC_* свойства
                 // САМОГО символа); сработали оба пути → комбо
                 // «SymbolProps+FDLIB».
-                if (_nFdViaSymProps > 0 && _nFdViaFdlb > 0)
+                // rev.14.11: SymbolProps-MD ПЕРВЫЙ (FUNC_* на MDSymbolPropertyList —
+                // MD-обёртка MDSymbol); сработали оба пути → комбо
+                // «SymbolProps-MD+FDLIB».
+                if (_nFdViaMdProps > 0 && _nFdViaFdlb > 0)
+                    _strFdPath = "SymbolProps-MD+FDLIB";
+                else if (_nFdViaMdProps > 0)
+                    _strFdPath = "SymbolProps-MD";
+                else if (_nFdViaSymProps > 0 && _nFdViaFdlb > 0)
                     _strFdPath = "SymbolProps+FDLIB";
                 else if (_nFdViaSymProps > 0)
                     _strFdPath = "SymbolProps";
@@ -754,6 +770,8 @@ namespace MyEplanActions
             _nFdVia16018 = 0;
             _nFdViaFdlb = 0;   // rev.14.4 [FDLIB]
             _nFdViaSymProps = 0;   // rev.14.8 [SYMFUNC-CAT]
+            _nFdViaMdProps = 0;    // rev.14.11 [SYMFUNC-MD]
+            _nMdCatProbes = 0;     // rev.14.11: кап проб — на перечисление
             _nCatProbes = 0;   // rev.14.8: кап проб — на перечисление, не навсегда
             _nFdViaMd = 0;     // rev.14.5 [MDFD]
             _nDescViaMd = 0;   // rev.14.5 [MDFD]
@@ -1372,6 +1390,12 @@ namespace MyEplanActions
                     Probe("[SYMFDMAP] raw ToString «" + strName + "» — " +
                         oEx.GetType().Name + ": " + oEx.Message, iOrdinal);
                 }
+                // rev.14.11: ожидаемо-пустое #16018 (rev.14.10: пуст у всех 796,
+                // oVal.ToString() бросает MDEmptyPropertyException или null) — тихий
+                // выход ДО ExtractLongViaReflection, чтобы не сыпать серию WARN
+                // (SYMFD:<имя> ToInt() TargetInvocationException + ToString) на
+                // заведомо пустом свойстве. Raw-проба выше остаётся Probe-капнутой.
+                if (string.IsNullOrEmpty(strRaw)) return null;
                 string strVia;
                 nId = ExtractLongViaReflection(oVal, "SYMFD:" + strName, out strVia);
                 Probe("[SYMFDMAP] «" + strName + "» raw=«" + (strRaw ?? "<null>") +
@@ -1410,6 +1434,106 @@ namespace MyEplanActions
                 if (iOrdinal < 10)
                     ProbeWarn("[SYMFDMAP-DESC] «" + strName + "» #16011 — " +
                         oEx.GetType().Name + ": " + oEx.Message);
+                return null;
+            }
+        }
+
+        /// <summary>REV.14.11: классификация FUNC_* на MDSymbolPropertyList
+        /// (MD-обёртка, ctor(MDSymbol) — в отличие от rev.14.8-спайка через
+        /// DataModel-обёртку: KB-проверка 29.09 показала, что все 4 члена
+        /// FUNC_CATEGORY #20115 / FUNC_CATEGORY_REGION #20088 / FUNC_GROUP #20116 /
+        /// FUNC_CATEGORY_GROUP_ID #20188 есть именно на MDSymbolPropertyList).
+        /// Typed-обращения НЕ используем (конвенция проекта: reflection-проба
+        /// TryGetMemberValue — не ловить CS на стенде); первые три — локализация
+        /// SymbolCatalog.LocalizeMultiLang, catgroup — сырая строка. Пустые
+        /// свойства — НОРМА: в карту не попадают БЕЗ WARN. Запись в карту —
+        /// только при непустых cat И group (region/group — опциональные).
+        /// Пробы: точечные CABDCP2/CABDCP3 — ProbeInfo ВСЕГДА; рядовые — первые 10
+        /// (кап _nMdCatProbes). Инстансный (Probe-канал, поля класса).</summary>
+        private void TryClassifyViaMdProperties(
+            Eplan.EplApi.MasterData.MDSymbol oMdSym,
+            int iOrdinal, string strName,
+            Dictionary<string, string[]> dctClsNew)
+        {
+            if (oMdSym == null || dctClsNew == null) return;
+            try
+            {
+                Eplan.EplApi.MasterData.MDSymbolPropertyList oProps =
+                    new Eplan.EplApi.MasterData.MDSymbolPropertyList(oMdSym);
+                object oValCat = TryGetMemberValue(oProps, "FUNC_CATEGORY");
+                object oValRegion = TryGetMemberValue(oProps, "FUNC_CATEGORY_REGION");
+                object oValGroup = TryGetMemberValue(oProps, "FUNC_GROUP");
+                object oValCatGroup = TryGetMemberValue(oProps, "FUNC_CATEGORY_GROUP_ID");
+                // rev.14.10-факт: MDPropertyValue.ToString() на ОЖИДАЕМО-пустом
+                // свойстве бросает MDEmptyPropertyException — НЕ ValueToStringOrNull:
+                // тот не ловит исключения, проба-метод поймал бы по WARN-у на символ
+                // (тот же шум, что глушим в TryGetFdId). Хелпер ниже — тихо null.
+                // null/пусто → null. Первые три — локализация, catgroup — сырая.
+                string strCat = MdValueToStringOrNull(oValCat);
+                string strRegion = MdValueToStringOrNull(oValRegion);
+                string strGroup = MdValueToStringOrNull(oValGroup);
+                string strCatGroup = MdValueToStringOrNull(oValCatGroup);
+                string strCatLoc = string.IsNullOrEmpty(strCat)
+                    ? null : SymbolCatalog.LocalizeMultiLang(strCat);
+                string strRegionLoc = string.IsNullOrEmpty(strRegion)
+                    ? null : SymbolCatalog.LocalizeMultiLang(strRegion);
+                string strGroupLoc = string.IsNullOrEmpty(strGroup)
+                    ? null : SymbolCatalog.LocalizeMultiLang(strGroup);
+
+                // Пробы: точечные CABDCP2/CABDCP3 — ВСЕГДА ProbeInfo; рядовые —
+                // первые 10 per перечисление (кап-счётчик _nMdCatProbes; Probe
+                // внутри глушит iOrdinal >= 10, поэтому кап — двойной).
+                bool bPointName =
+                    string.Compare(strName, "CABDCP2", StringComparison.Ordinal) == 0 ||
+                    string.Compare(strName, "CABDCP3", StringComparison.Ordinal) == 0;
+                if (bPointName || (iOrdinal < 10 && _nMdCatProbes < 10))
+                {
+                    if (!bPointName) _nMdCatProbes++;
+                    string strText = "[SYMFUNC-MD] «" + strName + "»: cat='" +
+                        (strCatLoc ?? "<null>") + "' region='" +
+                        (strRegionLoc ?? "<null>") + "' group='" +
+                        (strGroupLoc ?? "<null>") + "' catgroup='" +
+                        (strCatGroup ?? "<null>") + "'";
+                    if (bPointName) ProbeInfo(strText);
+                    else Probe(strText, iOrdinal);
+                }
+
+                // Классификация: cat И group непусты → запись в карту
+                // [catLoc, regionLoc, grpLoc, catGroupRaw]; неполные не кладём.
+                if (string.IsNullOrEmpty(strCatLoc) || string.IsNullOrEmpty(strGroupLoc))
+                    return;
+                if (dctClsNew.ContainsKey(strName)) return;   // first-wins
+                dctClsNew[strName] = new string[]
+                {
+                    strCatLoc, strRegionLoc, strGroupLoc, strCatGroup
+                };
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[SYMFUNC-MD] «" + strName + "» FUNC_* на MD-обёртке — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+        }
+
+        /// <summary>MDPropertyValue → строка (ToString) без локализации: null-объект,
+        /// пустой результат ИЛИ исключение ToString() (MDEmptyPropertyException на
+        /// пустом MD-свойстве — rev.14.10-факт) → null БЕЗ шума.</summary>
+        private static string MdValueToStringOrNull(object oVal)
+        {
+            if (oVal == null) return null;
+            try
+            {
+                string strRaw = oVal.ToString();
+                return string.IsNullOrEmpty(strRaw) ? null : strRaw;
+            }
+            catch
+            {
+                // rev.14.11 ревью M-1: молчание ЛЮБОГО отказа ToString —
+                // намеренное (пустое MDPropertyValue бросает MDEmptyPropertyException
+                // — ожидаемый случай, прогон rev.14.10; ссылку на тип исключения в
+                // legacy-csc не доказывали — не рисковать CS). Прочие исключения
+                // маловероятны и не являются сигналом классификации — карта пропустит
+                // символ, а [SYMFDMAP]/[SYMFUNC-MD] покажут факт записи null.
                 return null;
             }
         }
@@ -2510,10 +2634,13 @@ namespace MyEplanActions
                 _dctMdFdIdByName = new Dictionary<string, Dictionary<string, long>>();
             if (_dctMdDescByName == null)
                 _dctMdDescByName = new Dictionary<string, Dictionary<string, string>>();
+            if (_dctMdClsByName == null)
+                _dctMdClsByName = new Dictionary<string, Dictionary<string, string[]>>();
             int nMdCount = 0;
             int nDupId = 0;
             Dictionary<string, long> dctId;
             Dictionary<string, string> dctDesc;
+            Dictionary<string, string[]> dctCls;
             bool bJustBuilt = false;
             if (!_dctMdFdIdByName.ContainsKey(strLibName))
             {
@@ -2522,6 +2649,7 @@ namespace MyEplanActions
                 // RefreshSymbols не спамят и не пересобирают.
                 Dictionary<string, long> dctIdNew = new Dictionary<string, long>();
                 Dictionary<string, string> dctDescNew = new Dictionary<string, string>();
+                Dictionary<string, string[]> dctClsNew = new Dictionary<string, string[]>();
                 object oMdLib = TryCreateMdLibrary(oLib);
                 if (oMdLib == null)
                 {
@@ -2530,6 +2658,7 @@ namespace MyEplanActions
                         "id-промахов 0, desc 0; заполнено FD 0, desc 0");
                     _dctMdFdIdByName[strLibName] = dctIdNew;
                     _dctMdDescByName[strLibName] = dctDescNew;
+                    _dctMdClsByName[strLibName] = dctClsNew;
                     return;
                 }
                 try
@@ -2553,6 +2682,12 @@ namespace MyEplanActions
                                 else
                                     dctIdNew[strSymName] = nFdId.Value;
                             }
+                            // rev.14.11 [SYMFUNC-MD]: классификация FUNC_* на той же
+                            // MD-обёртке — проба + запись в карту dctClsNew (карта
+                            // кэшируется — повторные перечисления не спамят
+                            // [SYMFUNC-MD] заново).
+                            TryClassifyViaMdProperties(oMdSym, iOrdinalMd, strSymName,
+                                dctClsNew);
                             // TryGetSymbDesc возвращает RAW блоб (ToString()) —
                             // локализуем SymbolCatalog.LocalizeMultiLang (формат
                             // «de_DE@…;ru_RU@…»); пусто после локализации — не в карту.
@@ -2585,15 +2720,26 @@ namespace MyEplanActions
                 }
                 _dctMdFdIdByName[strLibName] = dctIdNew;
                 _dctMdDescByName[strLibName] = dctDescNew;
+                _dctMdClsByName[strLibName] = dctClsNew;
                 dctId = dctIdNew;
                 dctDesc = dctDescNew;
+                dctCls = dctClsNew;
                 bJustBuilt = true;
+                // rev.14.11 [SYMFUNC-MD-SUM]: ОДНА строка после построения —
+                // M=записей класс-карты, N=ОБРАБОТАННЫХ MDSymbol (при исключении
+                // посреди обхода N<полного размера библиотеки — ревью M-2);
+                // сопоставление — в [SYMFDMAP]. Кэш-hit НЕ печатает (конвенция).
+                ProbeInfo("[SYMFUNC-MD-SUM] классификация MD: " +
+                    dctClsNew.Count.ToString(CultureInfo.InvariantCulture) + " из " +
+                    nMdCount.ToString(CultureInfo.InvariantCulture) +
+                    " обработанных (карта; сопоставление в [SYMFDMAP])");
             }
             else
             {
                 // Кэш-hit: карты уже построены — наполняем молча.
                 dctId = _dctMdFdIdByName[strLibName];
                 dctDesc = _dctMdDescByName[strLibName];
+                dctCls = _dctMdClsByName[strLibName];
             }
             // Сэмплы [MDFD-KEY] — первые 10 имён БЕЗ FD на входе, ДО наполнения
             // (сняты в отдельный список; исходы эквивалентны веткам цикла ниже).
@@ -2609,6 +2755,8 @@ namespace MyEplanActions
                 }
             }
             // Наполнение записей (после построения и на кэш-hit):
+            // (а-0) rev.14.11: Fd == null → класс-карта MD ([catLoc, regionLoc,
+            // grpLoc, catGroupRaw]) → FdInfo на месте (путь «SymbolProps-MD»);
             // (а) Fd == null → id-карта → _dctFdById (first-wins);
             // (б) пустое Description (ЛЮБАЯ запись, вкл. Fd!=null) → desc-карта.
             int nIdMiss = 0;
@@ -2618,28 +2766,57 @@ namespace MyEplanActions
                 if (oEntry == null) continue;
                 if (oEntry.Fd == null && !string.IsNullOrEmpty(oEntry.Name))
                 {
-                    long nMdId;
-                    if (dctId.TryGetValue(oEntry.Name, out nMdId))
+                    // rev.14.11 [SYMFUNC-MD]: ПЕРВЫЙ путь — класс-карта MD (rev.14.10
+                    // показал: #16018 пуст на всех 796, id-путь dead; класс-карта
+                    // собрана в момент построения — cat+group непусты).
+                    string[] arrCls;
+                    if (dctCls.TryGetValue(oEntry.Name, out arrCls) && arrCls != null &&
+                        arrCls.Length >= 4 &&
+                        !string.IsNullOrEmpty(arrCls[0]) && !string.IsNullOrEmpty(arrCls[2]))
                     {
-                        FdInfo oInfoFd;
-                        if (_dctFdById != null && _dctFdById.TryGetValue(nMdId, out oInfoFd))
-                        {
-                            oEntry.Fd = oInfoFd;
-                            oEntry.strFdPath = "MDSymbol";
-                            _nFdViaMd++;
-                            // (fix ревью Important) счётчик общей сводки [SYMFDMAP]:
-                            // без него «сопоставлено» печатает только A2-хиты,
-                            // а MDS-наполнение осталось бы невидимым.
-                            _nFdMapped++;
-                        }
-                        else
-                        {
-                            nIdMiss++;   // id в карте — dctFdById промах
-                        }
+                        FdInfo oFd = new FdInfo();
+                        oFd.MainGroup = null;
+                        // rev.14.11 ревью I-1: ?? не ловит Empty — контракт карты
+                        // допускает String.Empty; пустая Region → Area = Group.
+                        oFd.Area = string.IsNullOrEmpty(arrCls[1]) ? arrCls[2] : arrCls[1];
+                        oFd.Category = arrCls[0];
+                        oFd.Group = arrCls[2];
+                        oFd.Name = SymbolCatalog.ExtractFdNameFromCategoryGroup(arrCls[3])
+                            ?? arrCls[2];
+                        oFd.Description = null;
+                        oEntry.Fd = oFd;
+                        oEntry.strFdPath = "SymbolProps-MD";
+                        _nFdViaMdProps++;
+                        // пост-loop до-заполнение — инкремент ЗДЕСЬ ОБЯЗАТЕЛЕН
+                        // (конвенция rev.14.5: см. комменты 2630-2636/2646-2651).
+                        _nFdMapped++;
                     }
                     else
                     {
-                        nNoId++;   // имя отсутствует в MDS-карте id
+                        long nMdId;
+                        if (dctId.TryGetValue(oEntry.Name, out nMdId))
+                        {
+                            FdInfo oInfoFd;
+                            if (_dctFdById != null &&
+                                _dctFdById.TryGetValue(nMdId, out oInfoFd))
+                            {
+                                oEntry.Fd = oInfoFd;
+                                oEntry.strFdPath = "MDSymbol";
+                                _nFdViaMd++;
+                                // (fix ревью Important) счётчик общей сводки [SYMFDMAP]:
+                                // без него «сопоставлено» печатает только A2-хиты,
+                                // а MDS-наполнение осталось бы невидимым.
+                                _nFdMapped++;
+                            }
+                            else
+                            {
+                                nIdMiss++;   // id в карте — dctFdById промах
+                            }
+                        }
+                        else
+                        {
+                            nNoId++;   // имя отсутствует в MDS-карте id
+                        }
                     }
                 }
                 if (string.IsNullOrEmpty(oEntry.Description) &&
