@@ -101,6 +101,20 @@ namespace MyEplanActions
     ///   без описаний.
     /// Отказ всех — прежний статус-текст ошибки. R6: на УСПЕХЕ статус НЕ печатается
     /// (пустой); статусы ошибок/деградации сохранены.
+    /// rev.14.15: шторм проб rev.14.12/13 под гейтом ProbeStormEnabled=false
+    /// (CLR 0x80131506, п.109); классификация — ридер-скан
+    /// TryGetMemberValueViaScan (GetProperty глотал AmbiguousMatchException
+    /// на new-членах).
+    /// rev.14.16: скан-семантика «первый одноимённый non-null» была не достаточна —
+    /// пара base+new может отдать ПУСТУЮ обёртку от base и значение от производного
+    /// (rev.14.15: 0 из 796 при живых [SYMPL]-значениях rev.14.13). Скан перебирает
+    /// ВСЕХ одноимённых parameterless кандидатов (derived-вперёд) и принимает
+    /// первого с НЕПУСТЫМ ToString; индекс-оверлоады не читаются вовсе.
+    /// Диагностика: [SCAN-SUM] (исходы решают value/null/threw/notfound) +
+    /// [SDIAG] (кап 8; победителя — DeclaringType несущего члена); Console-дампы
+    /// устранены (в главном логе EPLAN глухи; WARN-бюджет не задет, INFO-канал).
+    /// [SYMPL]-дампы точечных CABDCP2/CABDCP3 при выключенном шторме остаются —
+    /// узкие по префиксам FUNC_*/SYMB_* (пары/броски по именам).
     /// === FD-словари (BuildFdDictionary) ===
     /// Один раз за жизнь диалога: Project.FunctionDefinitionLibrary.FunctionDefinitions,
     /// (а) _dctFdById (Id → FdInfo; первый побеждает — Id НЕ уникален глобально:
@@ -312,6 +326,23 @@ namespace MyEplanActions
         // [SYMFUNC-MD]-проб (10 на перечисление; оба обнуляет ResetFdMatchCounters).
         private int _nFdViaMdProps;
         private int _nMdCatProbes;
+        // rev.14.12 [VARPROP]: кап MD-рядовых проб MDSymbolVariant (кап ПО
+        // СИМВОЛАМ, MDSymbol.Variants); 10 на перечисление; обнуляется
+        // ResetFdMatchCounters; точечные CABDCP2/CABDCP3 кап не тратят.
+        // DataModel-проба капа-счётчика НЕ имеет (ревью rev.14.12: кап по
+        // iOrdinal < 10 — прецедент [SYMFUNC-CAT]).
+        private int _nMdVarProbes;
+        // rev.14.16 [SCAN-SUM]/[SDIAG]: исходы ридер-скана за перечисление —
+        // каждый вызов скана считается РОВНО в одну категорию (value / null-пусто / threw /
+        // нет члена; сумма = все чтения) + капы детальных строк (win 5 / fail 8).
+        // Всё — «на перечисление»: ResetFdMatchCounters обнуляет; [SCAN-SUM] печатает
+        // хвост A2. INFO-канал: WARN-бюджет эталона не трогаем.
+        private int _nScanRead;
+        private int _nScanNull;
+        private int _nScanThrew;
+        private int _nScanNotFound;
+        private int _nScanDiagWin;
+        private int _nScanDiagFail;
         private string _strFdPath = "нет";   // путь сопоставления [SYMFDMAP] текущего перечисления
 
         // Превью-сетка (RC-2 fix): ВСЕГДА 8 фиксированных клеток (4×2); параллельные
@@ -663,6 +694,7 @@ namespace MyEplanActions
         /// Никаких мутаций (диалог только читает).</summary>
         private void RefreshSymbols()
         {
+            ProbeInfo("[BR] RefreshSymbols: enter");   // rev.14.14: крэш-хвост
             _lstEntries = new List<SymbolEntry>();
             ResetFdMatchCounters();
             DisposePreviewGrid();
@@ -681,6 +713,7 @@ namespace MyEplanActions
             {
                 SetStatus("Библиотека не выбрана из списка — список символов пуст " +
                     "(выбор символа недоступен).");
+                ProbeInfo("[BR] RefreshSymbols: exit (нет библиотеки)");   // rev.14.14
                 return;
             }
             SymbolLibrary oLib = _lstLibraryObjects[iIndex];
@@ -731,6 +764,7 @@ namespace MyEplanActions
                 ProbeFdSummary();
                 RebuildTree();
                 SetStatus(string.Empty);   // R6: успех — статус пустой
+                ProbeInfo("[BR] RefreshSymbols: exit (A2)");   // rev.14.14
                 return;
             }
 
@@ -743,6 +777,7 @@ namespace MyEplanActions
                 ProbeFdSummary();
                 RebuildTree();
                 SetStatus(string.Empty);   // R6: успех — статус пустой
+                ProbeInfo("[BR] RefreshSymbols: exit (B)");   // rev.14.14
                 return;
             }
 
@@ -756,9 +791,11 @@ namespace MyEplanActions
                 SetStatus("Деградация: получены только имена символов (без вариантов, " +
                     "FD и описаний) — категории по префиксу. Варианты неизвестны — " +
                     "клетки превью отключены (выбор невозможен; подробности [DSPROBE]).");
+                ProbeInfo("[BR] RefreshSymbols: exit (C)");   // rev.14.14
                 return;
             }
 
+            ProbeInfo("[BR] RefreshSymbols: exit (fail)");   // rev.14.14
             SetStatus("Перечисление символов недоступно (все цепочки пробили в отказ) — " +
                 "выбор символа невозможен (подробности в [DSPROBE] лога).");
         }
@@ -772,9 +809,16 @@ namespace MyEplanActions
             _nFdViaSymProps = 0;   // rev.14.8 [SYMFUNC-CAT]
             _nFdViaMdProps = 0;    // rev.14.11 [SYMFUNC-MD]
             _nMdCatProbes = 0;     // rev.14.11: кап проб — на перечисление
+            _nMdVarProbes = 0;     // rev.14.12 [VARPROP]: кап MD-рядовых символов     // rev.14.12 [VARPROP]: кап рядовых MD-вариантов
             _nCatProbes = 0;   // rev.14.8: кап проб — на перечисление, не навсегда
             _nFdViaMd = 0;     // rev.14.5 [MDFD]
             _nDescViaMd = 0;   // rev.14.5 [MDFD]
+            _nScanRead = 0;       // rev.14.16 [SCAN-SUM]
+            _nScanNull = 0;       // rev.14.16 [SCAN-SUM]
+            _nScanThrew = 0;      // rev.14.16 [SCAN-SUM]
+            _nScanNotFound = 0;   // rev.14.16 [SCAN-SUM]
+            _nScanDiagWin = 0;    // rev.14.16 [SDIAG]
+            _nScanDiagFail = 0;   // rev.14.16 [SDIAG]
             _strFdPath = "нет";
         }
 
@@ -835,6 +879,11 @@ namespace MyEplanActions
                     Symbol oSymbol = oItem as Symbol;
                     if (oSymbol == null) continue;
                     iOrdinal++;
+                    // rev.14.14: прогресс каждые 100 символов — крэш-хвост покажет,
+                    // на каком символе умерло перечисление (слепая зона капа Probe).
+                    if (iOrdinal % 100 == 0)
+                        ProbeInfo("[BR] A2 прогресс: " +
+                            iOrdinal.ToString(CultureInfo.InvariantCulture) + " символов");
                     string strName = ResolveNameViaReflection(oSymbol);
                     if (string.IsNullOrEmpty(strName)) continue;
 
@@ -879,6 +928,11 @@ namespace MyEplanActions
                         Probe("[SYMFDMAP] Symbol.Variants «" + strName + "» — " +
                             oEx.GetType().Name + ": " + oEx.Message, iOrdinal - 1);
                     }
+
+                    // rev.14.12 [VARPROP]: проба классификации на УРОВНЕ ВАРИАНТА —
+                    // SymbolVariant.Properties (DataModel-обёртка, reflection);
+                    // капы внутри (точечные CABDCP2/CABDCP3 всегда, рядовые 10).
+                    TryProbeVariantProps(oEntry, strName, iOrdinal - 1);
 
                     // FD записи: (1) ПЕРВИЧНО — классификация SymbolProps
                     // [SYMFUNC-CAT] (rev.14.8): свойства САМОГО символа FUNC_*
@@ -1008,6 +1062,18 @@ namespace MyEplanActions
                     _nFdViaFdlb.ToString(CultureInfo.InvariantCulture) +
                     ", без классификации " +
                     (_lstEntries.Count - nSumProps - _nFdViaFdlb)
+                        .ToString(CultureInfo.InvariantCulture) + ")");
+                // rev.14.16 [SCAN-SUM]: исходы ридер-скана за перечисление —
+                // вердикт пары «данные пусты (null/пусто)» vs «пара/оверлоад
+                // глушит чтение (threw)» vs «имени нет (notfound)». Вердикт
+                // следующего шага встаёт на эти три числа.
+                ProbeInfo("[SCAN-SUM] ридер-скан за перечисление: value " +
+                    _nScanRead.ToString(CultureInfo.InvariantCulture) +
+                    ", null/пусто " + _nScanNull.ToString(CultureInfo.InvariantCulture) +
+                    ", threw " + _nScanThrew.ToString(CultureInfo.InvariantCulture) +
+                    ", нет члена " + _nScanNotFound.ToString(CultureInfo.InvariantCulture) +
+                    " (всего " +
+                    (_nScanRead + _nScanNull + _nScanThrew + _nScanNotFound)
                         .ToString(CultureInfo.InvariantCulture) + ")");
                 return true;
             }
@@ -1179,12 +1245,24 @@ namespace MyEplanActions
             if (oSymbol == null) return false;
             object oProps = GetSymbolPropertyListViaProbes(oSymbol, strName);
             if (oProps == null) return false;
+            // rev.14.13 [SYMPL]: дамп непустых членов DM-списка ДО чтения
+            // именованных FUNC_* — поиск привязки не угадыванием имён.
+            // rev.14.16: точечные CABDCP2/CABDCP3 (bFull) живут и при
+            // ВЫКЛЮЧЕННОМ шторме — узкий дамп (префиксы FUNC_*/SYMB_*, брошки/
+            // пары по именам); рядовые (bFull=false) глушатся гейтом
+            // DumpNonEmptyValues целиком. Сам дамп в try/catch — наружных
+            // WARN не даёт.
+            bool bPointCls =
+                string.Compare(strName, "CABDCP2", StringComparison.Ordinal) == 0 ||
+                string.Compare(strName, "CABDCP3", StringComparison.Ordinal) == 0;
+            DumpNonEmptyValues(oProps, "«" + strName + "» DM-список", bPointCls,
+                iOrdinal);
             try
             {
-                object oValCat = TryGetMemberValue(oProps, "FUNC_CATEGORY");
-                object oValRegion = TryGetMemberValue(oProps, "FUNC_CATEGORY_REGION");
-                object oValGroup = TryGetMemberValue(oProps, "FUNC_GROUP");
-                object oValCatGroup = TryGetMemberValue(oProps, "FUNC_CATEGORY_GROUP_ID");
+                object oValCat = TryGetMemberValueViaScan(oProps, "FUNC_CATEGORY");
+                object oValRegion = TryGetMemberValueViaScan(oProps, "FUNC_CATEGORY_REGION");
+                object oValGroup = TryGetMemberValueViaScan(oProps, "FUNC_GROUP");
+                object oValCatGroup = TryGetMemberValueViaScan(oProps, "FUNC_CATEGORY_GROUP_ID");
                 // PropertyValue.ToString() → строка (MultiLangString-блоб / String);
                 // null/пусто → null. Первые три — локализация, catgroup — сырая.
                 string strCat = ValueToStringOrNull(oValCat);
@@ -1257,6 +1335,27 @@ namespace MyEplanActions
             return string.IsNullOrEmpty(strRaw) ? null : strRaw;
         }
 
+        /// <summary>REV.14.13 [SYMPL]: ToString произвольного объекта-значения в
+        /// try/catch: null-объект → null; пустой результат или брошенное
+        /// исключение (MDPropertyValue на пустом свойстве бросает
+        /// MDEmptyPropertyException — факт rev.14.10) → null БЕЗ шума. Для
+        /// дамп-проб с произвольными типами (ValueToStringOrNull не ловит
+        /// исключения — точечно-ловящий вариант). Static: зеркалит
+        /// ValueToStringOrNull.</summary>
+        private static string SafeToString(object oVal)
+        {
+            if (oVal == null) return null;
+            try
+            {
+                string s = oVal.ToString();
+                return string.IsNullOrEmpty(s) ? null : s;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         /// <summary>FD-ID символа в цепочке A2 — FALLBACK #16018 c DataModel Symbol:
         /// как получить SymbolPropertyList от Symbol НЕ доказано (страниц
         /// Symbol~Properties / SymbolPropertyList~_ctor в базе нет) — ТОЛЬКО
@@ -1272,7 +1371,7 @@ namespace MyEplanActions
             if (oProps == null) return null;
             try
             {
-                object oVal = TryGetMemberValue(oProps, "SYMB_MAINFUNCTION");
+                object oVal = TryGetMemberValueViaScan(oProps, "SYMB_MAINFUNCTION");
                 if (oVal == null)
                 {
                     Probe("[SYMFDMAP] «" + strName + "» Symbol.props #16018 = null",
@@ -1308,7 +1407,7 @@ namespace MyEplanActions
             if (oProps == null) return null;
             try
             {
-                object oVal = TryGetMemberValue(oProps, "SYMB_DESC");
+                object oVal = TryGetMemberValueViaScan(oProps, "SYMB_DESC");
                 if (oVal == null) return null;
                 string strRaw = oVal.ToString();
                 string strLocalized = SymbolCatalog.LocalizeMultiLang(strRaw);
@@ -1460,10 +1559,20 @@ namespace MyEplanActions
             {
                 Eplan.EplApi.MasterData.MDSymbolPropertyList oProps =
                     new Eplan.EplApi.MasterData.MDSymbolPropertyList(oMdSym);
-                object oValCat = TryGetMemberValue(oProps, "FUNC_CATEGORY");
-                object oValRegion = TryGetMemberValue(oProps, "FUNC_CATEGORY_REGION");
-                object oValGroup = TryGetMemberValue(oProps, "FUNC_GROUP");
-                object oValCatGroup = TryGetMemberValue(oProps, "FUNC_CATEGORY_GROUP_ID");
+                // rev.14.13 [SYMPL]: дамп непустых членов MD-списка ДО
+                // отражённых чтений 4 FUNC_* — поиск привязки не угадыванием
+                // имён. rev.14.16: точечные CABDCP2/CABDCP3 (bFull) живут и
+                // при ВЫКЛЮЧЕННОМ шторме — узкий дамп (префиксы FUNC_*/SYMB_*,
+                // брошки/пары по именам); рядовые глушатся гейтом целиком.
+                bool bPointName =
+                    string.Compare(strName, "CABDCP2", StringComparison.Ordinal) == 0 ||
+                    string.Compare(strName, "CABDCP3", StringComparison.Ordinal) == 0;
+                DumpNonEmptyValues(oProps, "«" + strName + "» MD-список",
+                    bPointName, iOrdinal);
+                object oValCat = TryGetMemberValueViaScan(oProps, "FUNC_CATEGORY");
+                object oValRegion = TryGetMemberValueViaScan(oProps, "FUNC_CATEGORY_REGION");
+                object oValGroup = TryGetMemberValueViaScan(oProps, "FUNC_GROUP");
+                object oValCatGroup = TryGetMemberValueViaScan(oProps, "FUNC_CATEGORY_GROUP_ID");
                 // rev.14.10-факт: MDPropertyValue.ToString() на ОЖИДАЕМО-пустом
                 // свойстве бросает MDEmptyPropertyException — НЕ ValueToStringOrNull:
                 // тот не ловит исключения, проба-метод поймал бы по WARN-у на символ
@@ -1483,9 +1592,6 @@ namespace MyEplanActions
                 // Пробы: точечные CABDCP2/CABDCP3 — ВСЕГДА ProbeInfo; рядовые —
                 // первые 10 per перечисление (кап-счётчик _nMdCatProbes; Probe
                 // внутри глушит iOrdinal >= 10, поэтому кап — двойной).
-                bool bPointName =
-                    string.Compare(strName, "CABDCP2", StringComparison.Ordinal) == 0 ||
-                    string.Compare(strName, "CABDCP3", StringComparison.Ordinal) == 0;
                 if (bPointName || (iOrdinal < 10 && _nMdCatProbes < 10))
                 {
                     if (!bPointName) _nMdCatProbes++;
@@ -1513,6 +1619,502 @@ namespace MyEplanActions
                 ProbeWarn("[SYMFUNC-MD] «" + strName + "» FUNC_* на MD-обёртке — " +
                     oEx.GetType().Name + ": " + oEx.Message);
             }
+        }
+
+        /// <summary>REV.14.12 [VARPROP-MEMS]: surface-дамп public-свойств объекта
+        /// (GetProperties — Public|Instance по умолчанию; нижний регистр имён не
+        /// ожидается, члены EPLAN — PascalCase). bFull=true (точечные
+        /// CABDCP2/CABDCP3) — до 24 имён построчно (кап 24, хвост — «ещё K»);
+        /// bFull=false — ОДНА строка, имена через «; », общий кап 240 символов
+        /// (substring, без трепания). Исключение — ProbeWarn (тип исключения +
+        /// сообщение). Инстансный (Probe-канал, поля класса).</summary>
+        private void DumpMemberSurface(object oProps, string strTag, bool bFull,
+            int iOrdinal)
+        {
+            if (oProps == null) return;
+            // rev.14.15: шторм проб выключен (ProbeStormEnabled=false — CLR 0x80131506, п.109).
+            if (!AddInConfiguration.ProbeStormEnabled) return;
+            try
+            {
+                PropertyInfo[] arrProps = oProps.GetType().GetProperties();
+                if (arrProps == null || arrProps.Length == 0)
+                {
+                    string strEmpty = "[VARPROP-MEMS] " + strTag +
+                        ": <нет public-свойств>";
+                    if (bFull) ProbeInfo(strEmpty);
+                    else Probe(strEmpty, iOrdinal);
+                    return;
+                }
+                if (bFull)
+                {
+                    int nNames = 0;
+                    foreach (PropertyInfo oPropItem in arrProps)
+                    {
+                        if (nNames >= 24)
+                        {
+                            int nRest = arrProps.Length - nNames;
+                            ProbeInfo("[VARPROP-MEMS] " + strTag + " … ещё " +
+                                nRest.ToString(CultureInfo.InvariantCulture) +
+                                " (кап 24)");
+                            break;
+                        }
+                        ProbeInfo("[VARPROP-MEMS] " + strTag + " «" +
+                            oPropItem.Name + "»");
+                        nNames++;
+                    }
+                }
+                else
+                {
+                    string strJoined = null;
+                    foreach (PropertyInfo oPropItem in arrProps)
+                    {
+                        if (!string.IsNullOrEmpty(strJoined))
+                            strJoined += "; ";
+                        strJoined += oPropItem.Name;
+                        if (strJoined.Length > 240)
+                        {
+                            strJoined = strJoined.Substring(0, 240);
+                            break;
+                        }
+                    }
+                    Probe("[VARPROP-MEMS] " + strTag + ": " + strJoined, iOrdinal);
+                }
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[VARPROP-MEMS] " + strTag + " — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+        }
+
+        /// <summary>REV.14.13 [SYMPL]: дамп ВСЕХ непустых значений public-свойств
+        /// объекта (GetProperties — Public|Instance по умолчанию) с именами
+        /// членов: поиск привязки символ→определение функции НЕ угадыванием имён,
+        /// а полным списком — значение-кандидат покажет сам себя. Чтение каждого
+        /// члена — через TryGetMemberValue (исключения чтения глотаются тихо:
+        /// «члена нет» и «член бросает» для ДАМПА неразличимы и оба = пропуск;
+        /// различение — отдельной пробой [VARPROP-EXC]). bFull=true (точечные
+        /// CABDCP2/CABDCP3) — ПОСТРОЧНО через ProbeInfo без капа; bFull=false —
+        /// ОДНА строка join " ", общий кап 400 символов (substring по char —
+        /// UTF-байты не рвутся). Ноль непустых — честная строка «все члены
+        /// пусты (N public-членов)». Инстансный (Probe-канал).
+        /// rev.14.16: при ВЫКЛЮЧЕННОМ шторме дамп остаётся ТОЛЬКО для точечных
+        /// (bFull) вызовов — и УЗКИЙ: члены по префиксам FUNC_*/SYMB_* (пары
+        /// base+new и броски по именам — карта данных классификации). Полный
+        /// дамп всех ~115 членов живёт за ProbeStormEnabled=true.</summary>
+        private void DumpNonEmptyValues(object oProps, string strTag, bool bFull,
+            int iOrdinal)
+        {
+            if (oProps == null) return;
+            // rev.14.16: шторм ВЫКЛЮЧЕН (ProbeStormEnabled=false — CLR
+            // 0x80131506, п.109), но точечные (bFull — только CABDCP2/CABDCP3)
+            // [SYMPL]-дампы ОСТАЮТСЯ — это диагностика классификации, не шторм.
+            // Рядовые (bFull=false) по-прежнему глушатся целиком.
+            bool bPointOnly = !AddInConfiguration.ProbeStormEnabled;
+            if (bPointOnly && !bFull) return;
+            try
+            {
+                PropertyInfo[] arrProps = oProps.GetType().GetProperties();
+                List<string> lstValues = new List<string>();
+                List<string> lstThrew = new List<string>();
+                int nScanned = 0;
+                foreach (PropertyInfo oProp in arrProps)
+                {
+                    // rev.14.16: точечный дамп — УЗКИЙ: только члены классификации
+                    // FUNC_*/SYMB_* (пара/броски по именам). Объём чтений на список
+                    // — десятки против ~115×4×796 шторма rev.14.12/13 (п.5, п.109).
+                    if (bPointOnly)
+                    {
+                        string strNameHere = oProp.Name;
+                        if (string.IsNullOrEmpty(strNameHere)) continue;
+                        if (!strNameHere.StartsWith("FUNC_", StringComparison.Ordinal) &&
+                            !strNameHere.StartsWith("SYMB_", StringComparison.Ordinal))
+                            continue;
+                    }
+                    nScanned++;
+                    // rev.14.13 ревью Major-2: TryGetMemberValue глотает
+                    // исключение → «пусто» и «бросок» неразличимы. Здесь
+                    // чтение с явным диагнозом (НО в INFO-канал — не
+                    // возвращать 1746-WARN-шум).
+                    object oV;
+                    try
+                    {
+#pragma warning disable 618
+                        oV = oProp.GetValue(oProps, null);
+#pragma warning restore 618
+                    }
+                    catch (Exception oExV)
+                    {
+                        Exception oE = oExV.InnerException != null
+                            ? oExV.InnerException : oExV;
+                        lstThrew.Add(oProp.Name + "(" + oE.GetType().Name + ")");
+                        continue;
+                    }
+                    string strVal = SafeToString(oV);
+                    if (!string.IsNullOrEmpty(strVal))
+                        lstValues.Add(oProp.Name + "='" + strVal + "'");
+                }
+                string strRear = lstThrew.Count > 0
+                    ? " | бросков " +
+                        lstThrew.Count.ToString(CultureInfo.InvariantCulture) +
+                        ": " + string.Join(", ",
+                            lstThrew.Count > 3
+                                ? lstThrew.GetRange(0, 3).ToArray()
+                                : lstThrew.ToArray())
+                    : "";
+                if (lstValues.Count == 0 && lstThrew.Count == 0)
+                {
+                    string strNone = "[SYMPL] " + strTag + ": все члены пусты (" +
+                        nScanned.ToString(CultureInfo.InvariantCulture) + " public-членов"
+                        + (bPointOnly ? ", узкий дамп FUNC_*/SYMB_*" : "") + ")";
+                    if (bFull) ProbeInfo(strNone);
+                    else Probe(strNone, iOrdinal);
+                    return;
+                }
+                if (bFull)
+                {
+                    foreach (string strItem in lstValues)
+                        ProbeInfo("[SYMPL] " + strTag + " " + strItem);
+                    foreach (string strThrew in lstThrew)
+                        ProbeInfo("[SYMPL] " + strTag + " " + strThrew +
+                            " <бросил>");
+                }
+                else
+                {
+                    string strJoined = string.Join(" ", lstValues.ToArray()) +
+                        strRear;
+                    if (strJoined.Length > 400)
+                        strJoined = strJoined.Substring(0, 400);
+                    Probe("[SYMPL] " + strTag + ": " + strJoined, iOrdinal);
+                }
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[SYMPL] " + strTag + " — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+        }
+
+        /// <summary>REV.14.13 [VARPROP-EXC]: диагноз Properties=<null> — TryGetMemberValue
+        /// глотает исключение молча (Console-канал невидим в главном логе), поэтому
+        /// «члена нет» vs «член есть, GetValue бросает» не различено (рев.14.12: ×434
+        /// all-null на обеих поверхностях). Проба: GetMethod("Properties")
+        /// (public-only достаточно; KB-член public — NonPublic-вариант НЕ нужен).
+        /// oM==null → «метода Properties нет (только property/field?)»; иначе
+        /// Invoke(oVariant, new object[]{}) в try/catch: бросок → тип + сообщение
+        /// (+InnerException) — ROOT-диагноз; успех + не-null → тип возвращённого +
+        /// DumpNonEmptyValues/DumpMemberSurface поверх значения (тег
+        /// «…-список(invoke)»). Печати: bFull (точечные) — ProbeInfo, остальные
+        /// Probe(iOrdinal). Общий try/catch → ProbeWarn. Инстансный.</summary>
+        private void ProbePropertiesViaInvoke(object oVariant, string strTag,
+            bool bFull, int iOrdinal)
+        {
+            if (oVariant == null) return;
+            // rev.14.15: шторм проб выключен (ProbeStormEnabled=false — CLR 0x80131506, п.109).
+            if (!AddInConfiguration.ProbeStormEnabled) return;
+            try
+            {
+                // rev.14.13 контроллер: Properties — PROPERTY (KB «{get;}»,
+                // сигнатура getter = get_Properties) — GetMethod("Properties")
+                // вернул бы null всегда (кодер-сомнение 1). Диагноз:
+                // property есть → Invoke getter → исключение В ПРОБУ (root
+                // rev.14.12-null: «члена нет» vs «член бросает»).
+                System.Reflection.MethodInfo oM = null;
+                try
+                {
+                    System.Reflection.PropertyInfo oP =
+                        oVariant.GetType().GetProperty("Properties");
+                    if (oP != null) oM = oP.GetGetMethod();
+                }
+                catch (System.Reflection.AmbiguousMatchException)
+                {
+                    try
+                    {
+                        System.Reflection.PropertyInfo[] arrPs =
+                            oVariant.GetType().GetProperties();
+                        foreach (System.Reflection.PropertyInfo oPs in arrPs)
+                        {
+                            if (string.Compare(oPs.Name, "Properties",
+                                StringComparison.Ordinal) != 0)
+                                continue;
+                            // rev.14.13 ревью Major-1: наиболее производное
+                            // объявление (DeclaringType == рантайм-тип) —
+                            // иначе «new»-член можно схватить от базы.
+                            if (oPs.DeclaringType == oVariant.GetType())
+                            {
+                                oM = oPs.GetGetMethod();
+                                break;
+                            }
+                            if (oM == null) oM = oPs.GetGetMethod();   // первый как fallback
+                        }
+                    }
+                    catch (Exception oExP)
+                    {
+                        string strScan = "[VARPROP-EXC] " + strTag +
+                            ": скан GetProperties бросил — " +
+                            oExP.GetType().Name + ": " + oExP.Message;
+                        if (bFull) ProbeInfo(strScan);
+                        else Probe(strScan, iOrdinal);
+                        return;
+                    }
+                }
+                if (oM == null)
+                {
+                    string strNoMethod = "[VARPROP-EXC] " + strTag +
+                        ": свойства Properties нет (surface в [VARPROP-MEMS])";
+                    if (bFull) ProbeInfo(strNoMethod);
+                    else Probe(strNoMethod, iOrdinal);
+                    return;
+                }
+                object oInv;
+                try
+                {
+                    oInv = oM.Invoke(oVariant, new object[] { });
+                }
+                catch (Exception oExI)
+                {
+                    string strThrown = "[VARPROP-EXC] " + strTag +
+                        ": Properties бросил " + oExI.GetType().Name + ": " +
+                        oExI.Message +
+                        (oExI.InnerException != null
+                            ? " внутри " + oExI.InnerException.GetType().Name +
+                                ": " + oExI.InnerException.Message
+                            : "");
+                    if (bFull) ProbeInfo(strThrown);
+                    else Probe(strThrown, iOrdinal);
+                    return;
+                }
+                if (oInv != null)
+                {
+                    // ревью Major-1: DeclaringType выбранного getter — факт
+                    // «new-член варианта или унаследованный»
+                    string strInvoked = "[VARPROP-EXC] " + strTag +
+                        ": Properties вызван — " + oInv.GetType().FullName +
+                        " (объявлен в " + oM.DeclaringType.Name + ")";
+                    if (bFull) ProbeInfo(strInvoked);
+                    else Probe(strInvoked, iOrdinal);
+                    DumpNonEmptyValues(oInv, strTag + "-список(invoke)", bFull,
+                        iOrdinal);
+                    DumpMemberSurface(oInv, strTag + "-список(invoke)", bFull,
+                        iOrdinal);
+                }
+                else
+                {
+                    string strNullInv = "[VARPROP-EXC] " + strTag +
+                        ": Properties вызван → null (getter вернул null — " +
+                        "читается без бросков, значения нет)";
+                    if (bFull) ProbeInfo(strNullInv);
+                    else Probe(strNullInv, iOrdinal);
+                }
+            }
+            catch (Exception oEx)
+            {
+                ProbeWarn("[VARPROP-EXC] " + strTag + " — " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+        }
+
+        /// <summary>REV.14.12 [VARPROP]: проба классификации на УРОВНЕ ВАРИАНТА —
+        /// SymbolVariant.Properties (DataModel-обёртка; KB: список =
+        /// SymbolVariantPropertyList ctor(SymbolVariant)). Чтение 5 членов
+        /// (FUNC_CATEGORY / FUNC_CATEGORY_REGION / FUNC_GROUP /
+        /// FUNC_CATEGORY_GROUP_ID / SYMB_MAINFUNCTION) — ТОЛЬКО через
+        /// TryGetMemberValue (тихий null при отсутствии; typed-члены на
+        /// варианте-списках в KB НЕ задокументированы). SYMB_MAINFUNCTION —
+        /// ExtractLongViaReflection ТОЛЬКО у ТОЧЕЧНЫХ (CABDCP2/CABDCP3) и ТОЛЬКО
+        /// при непустом значении (Extract WARN-и на отказах — шум не масштабируем);
+        /// рядовым — только строка значения. Поверх — DumpMemberSurface.
+        /// Пробы: точечные всегда (ProbeInfo); рядовые — кап ПО СИМВОЛАМ
+        /// (iOrdinal < 10 — прецедент [SYMFUNC-CAT]; внутренний кап
+        /// Probe(iOrdinal>=10) дублирует). Инстансный.</summary>
+        private void TryProbeVariantProps(SymbolEntry oEntry, string strName,
+            int iOrdinal)
+        {
+            if (oEntry == null || oEntry.lstVariantObjects == null) return;
+            // rev.14.15: шторм проб выключен (ProbeStormEnabled=false — CLR 0x80131506, п.109).
+            if (!AddInConfiguration.ProbeStormEnabled) return;
+            bool bPointVar =
+                string.Compare(strName, "CABDCP2", StringComparison.Ordinal) == 0 ||
+                string.Compare(strName, "CABDCP3", StringComparison.Ordinal) == 0;
+            // rev.14.12 ревью Major/Minor: кап ПО СИМВОЛАМ (iOrdinal < 10 —
+            // прецедент [SYMFUNC-CAT]); _nVarProbes удалён — протечка
+            // surface-дампа после исчерпания вариант-капа и покрытие «10
+            // вариантных проб ≈ 1-2 символа» вместе с ней. Рядовым печатям
+            // внутренний кап Probe(iOrdinal>=10) достаточен.
+            bool bRowAllowed = iOrdinal < 10;
+            try
+            {
+                foreach (object oVarObj in oEntry.lstVariantObjects)
+                {
+                    if (oVarObj == null) continue;
+                    object oVarProps = TryGetMemberValue(oVarObj, "Properties");
+                    string strKind;
+                    if (oVarProps == null)
+                    {
+                        strKind = "[VARPROP] «" + strName + "» Properties=<null>";
+                        if (bPointVar) ProbeInfo(strKind);
+                        else if (bRowAllowed) Probe(strKind, iOrdinal);
+                        // rev.14.13 [VARPROP-EXC]: симметрично MD-варианту —
+                        // GetMethod+Invoke-проба; рядовые гейтнуты bRowAllowed
+                        // (внутри Probe(iOrdinal>=10) и так замолчали бы).
+                        if (bPointVar || bRowAllowed)
+                        {
+                            ProbePropertiesViaInvoke(oVarObj,
+                                "«" + strName + "» вар", bPointVar, iOrdinal);
+                            // rev.14.13 [VARPROP-MEMS]: при null — surface
+                            // САМОГО объекта-варианта (не списка).
+                            DumpMemberSurface(oVarObj,
+                                "«" + strName + "» объект", bPointVar, iOrdinal);
+                        }
+                        continue;
+                    }
+                    strKind = "[VARPROP] «" + strName + "» Properties=" +
+                        oVarProps.GetType().FullName;
+                    if (bPointVar) ProbeInfo(strKind);
+                    else if (bRowAllowed) Probe(strKind, iOrdinal);
+                    string[] arrMembers = new string[]
+                    {
+                        "FUNC_CATEGORY", "FUNC_CATEGORY_REGION", "FUNC_GROUP",
+                        "FUNC_CATEGORY_GROUP_ID", "SYMB_MAINFUNCTION"
+                    };
+                    foreach (string strNm in arrMembers)
+                    {
+                        object oV = TryGetMemberValue(oVarProps, strNm);
+                        string strVal = ValueToStringOrNull(oV);
+                        string strLine = strNm + "=«" +
+                            (string.IsNullOrEmpty(strVal) ? "<null>" : strVal) + "»";
+                        if (string.CompareOrdinal(strNm, "SYMB_MAINFUNCTION") == 0 &&
+                            bPointVar && !string.IsNullOrEmpty(strVal))
+                        {
+                            string strVia;
+                            long? nId = ExtractLongViaReflection(oV,
+                                "VARPROP:" + strName, out strVia);
+                            if (nId.HasValue)
+                            {
+                                strLine += " id=" +
+                                    nId.Value.ToString(CultureInfo.InvariantCulture) +
+                                    " via " + strVia;
+                            }
+                        }
+                        if (bPointVar) ProbeInfo("[VARPROP]   " + strLine);
+                        else if (bRowAllowed) Probe("[VARPROP]   " + strLine, iOrdinal);
+                    }
+                    string strTag = bPointVar
+                        ? "«" + strName + "» точечн"
+                        : strName;
+                    DumpMemberSurface(oVarProps, strTag, bPointVar, iOrdinal);
+                }
+            }
+            catch (Exception oEx)
+            {
+                // rev.14.12: ValueToStringOrNull НЕ ловит исключения (пустое
+                // свойство на DataModel-обёртке может бросить при ToString) —
+                // отказ пробы НЕ должен обрывать цикл A2 (весь TryEnumerate
+                // сидит на одном try/catch). Каналы: точечные ProbeInfo,
+                // рядовые Probe (кап iOrdinal).
+                string strErr = "[VARPROP] «" + strName + "» проба-отказ — " +
+                    oEx.GetType().Name + ": " + oEx.Message;
+                if (bPointVar) ProbeInfo(strErr);
+                else Probe(strErr, iOrdinal);
+            }
+        }
+
+        /// <summary>REV.14.12 [VARPROP]: проба классификации на УРОВНЕ MD-ВАРИАНТА —
+        /// MDSymbol.Variants → MDSymbolVariant.Properties (KB: свойство без
+        /// параметров, «public new MDSymbolVariantPropertyList Properties»;
+        /// список = MDSymbolVariantPropertyList). Протокол как в
+        /// TryProbeVariantProps (5 членов + DumpMemberSurface), strTag —
+        /// ««имя» md-вар-список». Пробы: точечные всегда; рядовые — кап 10
+        /// (_nMdVarProbes). Инстансный.</summary>
+        private void TryProbeMdVariantProps(
+            Eplan.EplApi.MasterData.MDSymbol oMdSym, string strName, int iOrdinal)
+        {
+            if (oMdSym == null) return;
+            // rev.14.15: шторм проб выключен (ProbeStormEnabled=false — CLR 0x80131506, п.109).
+            if (!AddInConfiguration.ProbeStormEnabled) return;
+            bool bPointVar =
+                string.Compare(strName, "CABDCP2", StringComparison.Ordinal) == 0 ||
+                string.Compare(strName, "CABDCP3", StringComparison.Ordinal) == 0;
+            if (!bPointVar && !(iOrdinal < 10 && _nMdVarProbes < 10)) return;
+            object oArr = TryGetMemberValue(oMdSym, "Variants");
+            if (oArr == null)
+            {
+                string strNull = "[VARPROP] «" + strName + "» md-Variants=<null>";
+                if (bPointVar) ProbeInfo(strNull);
+                else Probe(strNull, iOrdinal);
+                if (!bPointVar) _nMdVarProbes++;
+                return;
+            }
+            System.Array arrVars = oArr as System.Array;
+            if (arrVars == null || arrVars.Length == 0)
+            {
+                string strEmpty = "[VARPROP] «" + strName + "» md-Variants=<пусто>";
+                if (bPointVar) ProbeInfo(strEmpty);
+                else Probe(strEmpty, iOrdinal);
+                if (!bPointVar) _nMdVarProbes++;
+                return;
+            }
+            foreach (object oVariant in arrVars)
+            {
+                if (oVariant == null) continue;
+                object oVarProps = TryGetMemberValue(oVariant, "Properties");
+                string strKind;
+                if (oVarProps == null)
+                {
+                    strKind = "[VARPROP] md-вар «" + strName +
+                        "» Properties=<null>";
+                    if (bPointVar) ProbeInfo(strKind);
+                    else Probe(strKind, iOrdinal);
+                    // rev.14.13 [VARPROP-EXC]: «члена нет» vs «член бросает»
+                    // — GetMethod+Invoke-проба (TryGetMemberValue глотал тихо).
+                    ProbePropertiesViaInvoke(oVariant,
+                        "«" + strName + "» md-вар", bPointVar, iOrdinal);
+                    // rev.14.13 [VARPROP-MEMS]: при null — surface САМОГО
+                    // объекта-варианта (не списка): где окончательно живёт
+                    // Properties (свойство/метод/база).
+                    DumpMemberSurface(oVariant,
+                        "«" + strName + "» md-объект", bPointVar, iOrdinal);
+                    continue;
+                }
+                strKind = "[VARPROP] md-вар «" + strName + "» Properties=" +
+                    oVarProps.GetType().FullName;
+                if (bPointVar) ProbeInfo(strKind);
+                else Probe(strKind, iOrdinal);
+                // rev.14.13 [VARPL]: дамп ВСЕХ непустых членов md-вар-списка —
+                // ДО блока 5 именованных (блок ниже остаётся как есть).
+                DumpNonEmptyValues(oVarProps, "«" + strName + "» md-вар-список",
+                    bPointVar, iOrdinal);
+                string[] arrMembers = new string[]
+                {
+                    "FUNC_CATEGORY", "FUNC_CATEGORY_REGION", "FUNC_GROUP",
+                    "FUNC_CATEGORY_GROUP_ID", "SYMB_MAINFUNCTION"
+                };
+                foreach (string strNm in arrMembers)
+                {
+                    object oV = TryGetMemberValue(oVarProps, strNm);
+                    string strVal = MdValueToStringOrNull(oV);
+                    string strLine = strNm + "=«" +
+                        (string.IsNullOrEmpty(strVal) ? "<null>" : strVal) + "»";
+                    if (string.CompareOrdinal(strNm, "SYMB_MAINFUNCTION") == 0 &&
+                        bPointVar && !string.IsNullOrEmpty(strVal))
+                    {
+                        string strVia;
+                        long? nId = ExtractLongViaReflection(oV,
+                            "VARPROP:" + strName, out strVia);
+                        if (nId.HasValue)
+                        {
+                            strLine += " id=" +
+                                nId.Value.ToString(CultureInfo.InvariantCulture) +
+                                " via " + strVia;
+                        }
+                    }
+                    if (bPointVar) ProbeInfo("[VARPROP]   " + strLine);
+                    else Probe("[VARPROP]   " + strLine, iOrdinal);
+                }
+                DumpMemberSurface(oVarProps, "«" + strName + "» md-вар-список",
+                    bPointVar, iOrdinal);
+            }
+            if (!bPointVar) _nMdVarProbes++;
         }
 
         /// <summary>MDPropertyValue → строка (ToString) без локализации: null-объект,
@@ -1646,6 +2248,245 @@ namespace MyEplanActions
             return null;
         }
 #pragma warning restore 618
+
+        // CS0618 — GetValue(args[]) внутри ридер-скана rev.14.16.
+#pragma warning disable 618
+        /// <summary>REV.14.16: скан-чтение члена ПО GetProperties()-перечислению
+        /// (GetProperty(name) на property-списках ловит AmbiguousMatchException —
+        /// имена дублируются парами base + new-производная, факт [VARPROP-MEMS]
+        /// rev.14.13). rev.14.15-семантика «первый одноимённый, non-null» была
+        /// НЕдостаточна: пара base+new складывается в ДВА чтения, и одно может
+        /// отдать ПУСТУЮ обёртку (PropertyValue/MDPropertyValue non-null с
+        /// пустым ToString — MD-пусто бросает MDEmptyPropertyException, факт
+        /// rev.14.10), а другое — значение (дампы [SYMPL] rev.14.13: имена
+        /// парами, значения у одного из двойников). Теперь: кандидаты = ВСЕ
+        /// одноимённые parameterless public геттеры (индексаторные оверлоады НЕ
+        /// читаются — TargetParameterCount закрывается на входе, считается
+        /// diag-строкой); порядок — derived-объявления вперёд
+        /// (DeclaringType == рантайм-тип), затем прочие; кандидат принимается
+        /// только при НЕПУСТОМ ToString (пустая обёртка проскакивает к
+        /// следующему). Инстансный — диагностика Probe-каналами: [SCAN-SUM]
+        /// (исходы за перечисление, печатает хвост A2), [SDIAG] победителя
+        /// (кап 5, DeclaringType несущего члена) и отказов (кап 8: «нет
+        /// члена» / «все бросили: типы» / «пустых K, бросков T»). Console-дамп
+        /// rev.14.15 (невидим в главном логе EPLAN) убран. Отказ — null; исход
+        /// на вызов считается РОВНО один раз (value/null/threw/notfound).</summary>
+        private object TryGetMemberValueViaScan(object oTarget, string strMember)
+        {
+            if (oTarget == null) return null;
+            Type oType = oTarget.GetType();
+            PropertyInfo[] arrProps;
+            try
+            {
+                arrProps = oType.GetProperties();
+            }
+            catch (Exception oExG)
+            {
+                _nScanThrew++;
+                LogScanFail(strMember, "GetProperties бросил — " +
+                    oExG.GetType().Name + ": " + oExG.Message);
+                return null;
+            }
+            if (arrProps == null)
+            {
+                _nScanThrew++;
+                LogScanFail(strMember, "GetProperties вернул null");
+                return null;
+            }
+            // Сбор кандидатов: одноимённые; parameterless — в карту, индексные — счёт.
+            List<PropertyInfo> lstParamless = new List<PropertyInfo>();
+            int nIndexed = 0;
+            bool bNamed = false;
+            foreach (PropertyInfo oProp in arrProps)
+            {
+                if (oProp.Name == null ||
+                    string.Compare(oProp.Name, strMember, StringComparison.Ordinal) != 0)
+                    continue;
+                bNamed = true;
+                if (oProp.GetIndexParameters().Length > 0)
+                {
+                    nIndexed++;
+                    continue;
+                }
+                lstParamless.Add(oProp);
+            }
+                if (!bNamed)
+                {
+                    // rev.14.16: члена-свойства нет — столб по полям
+                    // (ревью rev.14.16 M2: формулировка отказа честная —
+                    // «свойства нет» И «поле есть, непустого значения не дало»
+                    // раздельно не нужны; общий не-чтение считается notfound).
+                    FieldInfo oField = oType.GetField(strMember);
+                    if (oField != null)
+                    {
+                        object oFieldVal = oField.GetValue(oTarget);
+                        string strFV;
+                        string strFEx;
+                        if (oFieldVal != null &&
+                            TryToStringSafe(oFieldVal, out strFV, out strFEx) &&
+                            !string.IsNullOrEmpty(strFV))
+                        {
+                            _nScanRead++;
+                            LogScanWin(strMember,
+                                "поле " + (oField.FieldType == null ? "<null>" : oField.FieldType.Name),
+                                0, 0);
+                            return oFieldVal;
+                        }
+                    }
+                    _nScanNotFound++;
+                    LogScanFail(strMember,
+                        "свойства нет в GetProperties; поле есть, но непустого значения не выдало");
+                    return null;
+                }
+            // Порядок чтения: derived (DeclaringType == рантайм-тип) вперёд,
+            // затем прочие объявления в порядке GetProperties().
+            List<PropertyInfo> lstOrdered = new List<PropertyInfo>();
+            foreach (PropertyInfo oProp in lstParamless)
+            {
+                if (oProp.DeclaringType == oType) lstOrdered.Add(oProp);
+            }
+            foreach (PropertyInfo oProp in lstParamless)
+            {
+                if (oProp.DeclaringType != oType) lstOrdered.Add(oProp);
+            }
+            int nThrew = 0;
+            List<string> lstThrowTypes = new List<string>();
+            foreach (PropertyInfo oProp in lstOrdered)
+            {
+                object oVal;
+                try
+                {
+                    oVal = oProp.GetValue(oTarget, null);
+                }
+                catch (Exception oExV)
+                {
+                    nThrew++;
+                    lstThrowTypes.Add(TryGetExceptionName(oExV));
+                    continue;
+                }
+                if (oVal == null) continue;
+                string strVal;
+                string strExName;
+                if (!TryToStringSafe(oVal, out strVal, out strExName))
+                {
+                    // rev.14.16: MD-пусто бросает на ToString (rev.14.10) —
+                    // НЕ проваливаться с этим кандидатом: читать следующий
+                    // (второй член пары base+new может нести значение).
+                    // rev.14.16 ревью M1: тип броска — В список (это главный
+                    // путь пустых MD-обёрток; без него «все THROW ветка»
+                    // печатала «—» при непустом nThrew).
+                    nThrew++;
+                    lstThrowTypes.Add(strExName == null ? "ToString" : strExName);
+                    continue;
+                }
+                if (string.IsNullOrEmpty(strVal)) continue;
+                // ПОБЕДИТЕЛЬ: непустой ToString — значение есть.
+                _nScanRead++;
+                LogScanWin(strMember,
+                    oProp.DeclaringType == null ? "<null>" : oProp.DeclaringType.Name,
+                    lstOrdered.Count, nIndexed);
+                return oVal;
+            }
+            if (lstOrdered.Count == 0)
+            {
+                // Все одноимённые — индексные оверлоады; для классификационных
+                // чтений это «члена нет» (parameterless-геттера не существует).
+                _nScanNotFound++;
+                LogScanFail(strMember, "только индекс-оверлоады (" +
+                    nIndexed.ToString(CultureInfo.InvariantCulture) +
+                    "), parameterless нет");
+                return null;
+            }
+            if (nThrew == lstOrdered.Count)
+            {
+                _nScanThrew++;
+                LogScanFail(strMember, "все кандидаты (" +
+                    lstOrdered.Count.ToString(CultureInfo.InvariantCulture) +
+                    ") бросили: " + JoinTypes(lstThrowTypes));
+                return null;
+            }
+            _nScanNull++;
+            LogScanFail(strMember, "кандидатов " +
+                lstOrdered.Count.ToString(CultureInfo.InvariantCulture) +
+                ": пусто/null " +
+                (lstOrdered.Count - nThrew).ToString(CultureInfo.InvariantCulture) +
+                ", бросков " + nThrew.ToString(CultureInfo.InvariantCulture));
+            return null;
+        }
+#pragma warning restore 618
+
+        /// <summary>REV.14.16: безопасный ToString: null-объект или бросок → false
+        /// (бросок = обёртка MD-пуста, rev.14.10; имя исключения — strExName);
+        /// строка → true. Статичный.</summary>
+        private static bool TryToStringSafe(object oVal, out string strVal,
+            out string strExName)
+        {
+            strVal = null;
+            strExName = null;
+            if (oVal == null) return false;
+            try
+            {
+                strVal = oVal.ToString();
+                return true;
+            }
+            catch (Exception oExS)
+            {
+                Exception oInner = oExS.InnerException != null
+                    ? oExS.InnerException : oExS;
+                strExName = oInner.GetType().Name;
+                return false;
+            }
+        }
+
+        /// <summary>REV.14.16: тип исключения с распаковкой InnerException
+        /// (TargetInvocationException → внутреннее, факт рев.14.13 dump-проб).</summary>
+        private static string TryGetExceptionName(Exception oEx)
+        {
+            Exception oInner = (oEx != null && oEx.InnerException != null)
+                ? oEx.InnerException : oEx;
+            return oInner == null ? "—" : oInner.GetType().Name;
+        }
+
+        /// <summary>REV.14.16: типы бросков для [SDIAG] — до 3 штук + хвост.</summary>
+        private static string JoinTypes(List<string> lst)
+        {
+            if (lst == null || lst.Count == 0) return "—";
+            List<string> lstShown = lst.Count > 3 ? lst.GetRange(0, 3) : lst;
+            string strJoin = string.Join(", ", lstShown.ToArray());
+            return lst.Count > 3
+                ? strJoin + " +" + (lst.Count - 3).ToString(CultureInfo.InvariantCulture)
+                : strJoin;
+        }
+
+        /// <summary>REV.14.16: капнутая диагностика скана — победитель (какой
+        /// DeclaringType несёт значение). INFO-канал: WARN-бюджет эталона
+        /// (17/13) не трогаем. Кап 5 на перечисление (ResetFdMatchCounters).</summary>
+        private void LogScanWin(string strMember, string strFrom,
+            int nCands, int nIndexed)
+        {
+            if (_nScanDiagWin >= 5) return;
+            _nScanDiagWin++;
+            string strSuffix = "";
+            if (nCands > 0 || nIndexed > 0)
+            {
+                strSuffix = " (кандидатов " + nCands.ToString(CultureInfo.InvariantCulture);
+                if (nIndexed > 0)
+                    strSuffix += ", индекс-оверлоадов " +
+                        nIndexed.ToString(CultureInfo.InvariantCulture);
+                strSuffix += ")";
+            }
+            ProbeInfo("[SDIAG] «" + strMember + "» значение от " + strFrom + strSuffix);
+        }
+
+        /// <summary>REV.14.16: капнутая диагностика скана — отказ (категория +
+        /// детали). INFO-канал. Кап 8 на перечисление (ResetFdMatchCounters);
+        /// полная статистика — [SCAN-SUM] без капов.</summary>
+        private void LogScanFail(string strMember, string strWhat)
+        {
+            if (_nScanDiagFail >= 8) return;
+            _nScanDiagFail++;
+            ProbeInfo("[SDIAG] «" + strMember + "» " + strWhat);
+        }
 
         /// <summary>Линейное reflection-чтение строкового свойства (TryGetMemberValue
         /// + ToString()); отказ — null (Console-дамп внутри). Static.</summary>
@@ -2674,6 +3515,12 @@ namespace MyEplanActions
                             string strSymName = ResolveNameViaReflection(oMdSym);
                             if (string.IsNullOrEmpty(strSymName)) continue;
                             nMdCount++;
+                            // rev.14.14: прогресс MDS-цикла (крэш-хвост). iOrdinalMd
+                            // инкрементируется в конце тела — маркер использует текущее
+                            // значение до инкремента (номер обрабатываемого символа).
+                            if (iOrdinalMd > 0 && iOrdinalMd % 100 == 0)
+                                ProbeInfo("[BR] MDS прогресс: " +
+                                    iOrdinalMd.ToString(CultureInfo.InvariantCulture) + " символов");
                             long? nFdId = TryGetFdId(oMdSym, iOrdinalMd, strSymName);
                             if (nFdId.HasValue && nFdId.Value > 0)
                             {
@@ -2688,6 +3535,10 @@ namespace MyEplanActions
                             // [SYMFUNC-MD] заново).
                             TryClassifyViaMdProperties(oMdSym, iOrdinalMd, strSymName,
                                 dctClsNew);
+                            // rev.14.12 [VARPROP]: проба на MD-вариантах
+                            // (MDSymbol.Variants → MDSymbolVariant.Properties,
+                            // reflection); капы внутри (рядовые 10 на перечисление).
+                            TryProbeMdVariantProps(oMdSym, strSymName, iOrdinalMd);
                             // TryGetSymbDesc возвращает RAW блоб (ToString()) —
                             // локализуем SymbolCatalog.LocalizeMultiLang (формат
                             // «de_DE@…;ru_RU@…»); пусто после локализации — не в карту.

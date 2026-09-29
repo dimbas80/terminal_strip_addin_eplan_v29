@@ -68,7 +68,12 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-29 Этап 8 rev.14.11 (H-4b v11: [SYMFUNC-MD] FUNC_CATEGORY/REGION/GROUP/CATEGORY_GROUP_ID (#20115/20088/20116/20188) на MDSymbolPropertyList — план: рев.14.8-спайк был на DataModel-обёртке, KB доказал все 4 члена на MD-обёртке — дифференцирующая переменная обёртка; путь наполнения «SymbolProps-MD» выше FDLIB; подрезан SYMFD-WARN-шум MDS-цикла (ожидаемо-пустое MDEmptyPropertyException тихо); обр. rev.14.10: SYSENT→PathInfo→Open(file, ReadOnly) ок — SYMB_DESC на MD-уровне 795/796, #16018 пуст на MD-обёртке too (id 0 у всех))";
+        private const string BUILD_STAMP = "2026-09-29 Этап 8 rev.14.16 (H-4b v16: ViaScan перебор всех одноимённых кандидатов по НЕПУСТОМУ ToString (пара base+new: пустая обёртка base-члена больше не глушит значение производного) + [SCAN-SUM] итог скана за перечисление + [SDIAG] диагностика (побед DeclaringType / threw / пусто) + [SYMPL] точечные дампы CABDCP2/CABDCP3 при ProbeStormEnabled=false, узкие FUNC_*/SYMB_* — прогон 29.09: 0 крэшей уже при rev.14.15)";
+
+        // rev.14.14: однократная установка хуков исключений + статическая ссылка
+        // на логгер текущего прогона (хуки статические — экземпляра в них нет).
+        private static bool _bCrashHandlersInstalled = false;
+        private static DiagnosticLogger _oLoggerStatic = null;
 
         // Заголовок MessageBox'ов UI-ветки — как Text диалога (MainDialog).
         private const string UI_CAPTION = "Генерация схемы подключений клеммника";
@@ -101,7 +106,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.14.11 (H-4b v11: [SYMFUNC-MD] FUNC_CATEGORY/REGION/GROUP/CATEGORY_GROUP_ID (#20115/20088/20116/20188) на MDSymbolPropertyList — план: рев.14.8-спайк был на DataModel-обёртке, KB доказал все 4 члена на MD-обёртке — дифференцирующая переменная обёртка; путь наполнения «SymbolProps-MD» выше FDLIB; подрезан SYMFD-WARN-шум MDS-цикла (ожидаемо-пустое MDEmptyPropertyException тихо); обр. rev.14.10: SYSENT→PathInfo→Open(file, ReadOnly) ок — SYMB_DESC на MD-уровне 795/796, #16018 пуст на MD-обёртке too (id 0 у всех))", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.14.16 (H-4b v16: ViaScan перебор всех одноимённых кандидатов по НЕПУСТОМУ ToString (пара base+new: пустая обёртка base-члена больше не глушит значение производного) + [SCAN-SUM] итог скана за перечисление + [SDIAG] диагностика (побед DeclaringType / threw / пусто) + [SYMPL] точечные дампы CABDCP2/CABDCP3 при ProbeStormEnabled=false, узкие FUNC_*/SYMB_* — прогон 29.09: 0 крэшей уже при rev.14.15)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -514,6 +519,30 @@ namespace MyEplanActions
         {
             _logger.Log("[MODE] ui");
 
+            // rev.14.14 (диагностика крэшей): глобальные хуки исключений UI-потока
+            // и домена — в лог попадает managed-стек при падении диалогов.
+            // Нативный AV (0xC0000005) сюда НЕ доходит — его ловит автосброс
+            // лога (FlushPartial): хвост показывает последнюю пробу перед смертью.
+            // Подписка ОДИН раз за процесс; логгер обновляется КАЖДЫЙ прогон
+            // (rev.14.14 ревью I-1: иначе падение второго прогона уехало бы в
+            // лог первого). Флаг — только после успешных подписок (ревью I-2:
+            // отказ += не блокирует повторную установку).
+            _oLoggerStatic = _logger;
+            if (!_bCrashHandlersInstalled)
+            {
+                try
+                {
+                    System.Windows.Forms.Application.ThreadException += OnUiThreadException;
+                    AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+                    _bCrashHandlersInstalled = true;
+                    _logger.Log("[INFO] [BR] хуки исключений установлены");
+                }
+                catch (Exception oHookEx)
+                {
+                    _logger.Warn("[UIERR] хуки исключений не установлены: " + oHookEx.GetType().Name);
+                }
+            }
+
             // --- 1. Открытый проект и активная страница — тот же доступ, что в headless ---
             SelectionSet oSelectionSet = new SelectionSet();
             Project oProject = oSelectionSet.GetCurrentProject(false);
@@ -737,6 +766,35 @@ namespace MyEplanActions
             {
                 oDialog.Dispose();
             }
+        }
+
+        /// <summary>rev.14.14: необработанное исключение UI-потока WinForms —
+        /// полный стек в лог + автосброс (e.Exception может быть null).</summary>
+        private static void OnUiThreadException(object oSender,
+            System.Threading.ThreadExceptionEventArgs oArgs)
+        {
+            DiagnosticLogger oLogger = _oLoggerStatic;
+            if (oLogger == null) return;
+            Exception oEx = oArgs == null ? null : oArgs.Exception;
+            oLogger.Error("[BR] UI-исключение: " +
+                (oEx == null ? "<null>" : oEx.GetType().FullName + ": " + oEx.Message +
+                    "\n" + oEx.StackTrace));
+        }
+
+        /// <summary>rev.14.14: терминальное исключение домена — факт + тип в лог
+        /// (процесс всё равно падает; автосброс Warn-канала уже сработал).</summary>
+        private static void OnDomainUnhandledException(object oSender,
+            UnhandledExceptionEventArgs oArgs)
+        {
+            DiagnosticLogger oLogger = _oLoggerStatic;
+            if (oLogger == null) return;
+            Exception oEx = oArgs == null ? null : oArgs.ExceptionObject as Exception;
+            oLogger.Error("[BR] домен-исключение (isTerminating=" +
+                (oArgs == null ? "?" : oArgs.IsTerminating.ToString()) + "): " +
+                (oEx == null
+                    ? (oArgs == null || oArgs.ExceptionObject == null
+                        ? "<null>" : oArgs.ExceptionObject.ToString())
+                    : oEx.GetType().FullName + ": " + oEx.Message + "\n" + oEx.StackTrace));
         }
 
         /// <summary>SPIKE-8 (throwaway, H-4v2, rev.13.10): цикл ожидания завершения

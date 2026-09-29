@@ -168,6 +168,15 @@ namespace MyEplanActions
         // Факт rev.13.6 (SPIKE-4): имя класса → False, системное → True; с rev.13.7 (SPIKE-5) — override-паттерн, список имён в RunSymbolPickSpike.
         public const int SpikePickVariant = 2;
 
+        // rev.14.15 (диагностика крэшей, summary п.108-109): шторм проб
+        // rev.14.12/13 ([VARPROP]/[VARPROP-EXC]/[VARPROP-MEMS]/[SYMPL] —
+        // per-variant Invoke-пробы + полные дампы значений ~115 членов × 4
+        // поверхности) валит CLR (Event Viewer 29.09 13:23: сбойный модуль
+        // clr.dll, 0x80131506 Fatal Execution Engine Error). Гейт OFF —
+        // код остаётся для точечных ре-проб, исполнения нет. Классификация
+        // идёт через ридер-скан (TryGetMemberValueViaScan), а не через шторм.
+        public const bool ProbeStormEnabled = false;
+
         // Фаза H (rev.12.0, spec §6): рамка-призрак — записи GridPitch.<форма>
         // в настройках нет → фиксированный шаг 10 мм.
         public const double GhostPitchFallbackMm = 10.0;
