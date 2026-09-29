@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-29 Этап 8 rev.14.16 (H-4b v16: ViaScan перебор всех одноимённых кандидатов по НЕПУСТОМУ ToString (пара base+new: пустая обёртка base-члена больше не глушит значение производного) + [SCAN-SUM] итог скана за перечисление + [SDIAG] диагностика (побед DeclaringType / threw / пусто) + [SYMPL] точечные дампы CABDCP2/CABDCP3 при ProbeStormEnabled=false, узкие FUNC_*/SYMB_* — прогон 29.09: 0 крэшей уже при rev.14.15)";
+        private const string BUILD_STAMP = "2026-09-29 Этап 8 rev.15.0 (H-5/H-6: интерактивная точка вставки — XGedStartInteractionAction /Name:TSA_INSERT_POINT, рамка-призрак SetStaticCursor по ориентации формы [IPING], Esc → возврат в диалог; EmbeddedReportReader +опц. PointD; GhostFrameMath + тесты)";
 
         // rev.14.14: однократная установка хуков исключений + статическая ссылка
         // на логгер текущего прогона (хуки статические — экземпляра в них нет).
@@ -106,7 +106,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.14.16 (H-4b v16: ViaScan перебор всех одноимённых кандидатов по НЕПУСТОМУ ToString (пара base+new: пустая обёртка base-члена больше не глушит значение производного) + [SCAN-SUM] итог скана за перечисление + [SDIAG] диагностика (побед DeclaringType / threw / пусто) + [SYMPL] точечные дампы CABDCP2/CABDCP3 при ProbeStormEnabled=false, узкие FUNC_*/SYMB_* — прогон 29.09: 0 крэшей уже при rev.14.15)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.15.0 (H-5/H-6: интерактивная точка вставки — XGedStartInteractionAction /Name:TSA_INSERT_POINT, рамка-призрак SetStaticCursor по ориентации формы [IPING], Esc → возврат в диалог; EmbeddedReportReader +опц. PointD; GhostFrameMath + тесты)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -708,14 +708,44 @@ namespace MyEplanActions
                         continue;   // заново показать диалог
                     }
 
+                    // --- 3c. rev.15.0 (H-5/H-6): интерактивная точка вставки —
+                    //        после «Создать» пользователь кликает точку на странице
+                    //        (рамка-призрак под курсором; Esc/таймаут → заново диалог,
+                    //        НИЧЕГО не создаётся). Константная точка конфигу
+                    //        (InsertX/InsertY) — только при выключенном гейте;
+                    //        headless-путь не затронут. ---
+                    double dPointX = 0.0;
+                    double dPointY = 0.0;
+                    bool bPointPicked = TryPickInsertPoint(oProject, oPage, oTargetStrip,
+                        strForm, eMode, out dPointX, out dPointY);
+                    if (!bPointPicked)
+                    {
+                        if (InsertPointInteraction.Cancelled)
+                        {
+                            // Отмена (Esc) — без MessageBox: пользователь сам решил.
+                            _logger.Log("[MODE] выбор точки отменён (Esc)");
+                        }
+                        else
+                        {
+                            // Таймаут / провал запуска / выключенный гейт — сообщение.
+                            MessageBox.Show(oDialog, "Не удалось получить точку вставки " +
+                                "(таймаут или запуск интеракции не удался — см. [IPING] в логе).\n\n" +
+                                "Задайте точку ещё раз либо отмените генерацию.",
+                                UI_CAPTION, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
+                        continue;   // заново показать диалог (ничего не создано)
+                    }
+
                     try
                     {
                         // --- 4. Отчёт на ВЫБРАННОЙ форме (override; «чужая форма»
                         //        в UI-режиме не проверяется); rev.12.5 (H-3b): цель —
-                        //        выбранный TerminalStrip (4-арг. CreateEmbeddedReport) ---
+                        //        выбранный TerminalStrip (4-арг. CreateEmbeddedReport);
+                        //        rev.15.0 (H-5/H-6): точка — клик пользователя ---
                         ReportBlockReference oReportRef =
                             oReader.TryCreateEmbeddedReport(oProject, oPage, null, strForm, false,
-                                new StorableObject[] { oTargetStrip });
+                                new StorableObject[] { oTargetStrip },
+                                new PointD(dPointX, dPointY));
                         if (oReportRef == null)
                         {
                             _logger.Log("[UIERR] Не удалось создать отчёт для формы '" + strForm +
@@ -766,6 +796,243 @@ namespace MyEplanActions
             {
                 oDialog.Dispose();
             }
+        }
+
+        /// <summary>Фаза выбора точки вставки (Этап 8, H-5/H-6, rev.15.0; spec §6):
+        /// создаёт рамку-призрак (GhostFrameCreator), запускает интеракцию
+        /// TSA_INSERT_POINT (XGedStartInteractionAction + ctx.AddParameter("Name",...)
+        /// — паттерн docs-примера KB ...Ged.Interaction.html; reflection — как в
+        /// RunSymbolPickSpike [PICK-EXEC8]) и ждёт клик/отмену в цикле DoEvents+
+        /// Sleep(50) до капа AddInConfiguration.SelectPointTimeoutSec (модель SPIKE-8).
+        /// Призрак удаляется В КАЖДОМ исходе (и не запущен, и успех, и отмена,
+        /// и таймаут — [GHOST-CLEAN]; урок п.48/паттерн [PICK-CLEAN]). Отклонение от
+        /// брифа: параметр MainDialog oDialog исключён — MessageBox'ы решает
+        /// вызывающая сторона RunUi (отмена — молча, таймаут — с окном);
+        /// oProject пока не потребляется (число клемм — из oTargetStrip).
+        /// true — точка получена (dPointX/dPointY; гейт OFF — константная точка
+        /// InsertX/InsertY, легаси-поведение UI); false — отмена (Esc), таймаут,
+        /// провал запуска, завершение без точки — вызывающая сторона решает
+        /// (MessageBox для таймаута/провала, заново диалог; ничего НЕ создаётся).
+        /// Исключения наружу не выпускаются — false.</summary>
+        private bool TryPickInsertPoint(Project oProject, Page oPage,
+            TerminalStrip oTargetStrip, string strForm, SettingsOrientation eMode,
+            out double dPointX, out double dPointY)
+        {
+            dPointX = 0.0;
+            dPointY = 0.0;
+            if (!AddInConfiguration.UseInsertPointPick)
+            {
+                // m1-фикс (ревью rev.15.0): гейт OFF — легаси-поведение фиксированной
+                // точки в UI (как было до H-5), а НЕ блокировка генерации из UI.
+                dPointX = AddInConfiguration.InsertX;
+                dPointY = AddInConfiguration.InsertY;
+                _logger.Log(string.Format(CultureInfo.InvariantCulture,
+                    "[INFO] [IPING] выключено (UseInsertPointPick=false) — константная точка ({0:F1}; {1:F1})",
+                    dPointX, dPointY));
+                return true;
+            }
+
+            // --- 1. Число клемм (идиома EplanTerminalStripReader.cs:86-90). ---
+            int nTerminals = 0;
+            try
+            {
+                Terminal[] arrTerminals = oTargetStrip.Terminals;
+                if (arrTerminals == null) arrTerminals = new Terminal[0];
+                nTerminals = arrTerminals.Length;
+            }
+            catch (Exception oTermEx)
+            {
+                _logger.Log("[INFO] [IPING] Terminals бросил " + oTermEx.GetType().Name +
+                    ": " + oTermEx.Message + " — клемм 0 (призрак минимальной длины)");
+                nTerminals = 0;
+            }
+
+            // --- 2. Pitch: настройки → фоллбэк конфигу. ---
+            double dPitch;
+            bool bPitGot = _oSettings.TryGetGridPitch(strForm, out dPitch);
+            if (!bPitGot) dPitch = AddInConfiguration.GhostPitchFallbackMm;
+            _logger.Log(string.Format(CultureInfo.InvariantCulture,
+                "[INFO] [IPING] pitch={0:F2} мм ({1}), клемм {2}", dPitch,
+                (bPitGot ? "настройки GridPitch" : "фоллбэк GhostPitchFallbackMm"),
+                nTerminals));
+
+            // --- 3. Ориентация призрака: явный выбор пользователя > формы ---
+            ReportOrientation eOrient = GhostFrameMath.ResolveOrientation(eMode, strForm);
+            _logger.Log("[INFO] [IPING] ориентация=" +
+                (eOrient == ReportOrientation.Vertical ? "Vertical" : "Horizontal") +
+                " (режим " + eMode + ", форма '" + strForm + "')");
+            double dLong = GhostFrameMath.ComputeWidthMm(nTerminals, dPitch);
+            double dShort = GhostFrameMath.ComputeHeightMm();
+
+            // --- 4. Сброс статики, призрак, запуск интеракции ---
+            InsertPointInteraction.Reset();
+            PolyLine oGhost = GhostFrameCreator.CreateGhostFrame(oPage, eOrient, dLong, dShort, _logger);
+            InsertPointInteraction.PendingGhost = oGhost;
+
+            bool bLaunched = false;
+            try
+            {
+                // Launch — паттерн RunSymbolPickSpike [PICK-EXEC8] / docs-пример KB
+                // (...Ged.Interaction.html): FindAction + reflection
+                // Execute(ActionCallingContext) + ctx.AddParameter("Name", ...) —
+                // ИМЕННО так запускается интеракция по имени (XGedStartInteractionAction).
+                // Запасной путь (не используется): CLI-строка
+                // new CommandLineInterpreter().Execute("XGedStartInteractionAction /Name:TSA_INSERT_POINT").
+                ActionManager oManager = new ActionManager();
+                var oLaunchAction = oManager.FindAction("XGedStartInteractionAction");
+                if (oLaunchAction == null)
+                {
+                    _logger.Warn("[IPING] экшен XGedStartInteractionAction не найден");
+                }
+                else
+                {
+                    MethodInfo oExecMethod = oLaunchAction.GetType().GetMethod("Execute",
+                        new Type[] { typeof(ActionCallingContext) });
+                    if (oExecMethod == null)
+                    {
+                        _logger.Warn("[IPING] Execute(ActionCallingContext) не найден (reflection) — запуска не было");
+                    }
+                    else
+                    {
+                        // ctx.AddParameter("Name", ...) — docs-пример KB (...Ged.Interaction.html):
+                        // oContext.AddParameter("Name","MyInteraction") + Execute. Факт run:
+                        // запуск экшена из-под нашего действия доказан (p.82: Execute async).
+                        ActionCallingContext oCtx = new ActionCallingContext();
+                        oCtx.AddParameter("Name", "TSA_INSERT_POINT");
+                        object oRes = oExecMethod.Invoke(oLaunchAction, new object[] { oCtx });
+                        _logger.Log("[INFO] [IPING-LAUNCH] возврат=" + DescribeCliReturn(oRes));
+                        bLaunched = (oRes is bool && (bool)oRes);
+                    }
+                }
+            }
+            catch (Exception oLaunchEx)
+            {
+                // Invoke оборачивает исключение callee в TargetInvocationException —
+                // разворачиваем вручную (нет exception-filters C#6 на легаси-csc).
+                Exception oReal = oLaunchEx;
+                TargetInvocationException oTie = oLaunchEx as TargetInvocationException;
+                if (oTie != null && oTie.InnerException != null) oReal = oTie.InnerException;
+                _logger.Log("[INFO] [IPING-LAUNCH] исключение: " + oReal.GetType().Name + ": " + oReal.Message);
+            }
+
+            if (!bLaunched)
+            {
+                _logger.Warn("[IPING] запуск интеракции не удался (возврат/исключение — см. [IPING-LAUNCH])");
+                GhostFrameCreator.RemoveGhost(oGhost, _logger);
+                return false;
+            }
+
+            // --- 5. Цикл ожидания (модель SPIKE-8): DoEvents качает UI-очередь,
+            //        события интеракции приходят в этом потоке; Sleep(50) — опрос;
+            //        кап 120 с. CalledOnPoint из OnPoint; Done/Cancelled — сигнал OnStop/OnCancel. ---
+            DateTime oDeadline = DateTime.Now.AddSeconds(AddInConfiguration.SelectPointTimeoutSec);
+            DateTime oWaitStart = DateTime.Now;
+            try
+            {
+                while (!InsertPointInteraction.Captured && !InsertPointInteraction.Cancelled &&
+                    !InsertPointInteraction.Done && DateTime.Now < oDeadline)
+                {
+                    System.Windows.Forms.Application.DoEvents();
+                    System.Threading.Thread.Sleep(50);
+                }
+            }
+            catch (Exception oWaitEx)
+            {
+                // DoEvents диспатчит чужие обработчики — их исключение НЕ должно
+                // ронять пайплайн (паттерн Ревью rev.13.10, [PICK-EXEC8]).
+                _logger.Log("[INFO] [IPING-WAIT] цикл ожидания бросил: " +
+                    oWaitEx.GetType().Name + ": " + oWaitEx.Message);
+            }
+            double dWaitSec = Math.Round((DateTime.Now - oWaitStart).TotalSeconds, 1);
+
+            // --- 6. Диагностика: файл пробы + буфер ([IPING-PROBE]/[IPING-DUMP]) ---
+            try
+            {
+                string[] arrProbeDirs = new string[DiagnosticLogger.LOG_DIR_CANDIDATES.Length + 1];
+                DiagnosticLogger.LOG_DIR_CANDIDATES.CopyTo(arrProbeDirs, 0);
+                arrProbeDirs[arrProbeDirs.Length - 1] = System.IO.Path.GetTempPath();
+                string strProbePath = null;
+                foreach (string strDir in arrProbeDirs)
+                {
+                    string strCandidate = System.IO.Path.Combine(strDir, "insert_point_probe.log");
+                    if (System.IO.File.Exists(strCandidate)) { strProbePath = strCandidate; break; }
+                }
+                if (strProbePath != null)
+                {
+                    string[] arrProbeLines = System.IO.File.ReadAllLines(strProbePath);
+                    int nProbeFirst = 0;
+                    if (arrProbeLines.Length > 120)
+                    {
+                        _logger.Log("[INFO] [IPING-PROBE] (всего строк " +
+                            arrProbeLines.Length.ToString(CultureInfo.InvariantCulture) +
+                            ", показаны последние 120)");
+                        nProbeFirst = arrProbeLines.Length - 120;
+                    }
+                    for (int i = nProbeFirst; i < arrProbeLines.Length; i++)
+                        _logger.Log("[INFO] [IPING-PROBE] " + arrProbeLines[i]);
+                }
+                else
+                {
+                    _logger.Log("[INFO] [IPING-PROBE] файл пробы не найден — записей нет");
+                }
+                int nDumpTotal = InsertPointInteraction.IPingDump.Count;
+                for (int i = 0; i < nDumpTotal; i++)
+                    _logger.Log("[INFO] [IPING-DUMP] " + InsertPointInteraction.IPingDump[i]);
+            }
+            catch (Exception oDumpEx)
+            {
+                // Сбор проб не влияет на успех фазы (ruling: Warn не фейлит).
+                _logger.Log("[INFO] [IPING] исключение чтения проб: " +
+                    oDumpEx.GetType().Name + ": " + oDumpEx.Message);
+            }
+
+            // --- 7. Истинный таймаут (Done=false по дедлайну): интеракция МОЖЕТ
+            //        оставаться активной с рамкой-призраком под курсором — курсорную
+            //        отрисовку снимаем ДО удаления объекта (KB 2.9 ClearCursor —
+            //        «Remove Cursor-Representation»), иначе курсор рисует убранный
+            //        PolyLine. Успех/отмена/стоп — отрисовку снимает сама интеракция. ---
+            if (!InsertPointInteraction.Captured && !InsertPointInteraction.Cancelled &&
+                !InsertPointInteraction.Done)
+            {
+                InsertPointInteraction.TryClearCursor();
+            }
+
+            // --- 8. Уборка призрака — ВСЕГДА (и успех, и отмена, и таймаут): ---
+            GhostFrameCreator.RemoveGhost(oGhost, _logger);
+
+            // --- 9. Исходы ---
+            if (InsertPointInteraction.Captured)
+            {
+                dPointX = InsertPointInteraction.CapturedX;
+                dPointY = InsertPointInteraction.CapturedY;
+                _logger.Log("[INFO] [IPING-WAIT] исход: point (" +
+                    dPointX.ToString("F3", CultureInfo.InvariantCulture) + "; " +
+                    dPointY.ToString("F3", CultureInfo.InvariantCulture) + "), ожидание=" +
+                    dWaitSec.ToString(CultureInfo.InvariantCulture) + " сек");
+                return true;
+            }
+            if (InsertPointInteraction.Cancelled)
+            {
+                _logger.Log("[INFO] [IPING-WAIT] исход: cancel, ожидание=" +
+                    dWaitSec.ToString(CultureInfo.InvariantCulture) + " сек");
+                return false;
+            }
+            // m2-фикс (ревью rev.15.0): Done==true БЕЗ точки — интеракция завершилась
+            // сама (OnStop), но координат дал, например, исключение внутри OnPoint
+            // (детали — в буфере [IPING-DUMP]/файле [IA-POINT]); это НЕ таймаут.
+            if (InsertPointInteraction.Done)
+            {
+                _logger.Log("[INFO] [IPING-WAIT] исход: интеракция завершилась без точки " +
+                    "(исключение OnPoint?), ожидание=" +
+                    dWaitSec.ToString(CultureInfo.InvariantCulture) + " сек");
+                return false;
+            }
+            // Истинный таймаут: дедлайн пройден, Done тоже false (M2.3, ревью).
+            _logger.Warn("[IPING] ТАЙМАУТ " + AddInConfiguration.SelectPointTimeoutSec.ToString(CultureInfo.InvariantCulture) +
+                " с (Done=" + (InsertPointInteraction.Done ? "True" : "False") +
+                "), ожидание=" + dWaitSec.ToString(CultureInfo.InvariantCulture) +
+                " сек — интеракция может остаться активной — закрывается следующим кликом/Esc");
+            return false;
         }
 
         /// <summary>rev.14.14: необработанное исключение UI-потока WinForms —

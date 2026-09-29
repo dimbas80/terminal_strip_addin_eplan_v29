@@ -317,10 +317,18 @@ namespace MyEplanActions
         /// (по контексту активной страницы), и геометрия соответствует не выбранному
         /// клеммнику. При исключении 4-арг. — фоллбэк на 3-арг. в той же попытке
         /// ([REPORT-TARGET]-лог). null/пустой массив (headless-путь) — поведение и
-        /// вызовы без изменений.</summary>
+        /// вызовы без изменений.
+        /// rev.15.0 (H-5/H-6): oInsertPoint — точка вставки, захваченная интеракцией
+        /// TSA_INSERT_POINT (клик пользователя, [IPING]). Примечание: PointD —
+        /// STRUCT (KB 2.9, страница ...PointD~_ctor(PointD3D).html — «PointD
+        /// Structure»), литерал «PointD oInsertPoint = null» не компилируется
+        /// (CS0453) — параметр PointD? (Nullable; C#5 допустим). Headless (null) —
+        /// константная точка InsertX/InsertY в конфигу, поведение байт-в-байт
+        /// прежнее (эталоны X2/X3).</summary>
         public ReportBlockReference TryCreateEmbeddedReport(Project oProject, Page oPage,
             List<string> lstExtraFormNames, string strFormNameOverride = null,
-            bool bCheckForeignForm = true, StorableObject[] arrTargets = null)
+            bool bCheckForeignForm = true, StorableObject[] arrTargets = null,
+            System.Nullable<PointD> oInsertPoint = null)
         {
             List<string> lstFormNames = new List<string>();
             if (!string.IsNullOrEmpty(strFormNameOverride))
@@ -362,8 +370,12 @@ namespace MyEplanActions
 
                             _log.Log("[INFO] Попытка: FormName='" + strFormName + "', Type=" + eReportType +
                                 ", FilterSchemaName='" + strSchema + "' ...");
-                            PointD oLocation =
-                                new PointD(AddInConfiguration.InsertX, AddInConfiguration.InsertY);
+                            // rev.15.0 (H-5/H-6): oInsertPoint != null — точка клика
+                            // пользователя ([IPING]); else — константная точка вставки
+                            // из конфигу (headless-поведение прежнее, эталоны X2/X3).
+                            PointD oLocation = oInsertPoint.HasValue
+                                ? oInsertPoint.Value
+                                : new PointD(AddInConfiguration.InsertX, AddInConfiguration.InsertY);
                             ReportBlockReference oReportRef;
                             if (arrTargets != null && arrTargets.Length > 0)
                             {
