@@ -35,7 +35,7 @@ namespace MyEplanActions
     /// «database is read-only», Exclusive=3; исключение BaseException «readonly
     /// database opened in exclusive mode») перед [MDCREATE]-фабрикой: лог
     /// rev.14.6 показал имя («GOST_single_symbol») ≠ filename; файл-кандидаты —
-    /// голое «имя.esl» + каталоги символов из настроек
+    /// голое «имя.slk» + каталоги символов из настроек
     /// {USER|COMPANY|SYSTEM}.MANAGEMENT.DIRECTORIES.SYMBOLS (пробы [MDDIRS],
     /// Settings.GetStringSetting(path, idx): BaseException «setting is not
     /// defined» / «path doesn't exist» при отсутствии пути)); rev.14.9 —
@@ -44,29 +44,31 @@ namespace MyEplanActions
     /// BaseException «directory cannot be obtained from settings»; ctor
     /// PathInfo() public, но помечен «Should be used by ProjectManager
     /// only!» — проба рантаймом, отказ ctor/Symbols — ProbeWarn [MDPATH]
-    /// и продолжаем без него), затем Settings-каталоги, голое «имя.esl»
+    /// и продолжаем без него), затем Settings-каталоги, голое «имя.slk»
     /// последним; [MDDIRS] диагностика: прочие исключения пути — строка
     /// «'<path>' — <Type>: <msg>» (одна на путь, кап 3) и одна строка
     /// «итог: N каталогов (список: …)»); rev.14.10 — [SYSENT]: ПЕРВЫЙ
-    /// filename-кандидат — полный путь системной .esl из системного пула
+    /// filename-кандидат — полный путь системной .slk из системного пула
     /// мастер-данных Masterdata.SystemEntries (KB API 2.9: «Returns the
     /// file names of all master data in the system master data pool» —
-    /// StringCollection; библиотеки символов .esl — master data, их пути
-    /// есть в системном пуле; боевой прецедент: 
+    /// StringCollection; библиотеки символов .slk — master data, их пути
+    /// есть в системном пуле; KB ExportSymbolLibrary: «Source *.slk …
+    /// Destination *.esl» — .slk нативный формат, .esl экспортный
+    /// (правка пользователя 29.09); боевой прецедент: 
     /// spike/TerminalStripReportSpike.cs:623 — Masterdata().SystemEntries
     /// перечислял системные формы .f11 БЕЗ исключений, прогоны Этапа 1;
     /// Masterdata — IDisposable → try/catch/finally, Dispose в finally
     /// с null-гейтом; отказ перечисления — ОДИН ProbeWarn [SYSENT] +
     /// продолжаем прежними источниками; пробы [SYSENT] кап 5 строк —
-    /// итог «esl-файлов в системном пуле: N», сэмплы «пример: 'путь'»
-    /// ×3 (пул без .esl — первые 3 ЛЮБЫЕ записи: диагностика формата
+    /// итог «slk-файлов в системном пуле: N», сэмплы «пример: 'путь'»
+    /// ×3 (пул без .slk — первые 3 ЛЮБЫЕ записи: диагностика формата
     /// пула), вердикт «имя → 'путь'» / WARN «'имя' в системном пуле
     /// НЕ найден»). Урок rev.14.9: системный пул ≠ PathInfo.Symbols —
     /// тот возвращает ПОЛЬЗОВАТЕЛЬСКИЙ «default Symbols directory»,
-    /// а системная GOST_single_symbol.esl живёт в системном каталоге
+    /// а системная GOST_single_symbol.slk живёт в системном каталоге
     /// Symbols установки ([MDOPEN] rev.14.9: «Невозможно открыть
     /// библиотеку символов …»). Новый порядок кандидатов:
-    /// SystemEntries → PathInfo → Settings → голое «имя.esl»:
+    /// SystemEntries → PathInfo → Settings → голое «имя.slk»:
     /// выбор библиотеки +
     /// ДЕРЕВО «Trade → Area → Категория → Группа → Определение функции → символ»
     /// (5 уровней по FunctionDefinition) + ПРЕВЬЮ-СЕТКА ФИКСИРОВАННО 8 клеток A–H
@@ -1673,12 +1675,12 @@ namespace MyEplanActions
         }
 
         /// <summary>Проба получения MDSymbolLibrary. rev.14.10: порядок
-        /// filename-кандидатов — (0) ПОЛНЫЙ ПУТЬ системной .esl из
+        /// filename-кандидатов — (0) ПОЛНЫЙ ПУТЬ системной .slk из
         /// Masterdata.SystemEntries (KB 2.9: «Returns the file names of all
         /// master data in the system master data pool» — StringCollection;
         /// new Eplan.EplApi.HEServices.Masterdata() + перечисление — в try,
-        /// Dispose — в finally с null-гейтом; совпадение — EndsWith('\\'+имя.esl)
-        /// ИЛИ EndsWith(имя.esl) (запись без пути) — В НАЧАЛО
+        /// Dispose — в finally с null-гейтом; совпадение — EndsWith('\\'+имя.slk)
+        /// ИЛИ EndsWith(имя.slk) (запись без пути) — В НАЧАЛО
         /// lstFileCandidates (dedup IndexOf, как в Settings-цикле); отказ
         /// перечисления — ОДИН ProbeWarn [SYSENT]; пробы [SYSENT] кап 5
         /// строк: итог N, сэмплы ×3, вердикт; N=0 — сэмплы ЛЮБЫХ записей —
@@ -1691,9 +1693,9 @@ namespace MyEplanActions
         /// ProbeWarn [MDPATH], кап 3 — nPathProbes, продолжаем без него),
         /// (2) Settings-каталоги
         /// {USER|COMPANY|SYSTEM}.MANAGEMENT.DIRECTORIES.SYMBOLS
-        /// (EnumerateSymbolDirectories), (3) голое «имя.esl» — ПОСЛЕДНИМ
+        /// (EnumerateSymbolDirectories), (3) голое «имя.slk» — ПОСЛЕДНИМ
         /// (вдруг MD сам резолвит имя); хвостовой \ каталога тримится; имя,
-        /// уже оканчивающееся на .esl — расширение НЕ дублируется.
+        /// уже оканчивающееся на .slk — расширение НЕ дублируется.
         /// rev.14.10: пункты нумеруются теперь (0)/(1)/(2)/(3) — SystemEntries
         /// ВПЕРЕДИ; порядок попыток на файл прежний: (a) для каждого файла —
         /// MDSymbolLibrary.Open(file, Mode.ReadOnly) → Open(file) — ПРЯМЫЕ
@@ -1753,18 +1755,20 @@ namespace MyEplanActions
             int nOpenProbes = 0; // кап 6 строк [MDOPEN] суммарно
             if (!string.IsNullOrEmpty(strLibName))
             {
-                string strFileName = strLibName.EndsWith(".esl")
+                string strFileName = strLibName.EndsWith(".slk")
                     ? strLibName
-                    : strLibName + ".esl";
+                    : strLibName + ".slk";
                 List<string> lstFileCandidates = new List<string>();
                 // rev.14.10: САМЫЙ канонический источник — системный пул
                 // мастер-данных Masterdata.SystemEntries (KB 2.9: «Returns the
                 // file names of all master data in the system master data
-                // pool» — StringCollection; библиотеки символов .esl — master
-                // data → полные пути системного каталога установки). Боевой
+                // pool» — StringCollection; библиотеки символов .slk — master
+                // data → полные пути системного каталога установки. KB-факт
+                // ExportSymbolLibrary: «Source *.slk … Destination *.esl» —
+                // .slk нативный формат, .esl экспортный). Боевой
                 // прецедент: spike/TerminalStripReportSpike.cs:623 — то же
                 // перечисление (формы .f11) без исключений. Совпадение —
-                // запись кончается на «\имя.esl» (полный путь) ИЛИ «имя.esl»
+                // запись кончается на «\имя.slk» (полный путь) ИЛИ «имя.slk»
                 // (имя без пути) → ПЕРВЫЙ filename-кандидат (вставка ДО
                 // PathInfo ниже). Dedup — IndexOf, как в Settings-цикле.
                 // Отказ перечисления — ОДИН ProbeWarn [SYSENT], работаем
@@ -1776,14 +1780,14 @@ namespace MyEplanActions
                     oMasterData = new Eplan.EplApi.HEServices.Masterdata();
                     System.Collections.Specialized.StringCollection lstSysEntries =
                         oMasterData.SystemEntries;
-                    int nEslTotal = 0;
+                    int nSlkTotal = 0;
                     string strSysMatch = null;
-                    // имя без «.esl» — для вердикта [SYSENT]
-                    string strNameBare = strFileName.EndsWith(".esl", StringComparison.OrdinalIgnoreCase)
+                    // имя без «.slk» — для вердикта [SYSENT]
+                    string strNameBare = strFileName.EndsWith(".slk", StringComparison.OrdinalIgnoreCase)
                         ? strFileName.Substring(0, strFileName.Length - 4)
                         : strFileName;
-                    List<string> lstEslSamples = new List<string>();
-                    // первые ЛЮБЫЕ записи — если .esl в пуле нет (диагностика
+                    List<string> lstSlkSamples = new List<string>();
+                    // первые ЛЮБЫЕ записи — если .slk в пуле нет (диагностика
                     // формата записей пула — вход следующей гипотезы)
                     List<string> lstAnySamples = new List<string>();
                     foreach (object oEntry in lstSysEntries)
@@ -1791,19 +1795,19 @@ namespace MyEplanActions
                         string strEntry = oEntry as string;
                         if (string.IsNullOrEmpty(strEntry)) continue;
                         if (lstAnySamples.Count < 3) lstAnySamples.Add(strEntry);
-                        if (!strEntry.EndsWith(".esl", StringComparison.OrdinalIgnoreCase)) continue;
-                        nEslTotal++;
-                        if (lstEslSamples.Count < 3) lstEslSamples.Add(strEntry);
+                        if (!strEntry.EndsWith(".slk", StringComparison.OrdinalIgnoreCase)) continue;
+                        nSlkTotal++;
+                        if (lstSlkSamples.Count < 3) lstSlkSamples.Add(strEntry);
                         if (strSysMatch != null) continue;
                         if (strEntry.EndsWith("\\" + strFileName, StringComparison.OrdinalIgnoreCase) ||
                             strEntry.EndsWith(strFileName, StringComparison.OrdinalIgnoreCase))
                             strSysMatch = strEntry;
                     }
-                    ProbeInfo("[SYSENT] esl-файлов в системном пуле: " + nEslTotal);
+                    ProbeInfo("[SYSENT] slk-файлов в системном пуле: " + nSlkTotal);
                     if (strSysMatch != null && lstFileCandidates.IndexOf(strSysMatch) < 0)
                         lstFileCandidates.Add(strSysMatch); // ПЕРВЫЙ кандидат
-                    List<string> lstShownSamples = (nEslTotal > 0)
-                        ? lstEslSamples
+                    List<string> lstShownSamples = (nSlkTotal > 0)
+                        ? lstSlkSamples
                         : lstAnySamples;
                     foreach (string strSample in lstShownSamples)
                         ProbeInfo("[SYSENT] пример: '" + strSample + "'");
@@ -1811,8 +1815,8 @@ namespace MyEplanActions
                         ProbeInfo("[SYSENT] " + strNameBare + " → '" + strSysMatch + "'");
                     else
                         ProbeWarn("[SYSENT] '" + strNameBare +
-                            "' в системном пуле НЕ найден (" + nEslTotal +
-                            " esl-файлов, в т.ч. сэмплы)");
+                            "' в системном пуле НЕ найден (" + nSlkTotal +
+                            " slk-файлов, в т.ч. сэмплы)");
                 }
                 catch (Exception oEx)
                 {
@@ -1883,7 +1887,7 @@ namespace MyEplanActions
                     if (lstFileCandidates.IndexOf(strFile) < 0)
                         lstFileCandidates.Add(strFile);
                 }
-                // rev.14.9: голое «имя.esl» — ПОСЛЕДНИМ кандидатом (вдруг MD
+                // rev.14.9: голое «имя.slk» — ПОСЛЕДНИМ кандидатом (вдруг MD
                 // сам резолвит имя; урок rev.14.8 — оба файла без каталога);
                 // rev.14.10: перед ним SystemEntries/PathInfo/Settings;
                 // (фикс ревью) гейт dedup — если пул вернул запись без пути,
