@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-30 Этап 8 rev.15.4 (чистка: спайк 15.1 [SPIKERPT]+шов EnsureFormInProject+мёртвый SymbolPickInteraction+гейты SpikeSymbolPick/SpikeAutoPoint/SpikePickVariant/SpikeCreateReportProbe удалены; H-5/H-6 закрыт прогоном 07:45)";
+        private const string BUILD_STAMP = "2026-09-30 Этап 8 rev.15.5 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=N_клемм; фоллбэк — эвристика n×pitch)";
 
         // rev.14.14: однократная установка хуков исключений + статическая ссылка
         // на логгер текущего прогона (хуки статические — экземпляра в них нет).
@@ -106,7 +106,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.15.4 (чистка: спайк 15.1 [SPIKERPT]+шов EnsureFormInProject+мёртвый SymbolPickInteraction+гейты SpikeSymbolPick/SpikeAutoPoint/SpikePickVariant/SpikeCreateReportProbe удалены; H-5/H-6 закрыт прогоном 07:45)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.15.5 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=N_клемм; фоллбэк — эвристика n×pitch)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -692,7 +692,7 @@ namespace MyEplanActions
                     double dPointX = 0.0;
                     double dPointY = 0.0;
                     bool bPointPicked = TryPickInsertPoint(oProject, oPage, oTargetStrip,
-                        strForm, eMode, out dPointX, out dPointY);
+                        strForm, eMode, oReader, strStrip, out dPointX, out dPointY);
                     if (!bPointPicked)
                     {
                         if (InsertPointInteraction.Cancelled)
@@ -782,8 +782,25 @@ namespace MyEplanActions
         /// Призрак удаляется В КАЖДОМ исходе (и не запущен, и успех, и отмена,
         /// и таймаут — [GHOST-CLEAN]; урок п.48/паттерн [PICK-CLEAN]). Отклонение от
         /// брифа: параметр MainDialog oDialog исключён — MessageBox'ы решает
-        /// вызывающая сторона RunUi (отмена — молча, таймаут — с окном);
-        /// oProject пока не потребляется (число клемм — из oTargetStrip).
+        /// вызывающая сторона RunUi (отмена — молча, таймаут — с окном).
+        /// rev.15.5 (решение пользователя 30.09): параметр EmbeddedReportReader
+        /// oReader (создаётся в RunUi) — ДО создания призрака читаются метрики
+        /// шаблона формы TryGetFormTemplateMetrics(oProject, strForm) — ПАРСИНГ
+        /// ФАЙЛА ФОРМЫ .f11 ([GHOST-SIZE]; PlotFrame.Size опровергнут: форма —
+        /// мастер-данные, страницы формы в проекте может не быть). Успех —
+        /// ALONG = шапка + N_строк×колонка_данных + футер +
+        /// GhostCableGapMm (зазор для символов кабелей), ACROSS = высота
+        /// шаблона; N строк = Ext+Int клеммника = ConnCount из DmReport
+        /// (решение пользователя 30.09; факт X3: 20 строк × 7 мм = 140 мм
+        /// данных) — DmReport читается ТОЛЬКО при успехе парсинга .f11,
+        /// отказ Read/клеммника нет в PerStrip → фоллбэк nRows=nTerminals.
+        /// Маппинг dLong=ALONG, dShort=ACROSS —
+        /// CreateGhostFrame даёт итог dX=ALONG для Horizontal и dX=ACROSS для
+        /// Vertical (призрак = след формы без поворота); расхождение направления
+        /// данных шаблона с ориентацией — WARN «шаблон/имя расходятся»,
+        /// значения КАК ЕСТЬ. Отказ парсинга — фоллбэк-эвристика
+        /// nTerminals×pitch (деградация штатная). oProject потребляется
+        /// разбором шаблона.
         /// true — точка получена (dPointX/dPointY; гейт OFF — константная точка
         /// InsertX/InsertY, легаси-поведение UI); false — отмена (Esc), таймаут,
         /// провал запуска, завершение без точки — вызывающая сторона решает
@@ -791,6 +808,7 @@ namespace MyEplanActions
         /// Исключения наружу не выпускаются — false.</summary>
         private bool TryPickInsertPoint(Project oProject, Page oPage,
             TerminalStrip oTargetStrip, string strForm, SettingsOrientation eMode,
+            EmbeddedReportReader oReader, string strStrip,
             out double dPointX, out double dPointY)
         {
             dPointX = 0.0;
@@ -836,8 +854,101 @@ namespace MyEplanActions
             _logger.Log("[INFO] [IPING] ориентация=" +
                 (eOrient == ReportOrientation.Vertical ? "Vertical" : "Horizontal") +
                 " (режим " + eMode + ", форма '" + strForm + "')");
-            double dLong = GhostFrameMath.ComputeWidthMm(nTerminals, dPitch);
-            double dShort = GhostFrameMath.ComputeHeightMm();
+            // --- 3b. rev.15.5: размер призрака из ПАРСИНГА ФАЙЛА ФОРМЫ .f11
+            //        ([GHOST-SIZE]; решение пользователя 30.09 — PlotFrame.Size
+            //        опровергнут: форма — мастер-данные, страницы формы в проекте
+            //        может не быть). Метрики шаблона: шапка + N×колонка_данных +
+            //        футер + зазор GhostCableGapMm — вдоль направления данных
+            //        (ALONG); высота шаблонных блоков — поперёк (ACROSS).
+            //        N строк = Ext+Int клеммника = ConnCount из DmReport
+            //        (решение пользователя 30.09) — читается ниже ТОЛЬКО при
+            //        успехе парсинга .f11; отказ/нет в PerStrip → nTerminals.
+            //        Маппинг (CreateGhostFrame: dX = Vertical?dShort:dLong):
+            //        dLong=ALONG, dShort=ACROSS — итог dX=ALONG для Horizontal
+            //        и dX=ACROSS для Vertical (призрак = след формы без поворота).
+            //        Направление данных шаблона должно совпадать с ориентацией
+            //        призрака (Horizontal → вдоль X) — расхождение — WARN
+            //        «шаблон/имя расходятся», значения КАК ЕСТЬ (по шаблону,
+            //        не по имени). Отказ парсинга — прежняя эвристика
+            //        nTerminals×pitch (там маппинг CreateGhostFrame осмыслен:
+            //        длинная/короткая). ---
+            double dLong;
+            double dShort;
+            // N строк данных шаблона (решение пользователя 30.09): Ext+Int
+            // клеммника = ConnCount из DmReport (факт X3: 20 строк × 7 мм =
+            // 140 мм данных). Свойства ConnCount у TerminalStrip в API 2.9
+            // НЕТ — «ConnCount» в аналайзе — поле локального DmStripStats.
+            // Читается НИЖЕ один Read на вызов, ТОЛЬКО при успехе парсинга
+            // .f11 (не тратить Read при фоллбэке); отказ Read/клеммника нет
+            // в PerStrip/исключение → фоллбэк nRows=nTerminals + INFO-лог.
+            int nRows = nTerminals;
+            double dHeaderMm;
+            double dDataColMm;
+            double dFooterMm;
+            double dAcrossMm;
+            bool bDataAlongX;
+            if (oReader != null &&
+                oReader.TryGetFormTemplateMetrics(oProject, strForm, out dHeaderMm,
+                    out dDataColMm, out dFooterMm, out dAcrossMm, out bDataAlongX))
+            {
+                // DmReport — ОДИН Read на вызов TryPickInsertPoint, только при
+                // успехе парсинга .f11 (эталон-идиома аналайзера:1485-1492:
+                // PerStrip.TryGetValue(полное имя) → ConnCount = Ext+Int).
+                try
+                {
+                    EplanTerminalStripReader oDmReader =
+                        new EplanTerminalStripReader(_logger, strStrip);
+                    DmReport oDm = oDmReader.Read(oProject);
+                    DmStripStats oStats = null;
+                    if (oDm != null && oDm.PerStrip != null &&
+                        oDm.PerStrip.TryGetValue(strStrip, out oStats) &&
+                        oStats != null)
+                    {
+                        nRows = oStats.ConnCount;
+                        _logger.Log(string.Format(CultureInfo.InvariantCulture,
+                            "[INFO] [GHOST-SIZE] N строк данных шаблона = Ext+Int = ConnCount: {0} (Ext={1}, Int={2})",
+                            oStats.ConnCount, oStats.ExtCount, oStats.IntCount));
+                    }
+                    else
+                    {
+                        nRows = nTerminals;
+                        _logger.Log("[INFO] [GHOST-SIZE] клеммник '" + strStrip +
+                            "' не найден в PerStrip DmReport — фоллбэк nRows=nTerminals: " +
+                            nRows.ToString(CultureInfo.InvariantCulture));
+                    }
+                }
+                catch (Exception oDmEx)
+                {
+                    nRows = nTerminals;
+                    _logger.Log("[INFO] [GHOST-SIZE] DmReport бросил " +
+                        oDmEx.GetType().Name + ": " + oDmEx.Message +
+                        " — фоллбэк nRows=nTerminals");
+                }
+                double dAlongMm;
+                GhostFrameMath.ComputeFromTemplateMetrics(dHeaderMm, dDataColMm,
+                    dFooterMm, dAcrossMm, nRows, AddInConfiguration.GhostCableGapMm,
+                    out dAlongMm, out dShort);
+                dLong = dAlongMm;
+                bool bExpectAlongX = (eOrient == ReportOrientation.Horizontal);
+                if (bDataAlongX != bExpectAlongX)
+                    _logger.Warn("[GHOST-SIZE] шаблон/имя расходятся: данные шаблона вдоль " +
+                        (bDataAlongX ? "X" : "Y") + ", ориентация призрака " +
+                        (eOrient == ReportOrientation.Vertical ? "Vertical" : "Horizontal") +
+                        " — используем размеры КАК ЕСТЬ (по шаблону)");
+                _logger.Log(string.Format(CultureInfo.InvariantCulture,
+                    "[INFO] [GHOST-SIZE] шаблон формы: шапка={0:F1} данные=колонка {1:F1} ×{2} строк + футер {3:F1} + зазор {4:F1} → ALONG={5:F1} ACROSS={6:F1} ({7})",
+                    dHeaderMm, dDataColMm, nRows, dFooterMm,
+                    AddInConfiguration.GhostCableGapMm, dAlongMm, dShort,
+                    (eOrient == ReportOrientation.Vertical ? "Vertical" : "Horizontal")));
+            }
+            else
+            {
+                dLong = GhostFrameMath.ComputeWidthMm(nTerminals, dPitch);
+                dShort = GhostFrameMath.ComputeHeightMm();
+                _logger.Log(string.Format(CultureInfo.InvariantCulture,
+                    "[INFO] [GHOST-SIZE] фоллбэк эвристики: призрак {0:F1}×{1:F1} мм ({2} клемм × {3:F2} мм)",
+                    dLong, dShort, nTerminals, dPitch));
+            }
 
             // --- 4. Сброс статики, призрак, запуск интеракции ---
             InsertPointInteraction.Reset();

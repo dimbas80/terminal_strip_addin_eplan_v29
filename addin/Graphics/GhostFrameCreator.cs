@@ -23,15 +23,24 @@ namespace MyEplanActions
     /// в ReferenceArrowCreator — слой не задаётся; для курсорной отрисовки слой не
     /// критичен, новые механизмы поиска слоя не придумываем). Отказ создания —
     /// null + WARN [GHOST-CREATE] (интеракция живёт
-    /// без рамки — деградация штатная, спека §6).</summary>
+    /// без рамки — деградация штатная, спека §6). rev.15.5 (решение пользователя
+    /// 30.09.2026): якорь призрака — курсор = ЛЕВЫЙ ВЕРХНИЙ угол (был левый
+    /// нижний): пролёты через GhostFrameMath.ResolveAnchorSpans — рамка тянется
+    /// вправо-ВНИЗ от курсора (+X, −Y; в EPLAN Y растёт вверх); размеры —
+    /// из ПАРСИНГА файла формы .f11 (EmbeddedReportReader.TryGetFormTemplateMetrics
+    /// → GhostFrameMath.ComputeFromTemplateMetrics), фоллбэк —
+    /// эвристика nTerminals×pitch.</summary>
     public static class GhostFrameCreator
     {
-        /// <summary>Рамка-призрак: замкнутый PolyLine-прямоугольник с углом в
-        /// (0,0) и размерами dLongMm×dShortMm; пользователь кликает точку вставки
-        /// — интеракция рисует призрак под курсором (SetStaticCursor, начало
-        /// локальной системы координат (0,0)). Возвращает созданный объект или
-        /// null при отказе (WARN; отказ призрака НЕ ломает интеракцию). Лог
-        /// [GHOST-CREATE].</summary>
+        /// <summary>Рамка-призрак: замкнутый PolyLine-прямоугольник; курсор
+        /// интеракции = ЛЕВЫЙ ВЕРХНИЙ угол рамки (rev.15.5): углы (0,0),
+        /// (+dSpanX,0), (+dSpanX,dSpanY), (0,dSpanY), где dSpanY&lt;0 — рамка
+        /// тянется вправо-вниз от курсора
+        /// (SetStaticCursor, начало локальной системы координат (0,0); в EPLAN Y
+        /// растёт вверх, поэтому «вниз» = отрицательный Y). Пользователь кликает
+        /// точку вставки — интеракция рисует призрак под курсором. Возвращает
+        /// созданный объект или null при отказе (WARN; отказ призрака НЕ ломает
+        /// интеракцию). Лог [GHOST-CREATE] с маркером «якорь=верх-лево».</summary>
         public static PolyLine CreateGhostFrame(Page oPage, ReportOrientation eOrient,
             double dLongMm, double dShortMm, DiagnosticLogger log)
         {
@@ -57,13 +66,22 @@ namespace MyEplanActions
 
                 oGhost = new PolyLine();
                 oGhost.Create(oPage);
-                // 4 точки контура (0,0)-(dX,0)-(dX,dY)-(0,dY); SetPointAt — ref! (KB).
+                // rev.15.5: якорь — курсор = ЛЕВЫЙ ВЕРХНИЙ угол (решение пользователя
+                // 30.09.2026). Пролёты через GhostFrameMath.ResolveAnchorSpans:
+                // dSpanX = +dX (вправо), dSpanY = −dY (вниз; в EPLAN Y растёт вверх).
+                // Ориентация уже резолвлена выше (dX/dY) — в ResolveAnchorSpans не входит.
+                double dSpanX;
+                double dSpanY;
+                GhostFrameMath.ResolveAnchorSpans(dX, dY, out dSpanX, out dSpanY);
+                // 4 точки контура (0,0)-(dSpanX,0)-(dSpanX,dSpanY)-(0,dSpanY);
+                // dSpanY отрицателен — «рамка тянется вправо-ВНИЗ от курсора»;
+                // SetPointAt — ref! (KB).
                 PointD[] arrCorners = new PointD[]
                 {
                     new PointD(0.0, 0.0),
-                    new PointD(dX, 0.0),
-                    new PointD(dX, dY),
-                    new PointD(0.0, dY)
+                    new PointD(dSpanX, 0.0),
+                    new PointD(dSpanX, dSpanY),
+                    new PointD(0.0, dSpanY)
                 };
                 for (int i = 0; i < 4; i++)
                 {
@@ -75,8 +93,8 @@ namespace MyEplanActions
                 oGhost.Pen = oPen;
                 // Слой как у линий-ссылок при oLayer==null (по умолчанию) — не задаём.
                 log.Log(string.Format(CultureInfo.InvariantCulture,
-                    "[INFO] [GHOST-CREATE] призрак создан: {0:F1}×{1:F1} мм ({2}); X={3:F1} Y={4:F1}",
-                    dX, dY, (eOrient == ReportOrientation.Vertical ? "Vertical" : "Horizontal"), dX, dY));
+                    "[INFO] [GHOST-CREATE] призрак создан: {0:F1}×{1:F1} мм ({2}); пролёты X={3:F1} Y={4:F1}; якорь=верх-лево",
+                    dX, dY, (eOrient == ReportOrientation.Vertical ? "Vertical" : "Horizontal"), dSpanX, dSpanY));
                 return oGhost;
             }
             catch (Exception oEx)
