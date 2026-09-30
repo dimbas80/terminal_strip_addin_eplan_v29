@@ -519,40 +519,50 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Полный путь файла формы (rev.15.8): записи мастер-данных
+        /// <summary>Полный путь файла формы (rev.15.9): записи мастер-данных
         /// (ProjectEntries → SystemEntries) МОГУТ быть голыми именами без пути —
-        /// KB 2.9 (AddToProjectEx): «no paths can be used, only file names …
-        /// placed in directory pointed by PathInfo.Forms»; прогон 10:05: голое
-        /// имя резолвилось против CWD (каталог EPLAN Bin) → FileNotFoundException.
+        /// KB 2.9 (AddToProjectEx): «no paths can be used, only file names».
         /// Резолв записи: абсолютная (содержит ':' или начинается с '\\','/') и
         /// File.Exists → как есть; иначе — против каталогов-кандидатов (первый
-        /// File.Exists побеждает): (1) Project.ProjectDirectoryPath (KB: get;
-        /// AddToProjectEx кладёт мастер-данные В ПРОЕКТ), (2) Paths.Forms
-        /// (ProjectManager().Paths — KB «Forms directory», значение ИЗ НАСТРОЕК
-        /// EPLAN, может меняться пользователем — решение пользователя 30.09:
-        /// захардкод запрещён; значение диагностируется в лог ВСЕГДА).
+        /// File.Exists побеждает): (1) $(MD_FORMS) — каталог форм из НАСТРОЕК
+        /// ПОЛЬЗОВАТЕЛЯ (Options > Settings > User > Management > Directories;
+        /// разворачивается PathMap.SubstitutePath — KB PathMap~Remarks; решение
+        /// пользователя 30.09: путь только из настроек EPLAN, захардкод запрещён;
+        /// Paths.Forms = дефолт, настройку НЕ отражает — факт прогона 10:28),
+        /// (2) Project.ProjectDirectoryPath, (3) Paths.Forms (дефолт, KB).
+        /// Значения каталогов диагностируются в лог ВСЕГДА.
         /// Кандидат записи — последняя секция пути (после последнего '\\' или '/')
         /// равна strFormName+".f11" ИЛИ strFormName+" .f11" (OrdinalIgnoreCase,
         /// БЕЗ trim — урок п.33). null — не найден ни в одном источнике.</summary>
         private string FindFormFilePath(Project oProject, string strFormName)
         {
             string[] arrCandidates = new string[] { strFormName + ".f11", strFormName + " .f11" };
-            // rev.15.8: диагностика каталогов-кандидатов — в лог ВСЕГДА (прогон
-            // 10:05: проба Forms-каталога отработала молча, причина невидима).
+            // rev.15.9: $(MD_FORMS) — каталог форм ИЗ НАСТРОЕК ПОЛЬЗОВАТЕЛЯ
+            // («Options > Settings > User > Management > Directories», KB 2.9
+            // PathMap~Remarks), разворачивается PathMap.SubstitutePath (KB:
+            // «Substitutes variables with their values»); Paths.Forms = дефолт,
+            // настройку НЕ отражает (факт прогона 10:28: настройка
+            // D:\YandexDisk\!EPLAN, Paths.Forms вернул D:\Мои документы\...).
+            // Порядок кандидатов: $(MD_FORMS) → ProjectDirectoryPath → Paths.Forms.
             string[] arrBaseDirs = null;
             try
             {
+                string strFormsCfg = PathMap.SubstitutePath("$(MD_FORMS)");
                 string strProjDir = oProject.ProjectDirectoryPath;
-                string strFormsDir = new ProjectManager().Paths.Forms;
-                _log.Log("[INFO] [GHOST-SIZE] каталоги-кандидаты: ProjectDirectoryPath='" +
-                    (strProjDir ?? "<null>") + "', Paths.Forms='" + (strFormsDir ?? "<null>") + "'");
+                string strFormsDef = new ProjectManager().Paths.Forms;
+                _log.Log("[INFO] [GHOST-SIZE] каталоги-кандидаты: MD_FORMS(настройка)='" +
+                    (strFormsCfg ?? "<null>") + "', ProjectDirectoryPath='" +
+                    (strProjDir ?? "<null>") + "', Paths.Forms(дефолт)='" +
+                    (strFormsDef ?? "<null>") + "'");
                 int nCount = 0;
+                if (!string.IsNullOrEmpty(strFormsCfg)) nCount++;
                 if (!string.IsNullOrEmpty(strProjDir)) nCount++;
-                if (!string.IsNullOrEmpty(strFormsDir)) nCount++;
+                if (!string.IsNullOrEmpty(strFormsDef)) nCount++;
                 arrBaseDirs = new string[nCount];
                 int nIdx = 0;
+                if (!string.IsNullOrEmpty(strFormsCfg)) arrBaseDirs[nIdx++] = strFormsCfg;
                 if (!string.IsNullOrEmpty(strProjDir)) arrBaseDirs[nIdx++] = strProjDir;
-                if (!string.IsNullOrEmpty(strFormsDir)) arrBaseDirs[nIdx++] = strFormsDir;
+                if (!string.IsNullOrEmpty(strFormsDef)) arrBaseDirs[nIdx++] = strFormsDef;
             }
             catch (Exception oPmEx)
             {
