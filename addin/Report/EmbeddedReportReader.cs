@@ -180,69 +180,68 @@ namespace MyEplanActions
             return lstResult;
         }
 
-        /// <summary>Все имена форм (*.f11) проекта и системы БЕЗ фильтра «addin»
-        /// (Фаза H, H-2; спека 2026-09-25-fase-h-ui-design.md §2 п.3) — список для
-        /// диалога UI-режима. Источники — Masterdata.get_ProjectEntries и свойство
-        /// Masterdata.SystemEntries (KB API 2.9: StringCollection — свойство, не
-        /// метод). Элемент — имя файла: путь отбрасывается Path.GetFileName
-        /// (безопасно и для полных путей — паттерн [FORMP], и для голых имён),
-        /// расширение .f11 отбрасывается, БЕЗ trim (хвостовой пробел имени формы
-        /// значим — урок п.33). Дубликаты имени: первый побеждает; сортировка
-        /// OrdinalIgnoreCase — стабильный список для диалога. Исключения каждого
-        /// источника наружу не выходят: WARN по источнику + частично собранный
-        /// список (отказ SystemEntries не теряет формы проекта); пустой результат —
-        /// WARN. Маркер [FORMLIST] с числом найденных; вызывается ОДИН раз перед
-        /// циклом диалога — в цикле прогона логов не дублирует.</summary>
+        /// <summary>Все имена форм (*.f11) каталога из настроек EPLAN (rev.15.13;
+        /// решение пользователя 30.09: пользователь выбирает форму, доступную в
+        /// текущем каталоге активной схемы настроек). Источник — PathMap.SubstitutePath
+        /// ("$(MD_FORMS)") → Directory.GetFiles("*.f11") → имя без расширения
+        /// (БЕЗ trim — хвостовой пробел имени формы значим, урок п.33). Пулы
+        /// мастер-данных ИЗ СПИСКА УБРАНЫ (схемо-независимы — прогон 10:57:
+        /// один список в обеих схемах; вешали диалог мёртвыми формами).
+        /// Дубликаты: первый побеждает; сортировка OrdinalIgnoreCase.
+        /// Исключения скана наружу не выходят: WARN + пустой список; пустой
+        /// результат — штатный путь (MessageBox в RunUi подскажет проверку
+        /// схемы/каталога). Маркер [FORMLIST] с числом; вызывается ОДИН раз
+        /// перед циклом диалога.</summary>
         public static List<string> CollectAvailableFormNames(Project oProject, DiagnosticLogger log)
         {
+            // rev.15.13 (решение пользователя 30.09): список форм в диалоге —
+            // СКАН КАТАЛОГА ИЗ НАСТРОЕК ($(MD_FORMS) активной схемы настроек):
+            // пользователь выбирает форму, реально доступную в текущем каталоге;
+            // записи пулов мастер-данных схемо-независимы (прогон 10:57: один и
+            // тот же список в «Яндекс» и «Стандартные») и вешали диалог мёртвыми
+            // формами. Пулы ИЗ СПИСКА УБРАНЫ — решение пользователя 30.09:
+            // «фоллбэк не нужен; если формы не найдены — так и написать».
             List<string> lstResult = new List<string>();
-            try
+            string strFormsDir = null;
+            try { strFormsDir = PathMap.SubstitutePath("$(MD_FORMS)"); }
+            catch (Exception oPmEx)
             {
-                CollectFormNamesFrom(new Masterdata().get_ProjectEntries(oProject), lstResult);
+                log.Warn("[FORMLIST] MD_FORMS не развёрнут: " + oPmEx.GetType().Name +
+                    ": " + oPmEx.Message);
             }
-            catch (Exception oException)
+            if (!string.IsNullOrEmpty(strFormsDir) && System.IO.Directory.Exists(strFormsDir))
             {
-                log.Warn("[FORMLIST] проектные формы: перечисление не удалось: " +
-                    oException.GetType().Name + ": " + oException.Message);
+                try
+                {
+                    string[] arrFiles = System.IO.Directory.GetFiles(strFormsDir, "*.f11");
+                    foreach (string strFile in arrFiles)
+                    {
+                        string strName = System.IO.Path.GetFileNameWithoutExtension(strFile);
+                        if (!string.IsNullOrEmpty(strName) && !lstResult.Contains(strName))
+                            lstResult.Add(strName);
+                    }
+                }
+                catch (Exception oDirEx)
+                {
+                    log.Warn("[FORMLIST] скан каталога '" + strFormsDir + "' не удался: " +
+                        oDirEx.GetType().Name + ": " + oDirEx.Message);
+                }
             }
-            try
+            else
             {
-                CollectFormNamesFrom(new Masterdata().SystemEntries, lstResult);
+                log.Warn("[FORMLIST] MD_FORMS='" + (strFormsDir ?? "<null>") +
+                    "' пуст/недоступен");
             }
-            catch (Exception oException)
-            {
-                log.Warn("[FORMLIST] системные формы: перечисление не удалось: " +
-                    oException.GetType().Name + ": " + oException.Message);
-            }
-            if (lstResult.Count == 0)
-                log.Warn("[FORMLIST] формы (*.f11) не найдены ни в проекте, ни в системе");
             lstResult.Sort(StringComparer.OrdinalIgnoreCase);
-            log.Log("[FORMLIST] форм (*.f11, проект+система, без фильтра): " + lstResult.Count);
+            log.Log("[FORMLIST] форм (*.f11) в каталоге настроек '" + strFormsDir +
+                "': " + lstResult.Count);
             return lstResult;
         }
 
-        /// <summary>Складывает в lstResult имена *.f11 из одной выдачи мастер-данных:
-        /// путь отбрасывается Path.GetFileName, расширение .f11 отбрасывается,
-        /// БЕЗ trim (урок п.33), дубликаты — первый побеждает.</summary>
-        private static void CollectFormNamesFrom(IEnumerable oEntries, List<string> lstResult)
-        {
-            if (oEntries == null) return;
-            foreach (object oEntry in oEntries)
-            {
-                string strEntry = oEntry as string;
-                if (strEntry == null) continue;
-                if (!strEntry.EndsWith(".f11", StringComparison.OrdinalIgnoreCase)) continue;
-                string strFile = System.IO.Path.GetFileName(strEntry);
-                if (strFile.Length <= 4) continue;   // вырожденная запись '.f11' без имени
-                string strName = strFile.Substring(0, strFile.Length - 4);   // минус ".f11"
-                if (!lstResult.Contains(strName)) lstResult.Add(strName);
-            }
-        }
 
         /// <summary>UI-ветка (H-2): AddToProjectEx для имени формы, выбранного в
         /// диалоге (план plan_stage8.md H-2). Отказ не фатален: форма могла уже
-        /// быть в проекте (список CollectAvailableFormNames включает и проектные,
-        /// и системные) — каждая ошибка в лог, попытка продолжается. Кандидаты
+        /// быть в проекте — каждая ошибка в лог, попытка продолжается. Кандидаты
         /// имени файла — без и с хвостовым пробелом (паттерн FormFileCandidates).
         /// rev.15.5: публичный продакшн-метод EnsureFormInProject (переименование
         /// TryAddFormFileToProject; байт-в-байт прежнее поведение) — вызывается
