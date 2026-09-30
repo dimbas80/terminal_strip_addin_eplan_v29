@@ -566,65 +566,6 @@ namespace MyEplanActions
                     oPmEx.GetType().Name + ": " + oPmEx.Message);
                 arrBaseDirs = new string[0];
             }
-            // rev.15.11 (СПАЙК-ДИАГНОСТИКА, throwaway — удалить после вердикта):
-            // прогон 10:57 (сборка 10:56): MD_FORMS ОДИНАКОВ в обеих схемах
-            // («Яндекс»/«Стандартные» = D:\Мои документы\...), НО диалог видит
-            // 26 форм из Яндекса — пути форм живут в ДРУГОМ узле настроек.
-            // Проба: перебор правдоподобных путей настроек (ExistSetting →
-            // GetCountOfValues → GetStringSetting(path, idx)), ВСЁ в лог.
-            try
-            {
-                Eplan.EplApi.Base.Settings oSettings = new Eplan.EplApi.Base.Settings();
-                string[] arrSettingCandidates = new string[]
-                {
-                    "USER.MANAGEMENT.DIRECTORIES.FORMS",
-                    "USER.MANAGEMENT.DIRECTORIES.Formulars",
-                    "USER.SYSTEM.MANAGEMENT.DIRECTORIES.FORMS",
-                    "USER.MANAGEMENT.DIRECTORIES",
-                    "USER.SYSTEM.MANAGEMENT.DIRECTORIES",
-                    "USER.MANAGEMENT",
-                    "MD.MANAGEMENT.DIRECTORIES.FORMS",
-                    "COMPANY.MANAGEMENT.DIRECTORIES.FORMS",
-                    "STATION.MANAGEMENT.DIRECTORIES.FORMS"
-                };
-                foreach (string strCand in arrSettingCandidates)
-                {
-                    bool bExists = false;
-                    try { bExists = oSettings.ExistSetting(strCand); }
-                    catch (Exception) { }
-                    if (!bExists)
-                    {
-                        _log.Log("[INFO] [GHOST-SIZE] узел настроек '" + strCand + "' — НЕТ");
-                        continue;
-                    }
-                    int nVals = 0;
-                    try { nVals = oSettings.GetCountOfValues(strCand); }
-                    catch (Exception oCntEx)
-                    {
-                        _log.Log("[INFO] [GHOST-SIZE] узел '" + strCand + "' ЕСТЬ, но GetCountOfValues бросил " +
-                            oCntEx.GetType().Name + " — значение читаем индексно");
-                        nVals = 1;
-                    }
-                    for (int i = 0; i < nVals; i++)
-                    {
-                        string strVal;
-                        try { strVal = oSettings.GetStringSetting(strCand, i); }
-                        catch (Exception oGetEx)
-                        {
-                            _log.Log("[INFO] [GHOST-SIZE] узел '" + strCand + "'[" + i.ToString(System.Globalization.CultureInfo.InvariantCulture) +
-                                "] GetStringSetting бросил " + oGetEx.GetType().Name);
-                            break;
-                        }
-                        _log.Log("[INFO] [GHOST-SIZE] узел '" + strCand + "'[" + i.ToString(System.Globalization.CultureInfo.InvariantCulture) +
-                            "] = '" + (strVal ?? "<null>") + "'");
-                    }
-                }
-            }
-            catch (Exception oProbeEx)
-            {
-                _log.Warn("[GHOST-SIZE] спайк-диагностика настроек бросила: " +
-                    oProbeEx.GetType().Name + ": " + oProbeEx.Message);
-            }
             string strFound = null;
             try
             {
