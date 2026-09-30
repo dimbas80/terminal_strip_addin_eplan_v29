@@ -519,50 +519,48 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Полный путь файла формы: (0) каталог форм ИЗ НАСТРОЕК EPLAN —
-        /// ProjectManager().Paths.Forms (rev.15.6, KB 2.9: «Returns default Forms
-        /// directory»; захардкод запрещён — решение пользователя 30.09; факт
-        /// прогона 09:24: запись мастер-данных указывала на C:\Users\Public\EPL\,
-        /// где файла нет → FileNotFoundException → эвристика 150×28 вместо
-        /// точного размера); далее проектные записи
-        /// (Masterdata.get_ProjectEntries) ЗАТЕМ системные
-        /// (Masterdata.SystemEntries — KB 2.9: StringCollection, свойство) —
-        /// идиома CollectFormNamesFrom (foreach по IEnumerable; отказ источника —
-        /// WARN в лог, обход не прерывается). Кандидат — запись, чья последняя
-        /// секция пути (после последнего '\\' или '/') равна strFormName+".f11"
-        /// ИЛИ strFormName+" .f11" (OrdinalIgnoreCase, БЕЗ trim — урок п.33).
-        /// null — не найден ни в одном источнике.</summary>
+        /// <summary>Полный путь файла формы (rev.15.8): записи мастер-данных
+        /// (ProjectEntries → SystemEntries) МОГУТ быть голыми именами без пути —
+        /// KB 2.9 (AddToProjectEx): «no paths can be used, only file names …
+        /// placed in directory pointed by PathInfo.Forms»; прогон 10:05: голое
+        /// имя резолвилось против CWD (каталог EPLAN Bin) → FileNotFoundException.
+        /// Резолв записи: абсолютная (содержит ':' или начинается с '\\','/') и
+        /// File.Exists → как есть; иначе — против каталогов-кандидатов (первый
+        /// File.Exists побеждает): (1) Project.ProjectDirectoryPath (KB: get;
+        /// AddToProjectEx кладёт мастер-данные В ПРОЕКТ), (2) Paths.Forms
+        /// (ProjectManager().Paths — KB «Forms directory», значение ИЗ НАСТРОЕК
+        /// EPLAN, может меняться пользователем — решение пользователя 30.09:
+        /// захардкод запрещён; значение диагностируется в лог ВСЕГДА).
+        /// Кандидат записи — последняя секция пути (после последнего '\\' или '/')
+        /// равна strFormName+".f11" ИЛИ strFormName+" .f11" (OrdinalIgnoreCase,
+        /// БЕЗ trim — урок п.33). null — не найден ни в одном источнике.</summary>
         private string FindFormFilePath(Project oProject, string strFormName)
         {
             string[] arrCandidates = new string[] { strFormName + ".f11", strFormName + " .f11" };
-            string strFound = null;
-            // rev.15.6: каталог форм ИЗ НАСТРОЕК EPLAN — ProjectManager().Paths.Forms
-            // (KB 2.9, страница ProjectManager~Paths + PathInfo: «Returns default
-            // Forms directory» — значения берутся из настроек EPLAN и могут
-            // меняться пользователем; захардкоженный каталог НЕ допустим —
-            // решение пользователя 30.09). Порядок: Forms-каталог → проектные
-            // записи → системные записи.
+            // rev.15.8: диагностика каталогов-кандидатов — в лог ВСЕГДА (прогон
+            // 10:05: проба Forms-каталога отработала молча, причина невидима).
+            string[] arrBaseDirs = null;
             try
             {
+                string strProjDir = oProject.ProjectDirectoryPath;
                 string strFormsDir = new ProjectManager().Paths.Forms;
-                if (!string.IsNullOrEmpty(strFormsDir) && System.IO.Directory.Exists(strFormsDir))
-                {
-                    foreach (string strName in arrCandidates)
-                    {
-                        string strPath = System.IO.Path.Combine(strFormsDir, strName);
-                        if (System.IO.File.Exists(strPath))
-                        {
-                            _log.Log("[INFO] [GHOST-SIZE] файл формы найден в Forms-каталоге настроек EPLAN: " + strPath);
-                            return strPath;
-                        }
-                    }
-                }
+                _log.Log("[INFO] [GHOST-SIZE] каталоги-кандидаты: ProjectDirectoryPath='" +
+                    (strProjDir ?? "<null>") + "', Paths.Forms='" + (strFormsDir ?? "<null>") + "'");
+                int nCount = 0;
+                if (!string.IsNullOrEmpty(strProjDir)) nCount++;
+                if (!string.IsNullOrEmpty(strFormsDir)) nCount++;
+                arrBaseDirs = new string[nCount];
+                int nIdx = 0;
+                if (!string.IsNullOrEmpty(strProjDir)) arrBaseDirs[nIdx++] = strProjDir;
+                if (!string.IsNullOrEmpty(strFormsDir)) arrBaseDirs[nIdx++] = strFormsDir;
             }
             catch (Exception oPmEx)
             {
-                _log.Warn("[GHOST-SIZE] Forms-каталог настроек EPLAN недоступен: " +
+                _log.Warn("[GHOST-SIZE] каталоги-кандидаты: не получены: " +
                     oPmEx.GetType().Name + ": " + oPmEx.Message);
+                arrBaseDirs = new string[0];
             }
+            string strFound = null;
             try
             {
                 strFound = FindFormFileIn(new Masterdata().get_ProjectEntries(oProject), arrCandidates);
@@ -572,7 +570,7 @@ namespace MyEplanActions
                 _log.Warn("[GHOST-SIZE] проектные записи форм: перечисление не удалось: " +
                     oException.GetType().Name + ": " + oException.Message);
             }
-            if (strFound != null) return strFound;
+            if (strFound != null) return ResolveFormEntryPath(strFound, arrBaseDirs);
             try
             {
                 strFound = FindFormFileIn(new Masterdata().SystemEntries, arrCandidates);
@@ -582,7 +580,48 @@ namespace MyEplanActions
                 _log.Warn("[GHOST-SIZE] системные записи форм: перечисление не удалось: " +
                     oException.GetType().Name + ": " + oException.Message);
             }
-            return strFound;
+            if (strFound != null) return ResolveFormEntryPath(strFound, arrBaseDirs);
+            return null;
+        }
+
+        /// <summary>Резолв записи мастер-данных в полный путь (rev.15.8): абсолютная
+        /// запись — проверка File.Exists как есть (нет — провал в относительный
+        /// путь); относительная — Combine с каждым каталогом-кандидатом до первого
+        /// File.Exists. Ничего не нашлось → null (вызыватель уже дал WARN про
+        /// ненайденный файл — здесь свой INFO-лог причины).</summary>
+        private string ResolveFormEntryPath(string strEntry, string[] arrBaseDirs)
+        {
+            try
+            {
+                bool bAbsolute = strEntry.IndexOf(':') >= 0 ||
+                    strEntry.StartsWith("\\\\", StringComparison.Ordinal) ||
+                    strEntry.StartsWith("\\", StringComparison.Ordinal) ||
+                    strEntry.StartsWith("/", StringComparison.Ordinal);
+                if (bAbsolute)
+                {
+                    if (System.IO.File.Exists(strEntry)) return strEntry;
+                    _log.Log("[INFO] [GHOST-SIZE] запись абсолютная, но файла нет: '" +
+                        strEntry + "' — пробуем каталоги-кандидаты");
+                }
+                for (int i = 0; i < arrBaseDirs.Length; i++)
+                {
+                    string strPath = System.IO.Path.Combine(arrBaseDirs[i], strEntry);
+                    if (System.IO.File.Exists(strPath))
+                    {
+                        _log.Log("[INFO] [GHOST-SIZE] запись '" + strEntry +
+                            "' резолвлена: " + strPath);
+                        return strPath;
+                    }
+                }
+                _log.Log("[INFO] [GHOST-SIZE] запись '" + strEntry +
+                    "' не резолвится ни в одном каталоге-кандидате — файл не найден");
+            }
+            catch (Exception oEx)
+            {
+                _log.Warn("[GHOST-SIZE] резолв записи '" + strEntry + "': " +
+                    oEx.GetType().Name + ": " + oEx.Message);
+            }
+            return null;
         }
 
         /// <summary>Первый entry, чья последняя секция пути совпала с кандидатом;
