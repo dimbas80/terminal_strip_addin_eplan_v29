@@ -69,6 +69,16 @@ namespace MyEplanActions
                 }
                 if (bLineOk)
                 {
+                    // rev.16.2: у кабеля с прямой точкой BP стрелку НЕ создаём —
+                    // её заменяет сам символ BP на острие линии (WithBreakPoint).
+                    if (oRef.WithBreakPoint)
+                    {
+                        log.Log(string.Format(CultureInfo.InvariantCulture,
+                            "[INFO] [REF] '{0}' #{1}: линия ({2:F3};{3:F3})-({4:F3};{5:F3}), стрелка заменена точкой BP",
+                            strName, oRef.CableIndex,
+                            oRef.Line.A.X, oRef.Line.A.Y, oRef.Line.B.X, oRef.Line.B.Y));
+                        continue;
+                    }
                     // Стрелка — замкнутая PolyLine с заливкой (KB: IsSurfaceFilled
                     // ТОЛЬКО после Closed=true, иначе документированное исключение).
                     // Свежая PolyLine имеет 4 точки (пример доков ставит индексы 0..3);

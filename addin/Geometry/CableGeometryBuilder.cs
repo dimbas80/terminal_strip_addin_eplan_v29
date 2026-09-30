@@ -13,6 +13,25 @@ namespace MyEplanActions
         public Pt Position;              // SymbolPosition, страничные координаты
     }
 
+    /// <summary>rev.16.2: точка вставки символа точки разрыва BP.
+    /// Straight (Multi=false) — на конце линии-ссылки (остриё, за символом), стрелка
+    /// при этом Graphics-слой не создаёт (WithBreakPoint у ReferenceElement).
+    /// Multi (кабель между клеммниками, Multi=true) — на обратном (НЕ символ-)
+    /// конце шины группы, противоположной ряду символа.</summary>
+    public sealed class BreakPointPlacement
+    {
+        public string CableName;         // имя кабеля или null (бинарный случай)
+        public int CableIndex = -1;      // 0-based индекс в CableLayoutModel.Cables
+        public Pt Position;              // страничные координаты точки BP
+        public bool Multi;               // G/F-вариант (true) / A/H (false)
+        // rev.16.2 (ruling, вне исходного поля плана): вход нейминга/Runtime-
+        // выбора набора — заполняет AnalyzeAction по BreakPointDecision
+        // ДО CreateBreakPoints (план умолчал, creator'у эти данные нужны:
+        // OppositeDt — полное ОУ обратного конца, Kind — его тип).
+        public string OppositeDt;        // 20376/20377-значение обратного конца
+        public BpEndKind Kind;           // TerminalStrip / Device / Unreadable
+    }
+
     /// <summary>Линия-ссылка от символа кабеля (rev.11.0, решение пользователя
     /// 23.09.2026): продолжение шины этого кабеля с ДРУГОЙ стороны символа,
     /// наружу от клеммника, на уровне ряда символа (= уровень его шины). Line —
@@ -26,6 +45,7 @@ namespace MyEplanActions
         public Pt[] Arrow;               // 4 точки контура стрелки
         public string CableName;         // имя кабеля или null (бинарный случай)
         public int CableIndex = -1;      // 0-based индекс в CableLayoutModel.Cables
+        public bool WithBreakPoint;      // rev.16.2: прямая точка BP = остриё — стрелку не рисовать
     }
 
     /// <summary>Результат Geometry Engine: сегменты (ветви + шины + вертикали-подходы +
@@ -38,6 +58,7 @@ namespace MyEplanActions
         public readonly List<Seg> Segments = new List<Seg>();
         public readonly List<CableSymbolPlacement> Symbols = new List<CableSymbolPlacement>();
         public readonly List<ReferenceElement> References = new List<ReferenceElement>();
+        public readonly List<BreakPointPlacement> BreakPoints = new List<BreakPointPlacement>(); // rev.16.2
         public readonly List<string> Warnings = new List<string>();
     }
 
@@ -135,6 +156,17 @@ namespace MyEplanActions
         /// (ревизия 2; правило 2 rev.10.7).</summary>
         public static CableGeometryResult Build(CableLayoutModel oLayout,
             ReportOrientation eOrientation, CableGeometryConfig oCfg, double dStripEndAxis)
+        {
+            return Build(oLayout, eOrientation, oCfg, dStripEndAxis, null, null);   // rev.16.2: без BP-списков — прежнее поведение
+        }
+
+        /// <summary>Перегрузка rev.16.2: lstBreakPoint/lstMulti — per-кабельные
+        /// решения (BreakPointResolver, AnalyzeAction): еди­ница = BP ставить;
+        /// multi=истина → якорь на дальнем конце шины, вариант G/F; null-списки =
+        /// фича не запрошена (BP не создаётся, поведение прежнее).</summary>
+        public static CableGeometryResult Build(CableLayoutModel oLayout,
+            ReportOrientation eOrientation, CableGeometryConfig oCfg, double dStripEndAxis,
+            IList<bool> lstBreakPoint, IList<bool> lstMulti)
         {
             CableGeometryResult oRes = new CableGeometryResult();
             if (oLayout == null || oCfg == null)
@@ -367,12 +399,17 @@ namespace MyEplanActions
                 List<TerminalConnectionModel> oOther = oCable.OtherConnections;
                 bool bBilateral = CountOf(oRight) > 0 && CountOf(oLeft) > 0;
 
+                // rev.16.2: старты шин групп (для multi-якоря BP); вне двусторонней
+                // ветви остаются null (Pt? — значимый Pt без «нулевого» значения) —
+                // multi-якорь для одностороннего невозможен.
+                Pt? oBusRightStart = null, oBusLeftStart = null, oBusOtherStart = null;
+
                 if (bBilateral)
                 {
                     // Шины двустороннего заканчиваются на его подходе X_i.
-                    AddGroup(oRes, oRight, arrBusRight[nCable], bV, arrX[nCable]);
-                    AddGroup(oRes, oLeft, arrBusLeft[nCable], bV, arrX[nCable]);
-                    AddGroup(oRes, oOther, arrBusOther[nCable], bV, arrX[nCable]);
+                    AddGroupCore(oRes, oRight, arrBusRight[nCable], bV, arrX[nCable], out oBusRightStart);
+                    AddGroupCore(oRes, oLeft, arrBusLeft[nCable], bV, arrX[nCable], out oBusLeftStart);
+                    AddGroupCore(oRes, oOther, arrBusOther[nCable], bV, arrX[nCable], out oBusOtherStart);
 
                     // Вертикаль-подход на X_i: между нижним и верхним из уровней
                     // шин и ряда символа.
@@ -421,6 +458,64 @@ namespace MyEplanActions
                 // arrSymAxis всегда не NaN: кабель прошёл проходы (а)–(в)).
                 AddReference(oRes, bV, sDir, arrSymAxis[nCable], arrSymRow[nCable],
                     dGap, oCfg, oCable.Name, nCable);
+
+                // rev.16.2: точка разрыва BP — по per-кабельному решению
+                // (BreakPointResolver в AnalyzeAction). Много-меньше (multi) —
+                // G/F-вариант, якорь на обратном конце шины; plain — A/H,
+                // якорь = остриё линии-ссылки (стрелка Graphics-слоем не рисуется).
+                bool bWithBp = lstBreakPoint != null && nCable < lstBreakPoint.Count &&
+                    lstBreakPoint[nCable];
+                if (bWithBp)
+                {
+                    bool bBpMultiReq = lstMulti != null && nCable < lstMulti.Count && lstMulti[nCable];
+                    bool bBpMulti = bBpMultiReq;
+                    string strBpName = oCable.Name ?? "<без имени>";   // rev.16.2: локальный контекст BP
+                    Pt? oBpPos = null;
+                    if (bBpMultiReq && bBilateral)
+                    {
+                        // Якорь = обратный конец шины группы, НЕ несущей символ:
+                        // symRow == busRight → Left, иначе → Right (rev.10.10 выбор).
+                        Pt? oAnchor;
+                        if (Math.Abs(arrSymRow[nCable] - arrBusRight[nCable]) <= EpsLen)
+                            oAnchor = oBusLeftStart;
+                        else
+                            oAnchor = oBusRightStart;
+                        if (oAnchor == null)
+                            oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                                "': multi-BP не возможен (шина противоположной группы пуста) — якорь прямой");
+                        else
+                            oBpPos = oAnchor;
+                    }
+                    if (oBpPos == null)
+                    {
+                        // Прямой якорь (или multi не прошёл): остриё ссылки.
+                        if (oRes.References.Count > 0 &&
+                            oRes.References[oRes.References.Count - 1].CableIndex == nCable)
+                        {
+                            oBpPos = oRes.References[oRes.References.Count - 1].Line.B;
+                            bBpMulti = false;
+                            oRes.References[oRes.References.Count - 1].WithBreakPoint = true;
+                            if (bBpMultiReq)
+                                oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                                    "': multi-BP не возможен (кабель односторонний) — якорь прямой");
+                        }
+                        else
+                        {
+                            oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                                "': BP запрошен, но ссылки нет (символ/ссылка не созданы) — BP пропущен");
+                            oBpPos = null;
+                        }
+                    }
+                    if (oBpPos != null)
+                    {
+                        BreakPointPlacement oBp = new BreakPointPlacement();
+                        oBp.CableName = oCable.Name;
+                        oBp.CableIndex = nCable;
+                        oBp.Position = oBpPos.Value;
+                        oBp.Multi = bBpMulti;
+                        oRes.BreakPoints.Add(oBp);
+                    }
+                }
             }
 
             // Финальная защитная сетка (rev.10.7, правило 5): пересечение A×B-боксов
@@ -507,6 +602,17 @@ namespace MyEplanActions
         private static void AddGroup(CableGeometryResult oRes, List<TerminalConnectionModel> lstGroup,
             double dBusPerp, bool bV, double dBusEndAxis)
         {
+            Pt? oStart;
+            AddGroupCore(oRes, lstGroup, dBusPerp, bV, dBusEndAxis, out oStart);
+        }
+
+        /// <summary>rev.16.2: перегрузка с выходом «начало шины» (конец сегмента
+        /// шины со СТОРОНЫ ветвей = обратный конец для BP-мульти якоря).
+        /// Pt — значимый тип: старт «нет» — null у nullable (Pt?).</summary>
+        private static void AddGroupCore(CableGeometryResult oRes, List<TerminalConnectionModel> lstGroup,
+            double dBusPerp, bool bV, double dBusEndAxis, out Pt? oBusStart)
+        {
+            oBusStart = null;
             if (lstGroup == null || lstGroup.Count == 0 || double.IsNaN(dBusPerp)) return;
             double dBusStart = 0.0;
             bool bFirst = true;
@@ -521,8 +627,11 @@ namespace MyEplanActions
                 oBranch.B = PtOf(bV, dAxis, dBusPerp);
                 oRes.Segments.Add(oBranch);
             }
+            if (bFirst) return;   // группа из одних null — шины нет, NaN-шина (хранится)
+            Pt oBusStartValue = PtOf(bV, dBusStart, dBusPerp);
+            oBusStart = oBusStartValue;
             Seg oBus = new Seg();
-            oBus.A = PtOf(bV, dBusStart, dBusPerp);
+            oBus.A = oBusStartValue;
             oBus.B = PtOf(bV, dBusEndAxis, dBusPerp);
             oRes.Segments.Add(oBus);
         }

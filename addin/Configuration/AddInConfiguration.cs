@@ -201,5 +201,31 @@ namespace MyEplanActions
         public const int BlockCabSourceProp = 20376;  // «Кабели: источник» — полная структура источника
         public const int BlockCabTargetProp = 20377;  // «Кабели: цель» — полная структура цели
 
+        // rev.16.2 (решение пользователя 30.09.2026): точка разрыва BP «8 / BP»
+        // на обратном конце линии-ссылки. Символы СИСТЕМНЫЕ (SPECIAL «8 / BP»,
+        // работают во всех EPLAN) — константы, НЕ настройки; фича всегда
+        // включена (BreakPointEnabled не заводим). Варианты: прямые
+        // A(0)-горизонт / H(7)-вертик, мульти-клеммные G(6)-горизонт / F(5)-вертик.
+        // Наборы отображения .emc применяются к вставленному SymbolReference
+        // через SymbolReference.PropertyPlacementsSchemasList.Import (KB 2.9)
+        // — файл берётся по фиксированному пути: папка point/ рядом со сборкой
+        // аддина (вариант (а), решение пользователя); UI-выбор файлов — позже.
+        // Подмена свойства 1450→1250 НЕ выполняется (решение пользователя:
+        // пользователь сам редактирует свой .emc).
+        public const string BreakPointSymbolLibrary = "SPECIAL";
+        public const string BreakPointSymbolName = "BP";
+        public const int BreakPointVariantStraightH = 0;   // A(0), горизонтальный отчёт
+        public const int BreakPointVariantStraightV = 7;   // H(7), вертикальный отчёт
+        public const int BreakPointVariantMultiH = 6;      // G(6), горизонтальный отчёт
+        public const int BreakPointVariantMultiV = 5;      // F(5), вертикальный отчёт
+        public const string PointSchemeFolder = "point";
+        public const string EmcStraightStripH = "ТР_Кабель(горизонт).emc";
+        public const string EmcStraightStripV = "ТР_Кабель(вертик).emc";
+        public const string EmcStraightDeviceH = "ТР_Устройство(горизонт).emc";
+        public const string EmcStraightDeviceV = "ТР_Устройство(вертик).emc";
+        public const string EmcMultiStripH = "ТР_кабель(int_горизонт).emc";
+        public const string EmcMultiStripV = "ТР_кабель(int_вертик).emc";
+        public const string BreakPointSuffix = "(EXT)";
+
     }
 }

@@ -400,18 +400,33 @@ namespace MyEplanActions
         /// readback + [SYMDT-RD] 20002 (видимое). Цепочка механизмов различима
         /// по токенам: [SYMDT] запись ОУ: NameService 2-arg / запись NameParts:
         /// offline-список / [SYMDT-AVN].</summary>
+        /// <summary>Запись ОУ символа — rev.11.15: NameParts-структуры
+        /// offline + NameService 2-arg + get-modify-set fallback + AdjustVisibleName.
+        /// string, DiagnosticLogger) — переиспользуется BreakPointSymbolCreator
+        /// для ОУ точки разрыва (строка полного DT); здесь только разбор входа.</summary>
         private static void WriteDeviceTagProperties(Page oPage, Function oFunc,
             CableSymbolPlacement oSym, DiagnosticLogger log)
         {
-            string[] arrParts = ParseDeviceTag(oSym.CableName);
+            WriteDtPropertiesCore(oPage, oFunc, oSym.CableName, log);
+        }
+
+        /// <summary>ОБЩИЙ контур записи ОУ (rev.11.13/11.15/13.0) от строки
+        /// полного DT. tags [SYMDT]/[SYMDT-NSS]/[SYMDT-AVN]/[SYMDT-RD] — как есть
+        /// (кабельный символ вызывает сюда же). rev.16.2: переиспользуется
+        /// BreakPointSymbolCreator для ОУ точки разрыва (ComposeBpDeviceTag-
+        /// строка). Пустой/null DT — выход без записи.</summary>
+        internal static void WriteDtPropertiesCore(Page oPage, Function oFunc,
+            string strFullDt, DiagnosticLogger log)
+        {
+            string[] arrParts = ParseDeviceTag(strFullDt);
             string strInstallation = arrParts[0];
             string strMountingSite = arrParts[1];
             string strPlaceOfInstallation = arrParts[2];
             string strUserStruct = arrParts[3];
             string strName = arrParts[4];
 
-            // Дамп ИСТОЧНИКА (полный DT кабеля из DataModel), не запись.
-            log.Log("[INFO] [SYMDT] '" + oSym.CableName + "': =" +
+            // Дамп ИСТОЧНИКА (полный DT входа), не запись.
+            log.Log("[INFO] [SYMDT] '" + strFullDt + "': =" +
                 (strInstallation ?? "—") + " ++" + (strMountingSite ?? "—") + " +" +
                 (strPlaceOfInstallation ?? "—") + " #" + (strUserStruct ?? "—") +
                 " имя=" + (strName ?? "—"));
