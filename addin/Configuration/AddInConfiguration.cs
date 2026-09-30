@@ -134,9 +134,9 @@ namespace MyEplanActions
         public const bool UseUi = true;
 
         // SPIKE (throwaway, H-4v2): гейты диагностики нативного диалога «Вставить
-        // символ». УДАЛИТЬ вместе с addin/UI/NativeSymbolDialogSpike.cs,
-        // addin/Interaction/SymbolPickInteraction.cs, хуками 1b/1c в RunUi и этим
-        // блоком после вердикта (brief .superpowers/sdd/plan_stage8/
+        // символ». УДАЛИТЬ вместе с addin/UI/NativeSymbolDialogSpike.cs и хуком
+        // 1b в RunUi и этим блоком после вердикта (SymbolPickInteraction.cs и хук
+        // 1c удалены rev.15.4; brief .superpowers/sdd/plan_stage8/
         // task-h4v2-spike-brief.md / task-h4v2-spike2-brief.md). В headless-прогоне
         // гейты не читаются. Один сценарий за прогон:
         // spike-1 (rev.13.2) ЗАКРЫТ фактами 25.09 (диалог синхронен полному циклу,
@@ -144,29 +144,6 @@ namespace MyEplanActions
         // spike-2 (rev.13.3): производный InsertInteraction + дампы OnSuccess.
         public const bool SpikeNativeInsertSymbol = false;
         public const bool SpikeActionDump = false;
-        // rev.14.1: выключено — spike мешал прогону H-4b (нативный диалог открывался
-        // при вызове команды, замечание R1); H-4b браузер — рабочий путь. Полное
-        // удаление spike-кода — задача H-4v2 production (PARK, п.88).
-        public const bool SpikeSymbolPick = false;
-        // SPIKE-11 (throwaway): после base.OnStart(Point) попробовать завершить
-        // ввод фиксированной точкой (0,0) без клика пользователя. Не подключать
-        // к production pipeline; при false сохраняется SPIKE-9.
-        // rev.14.1: выключено вместе с SpikeSymbolPick (замечание R1).
-        public const bool SpikeAutoPoint = false;
-        // SPIKE-3 (rev.13.4, throwaway): какой из двух одновременно зарегистрированных
-        // PICK-интеракций запускать (только при SpikeSymbolPick=true):
-        // 1 = TERMINAL_STRIP_PICK_SPIKE  (база «XEGedIaInsertSymRef» — verbatim-пример
-        //     пользователя), 2 = TERMINAL_STRIP_PICK_SPIKE2 (база «XEGActionInsertSymRef» —
-        //     экшен, найденный/исполненный spike-1), 0 = спайк выключен.
-        // Одна гипотеза за прогон: при возврате False у варианта 1 — переключить константу
-        // и пересобрать. Удалить со всем spike-блоком.
-        // Факт прогона rev.13.4 (25.09, сборка 21:58): вариант 1 → Execute=False,
-        // OnSuccess не вызван ([PICK-DUMP] '<не собрано>'), диалога нет → переключено на 2.
-        // Факт rev.13.5 (прогон 26.09): вариант 2 → Execute=False, OnSuccess не вызван.
-        // С rev.13.6 (SPIKE-4) константа НЕ используется — запуск идёт упорядоченным
-        // списком имён в RunSymbolPickSpike; удалить вместе со spike-блоком.
-        // Факт rev.13.6 (SPIKE-4): имя класса → False, системное → True; с rev.13.7 (SPIKE-5) — override-паттерн, список имён в RunSymbolPickSpike.
-        public const int SpikePickVariant = 2;
 
         // rev.14.15 (диагностика крэшей, summary п.108-109): шторм проб
         // rev.14.12/13 ([VARPROP]/[VARPROP-EXC]/[VARPROP-MEMS]/[SYMPL] —
@@ -192,16 +169,5 @@ namespace MyEplanActions
         // ожидания SPIKE-8 (AnalyzeAction, кап 120 с на интеракцию спайка).
         public const int SelectPointTimeoutSec = 120;
 
-        // rev.15.1 (СПАЙК throwaway): захват точки вставки через 1-арг
-        // CreateEmbeddedReport(ReportBlock) — «starts an interaction so the report
-        // is attached to the mouse pointer» (KB 2.9). Причина спайка: rev.15.0
-        // [IPING-LAUNCH]=False — XGedStartInteractionAction не стартует кастомные
-        // интеракции (факт SPIKE-4/5, повторён).
-        // rev.15.2: спайк ОТЛОЖЕН (обе сборки 29.09 21:13 были rev.15.0 — вердикт
-        // не получен), причина спайка опровергнута прогоном 07:14: [IPING-LAUNCH]=True,
-        // OnStart шёл — гасла интеракция из-за Stop|Point (фикс [IPING-FIX] в
-        // InsertPointInteraction.OnStart). Гейт OFF → фиксированный 15.0-путь;
-        // код спайка остаётся под гейтом до чистки rev.15.3.
-        public const bool SpikeCreateReportProbe = false;
     }
 }

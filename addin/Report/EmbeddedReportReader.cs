@@ -239,14 +239,6 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Публичный шов для пробы rev.15.1: форма обязана лежать в проекте
-        /// (S029153) до создания блока отчёта. Тело — существующий TryAddFormFileToProject
-        /// (AddToProjectEx-механика не дублируется).</summary>
-        public void EnsureFormInProject(Project oProject, string strFormName)
-        {
-            TryAddFormFileToProject(oProject, strFormName);
-        }
-
         /// <summary>UI-ветка (H-2): AddToProjectEx для имени формы, выбранного в
         /// диалоге (план plan_stage8.md H-2). Отказ не фатален: форма могла уже
         /// быть в проекте (список CollectAvailableFormNames включает и проектные,
