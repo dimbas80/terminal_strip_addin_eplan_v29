@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-30 Этап 8 rev.15.7 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=Ext+Int (ConnCount), фоллбэк nTerminals; фоллбэк размера — эвристика n×pitch; rev.15.7: ориентация из ВЫРАВНИВАНИЯ ФОРМЫ P13008 (1=по столбцам=Horizontal, 0=по строкам=Vertical; решение 30.09); ResolveOrientation (имя/диалог) — фоллбэк; rev.15.13: поиск .f11 — запись мастер-данных (голое имя) резолвится против $(MD_FORMS) = каталог форм ИЗ АКТИВНОЙ СХЕМЫ настроек (Options > Settings > User > Management > Directories, PathMap.SubstitutePath), затем Paths.Forms (дефолт); ProjectDirectoryPath удалён (формы в каталоге проекта не хранятся); rev.15.13: СПИСОК ФОРМ диалога = скан каталога из настроек ($(MD_FORMS) активной схемы, Directory.GetFiles *.f11; решение пользователя 30.09 — пользователь выбирает форму, доступную в текущем каталоге); пулы мастер-данных — фоллбэк (схемо-независимы, прогон 10:57: один список в обеих схемах). rev.15.12 вердикт: $(MD_FORMS) следует активной схеме (Яндекс→270.5×180+отчёт; Стандартные→WARN+эвристика штатно); спайк удалён";
+        private const string BUILD_STAMP = "2026-09-30 Этап 8 rev.16.0 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=Ext+Int (ConnCount), фоллбэк nTerminals; фоллбэк размера — эвристика n×pitch; rev.15.7: ориентация из ВЫРАВНИВАНИЯ ФОРМЫ P13008 (1=по столбцам=Horizontal, 0=по строкам=Vertical; решение 30.09); ResolveOrientation (имя/диалог) — фоллбэк; rev.15.13: поиск .f11 — запись мастер-данных (голое имя) резолвится против $(MD_FORMS) = каталог форм ИЗ АКТИВНОЙ СХЕМЫ настроек (Options > Settings > User > Management > Directories, PathMap.SubstitutePath), затем Paths.Forms (дефолт); ProjectDirectoryPath удалён (формы в каталоге проекта не хранятся); rev.15.13: СПИСОК ФОРМ диалога = скан каталога из настроек ($(MD_FORMS) активной схемы, Directory.GetFiles *.f11; решение пользователя 30.09 — пользователь выбирает форму, доступную в текущем каталоге); пулы мастер-данных — фоллбэк (схемо-независимы, прогон 10:57: один список в обеих схемах). rev.15.12 вердикт: $(MD_FORMS) следует активной схеме (Яндекс→270.5×180+отчёт; Стандартные→WARN+эвристика штатно); спайк удалён; rev.16.0: свойство блока символа кабеля 20202[x] — BlockFormat1/2 (20211,1=источник / 20211,2=цель), BlockFormatIndex, сверка через Кабели:источник 20376 / Кабели:цель 20377 × поле клеммника 1429 (Contains); наш конец=источник → писать 20211,2, наш=цель → 20211,1 (правило 30.09); запись в CableSymbolCreator (typed-индексатор → PropertyValue-fallback); фича off при пустых строках";
 
         // rev.14.14: однократная установка хуков исключений + статическая ссылка
         // на логгер текущего прогона (хуки статические — экземпляра в них нет).
@@ -106,7 +106,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.15.7 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=Ext+Int (ConnCount), фоллбэк nTerminals; фоллбэк размера — эвристика n×pitch; rev.15.7: ориентация из ВЫРАВНИВАНИЯ ФОРМЫ P13008 (1=по столбцам=Horizontal, 0=по строкам=Vertical; решение 30.09); ResolveOrientation (имя/диалог) — фоллбэк; rev.15.13: поиск .f11 — запись мастер-данных (голое имя) резолвится против $(MD_FORMS) = каталог форм ИЗ АКТИВНОЙ СХЕМЫ настроек (Options > Settings > User > Management > Directories, PathMap.SubstitutePath), затем Paths.Forms (дефолт); ProjectDirectoryPath удалён (формы в каталоге проекта не хранятся); rev.15.13: СПИСОК ФОРМ диалога = скан каталога из настроек ($(MD_FORMS) активной схемы, Directory.GetFiles *.f11; решение пользователя 30.09 — пользователь выбирает форму, доступную в текущем каталоге); пулы мастер-данных — фоллбэк (схемо-независимы, прогон 10:57: один список в обеих схемах). rev.15.12 вердикт: $(MD_FORMS) следует активной схеме (Яндекс→270.5×180+отчёт; Стандартные→WARN+эвристика штатно); спайк удалён", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.16.0 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=Ext+Int (ConnCount), фоллбэк nTerminals; фоллбэк размера — эвристика n×pitch; rev.15.7: ориентация из ВЫРАВНИВАНИЯ ФОРМЫ P13008 (1=по столбцам=Horizontal, 0=по строкам=Vertical; решение 30.09); ResolveOrientation (имя/диалог) — фоллбэк; rev.15.13: поиск .f11 — запись мастер-данных (голое имя) резолвится против $(MD_FORMS) = каталог форм ИЗ АКТИВНОЙ СХЕМЫ настроек (Options > Settings > User > Management > Directories, PathMap.SubstitutePath), затем Paths.Forms (дефолт); ProjectDirectoryPath удалён (формы в каталоге проекта не хранятся); rev.15.13: СПИСОК ФОРМ диалога = скан каталога из настроек ($(MD_FORMS) активной схемы, Directory.GetFiles *.f11; решение пользователя 30.09 — пользователь выбирает форму, доступную в текущем каталоге); пулы мастер-данных — фоллбэк (схемо-независимы, прогон 10:57: один список в обеих схемах). rev.15.12 вердикт: $(MD_FORMS) следует активной схеме (Яндекс→270.5×180+отчёт; Стандартные→WARN+эвристика штатно); спайк удалён; rev.16.0: свойство блока символа кабеля 20202[x] — BlockFormat1/2 (20211,1=источник / 20211,2=цель), BlockFormatIndex, сверка через Кабели:источник 20376 / Кабели:цель 20377 × поле клеммника 1429 (Contains); наш конец=источник → писать 20211,2, наш=цель → 20211,1 (правило 30.09); запись в CableSymbolCreator (typed-индексатор → PropertyValue-fallback); фича off при пустых строках", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -1637,6 +1637,26 @@ namespace MyEplanActions
             _logger.Summarize("Фаза E: кабелей " + oLayout.Cables.Count +
                 ", проводных " + oLayout.NoCableConnections.Count + ".");
 
+            // --- 11.5. Фаза I: BlockFormatResolver — свойство блока символа
+            // кабеля (rev.16.0, Task 3): сбор №1429 «Место сборки (видимое)»
+            // обоих концов каждого кабеля и выбор строки формата (чистый
+            // BlockPropMath.Decide). Словарь потребляет Task 4
+            // (CableSymbolCreator при вставке символов); отсутствие ключа =
+            // для кабеля НЕ писать. Headless-Run() этот шаг не вызывает.
+            bool bBlockFmtUserError;
+            Dictionary<string, string> dicBlockFmt = BlockFormatResolver.Resolve(
+                oProject, _logger, _oSettings, strTargetStripName, out bBlockFmtUserError);
+            if (bBlockFmtUserError)
+            {
+                // Конфликт значений №1429 у клемм источника (UserError-сценарий,
+                // решение пользователя): один общий MessageBox на прогон, список
+                // клемм НЕ дублируется в текст — он построчно в [BLOCKFMT-ERR].
+                // MINOR-4: RunPipeline вызывается только из UI-ветки (headless —
+                // отдельная ветка Run() без гейта), MessageBox здесь уместен.
+                MessageBox.Show("У клемм некоторых кабелей разные значения «Место сборки» — см. [BLOCKFMT-ERR] в логе.\n\nСвойство блока для этих кабелей не записано. Исправьте клеммы и повторите генерацию.",
+                    UI_CAPTION, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
             // --- 12. Фаза F: CableGeometryBuilder — чистая геометрия кабельной разводки ---
             // rev.10.7 (шаг 4 Фазы G, решение пользователя 23.09.2026): размер рабочего
             // символа A×B замеряется ПЕРЕД конфигом (пробная вставка [SYMSIZE] →
@@ -1713,6 +1733,18 @@ namespace MyEplanActions
             CableGeometryResult oGeom = CableGeometryBuilder.Build(
                 oLayout, eOrientation, oGeomCfg, dStripEndAxis);
 
+            // rev.16.0 (Task 4): начинка поля BlockFormat у символов — строка
+            // формата из словаря BlockFormatResolver (Task 3). Нет ключа (или
+            // бинарный случай, CableName == null) — поле остаётся null, символ
+            // создаётся без записи 20202[x].
+            foreach (CableSymbolPlacement oSym in oGeom.Symbols)
+            {
+                if (oSym.CableName == null) continue;
+                string strFmt;
+                if (dicBlockFmt.TryGetValue(oSym.CableName, out strFmt))
+                    oSym.BlockFormat = strFmt;
+            }
+
             foreach (CableSymbolPlacement oSym in oGeom.Symbols)
                 _logger.Log("[GEOM] символ '" + (oSym.CableName ?? "<без имени>") + "' #" +
                     oSym.CableIndex.ToString(CultureInfo.InvariantCulture) + ": (" +
@@ -1752,7 +1784,7 @@ namespace MyEplanActions
             // ориентации + его компенсация центра (dx,dy) из замера [SYMSIZE-OFF].
             int nSymbols = CableSymbolCreator.CreateSymbols(oPage, oGeom, _logger,
                 _oSettings.SymbolLibrary, _oSettings.SymbolName, nSymbolVariant,
-                dSymOffX, dSymOffY);
+                dSymOffX, dSymOffY, _oSettings.BlockFormatIndex);
             // rev.11.0: линии-ссылки от символов — линия + замкнутая
             // PolyLine-стрелка с заливкой (решение пользователя 23.09.2026);
             // слой и перо — как у линий разводки.

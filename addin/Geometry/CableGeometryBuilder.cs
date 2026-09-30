@@ -9,6 +9,7 @@ namespace MyEplanActions
     {
         public string CableName;         // имя кабеля или null (бинарный случай)
         public int CableIndex = -1;      // 0-based индекс в CableLayoutModel.Cables
+        public string BlockFormat;       // rev.16.0: строка «Свойство блока: Формат [x]» (20202[x]); null = не писать
         public Pt Position;              // SymbolPosition, страничные координаты
     }
 

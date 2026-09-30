@@ -166,7 +166,8 @@ namespace MyEplanActions
         {
             return CreateSymbols(oPage, oGeom, log,
                 AddInConfiguration.SymbolLibrary, AddInConfiguration.SymbolName,
-                AddInConfiguration.SymbolVariant, 0.0, 0.0);
+                AddInConfiguration.SymbolVariant, 0.0, 0.0,
+                AddInConfiguration.BlockFormatIndexDefault);
         }
 
         /// <summary>Символ на каждый CableSymbolPlacement. Возвращает число созданных.
@@ -175,11 +176,14 @@ namespace MyEplanActions
         /// индекс варианта ФАКТИЧЕСКОЙ ориентации); (dOffsetX, dOffsetY) — компенсация
         /// визуального центра варианта (ruling R9): Location = desired − (dx,dy),
         /// чистая арифметика — SymbolPlacementMath.Compensate (non-finite offset →
-        /// без компенсации). (0;0) — прежнее поведение (центр = точке вставки).</summary>
+        /// без компенсации). (0;0) — прежнее поведение (центр = точке вставки).
+        /// rev.16.0: nBlockFormatIndex — индекс слота «Свойство блока: Формат [x]»
+        /// (#20202, 1..100); при непустом oSym.BlockFormat строка пишется в 20202[x]
+        /// (WriteBlockFormat, отказ — WARN, символ создаётся).</summary>
         public static int CreateSymbols(Page oPage, CableGeometryResult oGeom,
             DiagnosticLogger log,
             string strLibrary, string strSymbolName, int nVariant,
-            double dOffsetX, double dOffsetY)
+            double dOffsetX, double dOffsetY, int nBlockFormatIndex)
         {
             if (oPage == null || oGeom == null)
             {
@@ -269,6 +273,12 @@ namespace MyEplanActions
                     // счётчик и остальные символы не страдают.
                     if (!string.IsNullOrEmpty(oSym.CableName))
                         WriteDeviceTagProperties(oPage, oFunc, oSym, log);
+
+                    // rev.16.0 (спека §4.4): строка «Свойство блока: Формат [x]» —
+                    // пишется ПОСЛЕ ОУ-санитарии (не мешать WriteDeviceTagProperties).
+                    // Поле null/пустое — фича off, тишина.
+                    if (!string.IsNullOrEmpty(oSym.BlockFormat))
+                        WriteBlockFormat(oFunc, oSym.BlockFormat, nBlockFormatIndex, log);
                 }
                 catch (Exception oEx)
                 {
@@ -279,6 +289,78 @@ namespace MyEplanActions
             }
             log.Log("[INFO] [SYMBOL-SUM] символов " + nCreated + " из " + nTotal + ".");
             return nCreated;
+        }
+
+        /// <summary>Запись строки формата в «Свойство блока: Формат [x]» —
+        /// rev.16.0 (спека §4.4): свойство #20202, индексы 1..100
+        /// (KB FunctionPropertyList~FUNC_BLOCK_FORMAT). Путь (a) — типизированный
+        /// индексатор Property(id,index); путь (b) — fallback через
+        /// PropertyValue-индексатор (KB PropertyValue~Item: oProperty[1]).
+        /// Отказ — WARN, символ создаётся (не мешает остальным). Пустая строка
+        /// или индекс вне 1..100 — тихий skip (фича off / некорректный индекс).</summary>
+        private static void WriteBlockFormat(Function oFunc, string strFormat, int nIdx,
+            DiagnosticLogger log)
+        {
+            if (string.IsNullOrEmpty(strFormat) || nIdx < 1 || nIdx > 100)
+            {
+                if (nIdx < 1 || nIdx > 100)
+                    log.Warn("[BLOCKFMT] индекс слота " + nIdx +
+                        " вне 1..100 — запись пропущена");
+                return;
+            }
+            // Путь (a): типизированный индексатор Properties[PropertyId, index].
+            string strErrA = null;
+            try
+            {
+                // rev.16.0 fix: ctor PropertyValue(string) в 2.9 нет —
+                // implicit op_Implicit(String→PropertyValue) (KB).
+                oFunc.Properties[Properties.Function.FUNC_BLOCK_FORMAT, nIdx] = strFormat;
+            }
+            catch (Exception oEx)
+            {
+                strErrA = oEx.GetType().Name + ": " + oEx.Message;
+            }
+            if (strErrA != null)
+            {
+                // Путь (b): fallback через PropertyValue-индексатор
+                // (get → oPV[nIdx] = … → set). Отказ — WARN без rethrow.
+                try
+                {
+                    AnyPropertyId oId = CreateAnyPropertyIdFromNumber(20202);
+                    PropertyValue oPV = oFunc.Properties[oId];
+                    oPV[nIdx] = strFormat;   // implicit (KB op_Implicit)
+                    oFunc.Properties[oId] = oPV;
+                    log.Log("[INFO] [BLOCKFMT] путь (a) не удался (" + strErrA +
+                        "), записано через PropertyValue-индексатор");
+                }
+                catch (Exception oEx)
+                {
+                    log.Warn("[BLOCKFMT] запись 20202[" + nIdx + "] не удалась (" +
+                        oEx.GetType().Name + ": " + oEx.Message + ")");
+                }
+            }
+            // Readback: 20202[nIdx] → INFO (до 60 симв; «—» при отказе/пустом).
+            try
+            {
+                AnyPropertyId oIdR = CreateAnyPropertyIdFromNumber(20202);
+                PropertyValue oVal = oFunc.Properties[oIdR];
+                // rev.16.0 fix: MaxIndex в 2.9 НЕТ (пример KB — другой API) —
+                // недопустимый индекс даст исключение → catch → «—».
+                string strRb = (oVal != null && !oVal.IsEmpty)
+                    ? oVal[nIdx].ToString() : "—";
+                log.Log("[INFO] [BLOCKFMT] 20202[" + nIdx + "]='" + Trim60(strRb) + "'");
+            }
+            catch
+            {
+                log.Log("[INFO] [BLOCKFMT] 20202[" + nIdx + "]='—'");
+            }
+        }
+
+        /// <summary>Обрезка строки до 60 символов (readback-лог); null → «—».</summary>
+        private static string Trim60(string s)
+        {
+            if (s == null) return "—";
+            return s.Length <= 60 ? s : s.Substring(0, 60);
         }
 
         /// <summary>Запись ОУ символа — rev.11.15: NameParts-структуры

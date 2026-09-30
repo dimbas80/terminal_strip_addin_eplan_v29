@@ -388,6 +388,25 @@ namespace MyEplanActions
             catch { return "—"; }
         }
 
+        /// <summary>Чтение произвольного свойства по НОМЕРУ (rev.16.0, Task 3):
+        /// обёртка SafePropText — id создаётся CreateAnyPropertyIdFromNumber
+        /// (CableSymbolCreator, internal). «—» = маркер «не читается» (как во всех
+        /// дампах ридера); потребитель (BlockFormatResolver) конвертирует «—» в ""
+        /// для сверки значений (пустое чтение участвует в сверке как пустое).</summary>
+        internal static string SafeAnyProp(Function oF, int nNumber)
+        {
+            AnyPropertyId oId = CableSymbolCreator.CreateAnyPropertyIdFromNumber(nNumber);
+            if (oId == null) return "—";
+            try
+            {
+                PropertyValue oValue = oF.Properties[oId];
+                if (oValue == null || oValue.IsEmpty) return "—";
+                string strValue = oValue.ToString();
+                return strValue.Length == 0 ? "—" : strValue;
+            }
+            catch { return "—"; }
+        }
+
         /// <summary>Чтение одной части из контейнера NameParts объекта для дампа
         /// [SRC-DT] (rev.11.6): FunctionBase.NameParts возвращает
         /// FunctionBasePropertyList; индексатор по AnyPropertyId (тот же путь,

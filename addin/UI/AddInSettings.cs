@@ -36,6 +36,9 @@ namespace MyEplanActions
     /// строки без '=' и неизвестные ключи — пропуск; известный ключ с пустым
     /// значением — пропуск (поле остаётся дефолтным); int/double —
     /// InvariantCulture.
+    /// rev.16.0: ИСКЛЮЧЕНИЕ — BlockFormat1/BlockFormat2 пустое значение
+    /// ЗАПИСЫВАЕТСЯ как "" (фича «формат свойства блока» off; спека
+    /// 2026-09-30-blockprop-format-design.md §3).
     /// Исключения наружу не выходят: Load при любых IO-ошибках возвращает
     /// дефолты (strUsedPath=null), Save — false.
     /// </summary>
@@ -71,6 +74,24 @@ namespace MyEplanActions
         /// AddInConfiguration.SymbolVariant, спека §2 п.7).</summary>
         public int VariantV;
 
+        /// <summary>Строка формата свойства блока №1 («Свойство блока: Формат [x]»
+        /// символа кабеля; "" или не задана = механизм откл.) — дефолт
+        /// AddInConfiguration.BlockFormat1Default.</summary>
+        public string BlockFormat1;
+
+        /// <summary>Строка формата свойства блока №2 (та же строка формата,
+        /// "" или не задана = механизм откл.) — дефолт
+        /// AddInConfiguration.BlockFormat2Default.</summary>
+        public string BlockFormat2;
+
+        /// <summary>Индекс слота формата свойства блока [1..100] (дефолт —
+        /// AddInConfiguration.BlockFormatIndexDefault).</summary>
+        public int BlockFormatIndex;
+
+        /// <summary>Номер свойства сверки «Место сборки (видимое)» (дефолт —
+        /// AddInConfiguration.BlockComparePropDefault).</summary>
+        public int BlockCompareProp;
+
         /// <summary>Режим выбора ориентации отчёта (дефолт — Auto:
         /// детекция из дерева отчёта).</summary>
         public SettingsOrientation OrientationMode;
@@ -92,6 +113,10 @@ namespace MyEplanActions
             SymbolName = AddInConfiguration.SymbolName;
             VariantH = AddInConfiguration.SymbolVariant;
             VariantV = AddInConfiguration.SymbolVariant;
+            BlockFormat1 = AddInConfiguration.BlockFormat1Default;
+            BlockFormat2 = AddInConfiguration.BlockFormat2Default;
+            BlockFormatIndex = AddInConfiguration.BlockFormatIndexDefault;
+            BlockCompareProp = AddInConfiguration.BlockComparePropDefault;
             OrientationMode = SettingsOrientation.Auto;
         }
 
@@ -117,7 +142,8 @@ namespace MyEplanActions
         /// (соответствующее поле остаётся дефолтным). Ключ НЕ триммится
         /// (пишется нами без отступов; хвостовой пробел ключа
         /// GridPitch.&lt;форма&gt; значим — урок п.33); известный ключ с пустым
-        /// значением пропускается — поле остаётся дефолтным.</summary>
+        /// значением пропускается — поле остаётся дефолтным (ИСКЛЮЧЕНИЕ
+        /// rev.16.0: BlockFormat1/BlockFormat2 пустое записывается как "").</summary>
         public static AddInSettings Load(string[] arrDirCandidates, out string strUsedPath)
         {
             strUsedPath = null;
@@ -155,7 +181,10 @@ namespace MyEplanActions
         /// <summary>Сохранение настроек: в первый СУЩЕСТВУЮЩИЙ каталог-кандидат
         /// (каталоги НЕ создаются; ни один не существует — false, strUsedPath=null).
         /// null/пустые строковые значения НЕ пишутся — после Load соответствующее
-        /// поле остаётся дефолтным. Атомарная запись: сперва во временный файл
+        /// поле остаётся дефолтным (ИСКЛЮЧЕНИЕ rev.16.0: BlockFormat1/BlockFormat2
+        /// пишутся ВСЕГДА, пустое значение = явное отключение механизма, спека §3;
+        /// иначе Load вернул бы дефолт и фича самопере-включилась бы).
+        /// Атомарная запись: сперва во временный файл
         /// SETTINGS_FILE_NAME + ".tmp" в том же каталоге, затем File.Replace
         /// (замена невозможна — в т.ч. файла ещё нет — fallback delete+move);
         /// сбой на любом шаге — false, временный файл удаляется по возможности.
@@ -185,6 +214,14 @@ namespace MyEplanActions
                     lstLines.Add("SymbolName=" + oSettings.SymbolName);
                 lstLines.Add("VariantH=" + oSettings.VariantH.ToString(CultureInfo.InvariantCulture));
                 lstLines.Add("VariantV=" + oSettings.VariantV.ToString(CultureInfo.InvariantCulture));
+                // rev.16.0 (спека §3): BlockFormat1/2 пишутся ВСЕГДА — пустое
+                // значение в файле = явное отключение механизма; off-состояние
+                // переживает цикл Save→Load (иначе ключи стёрлись бы, Load
+                // вернул бы дефолт и фича самопере-включилась бы).
+                lstLines.Add("BlockFormat1=" + oSettings.BlockFormat1);
+                lstLines.Add("BlockFormat2=" + oSettings.BlockFormat2);
+                lstLines.Add("BlockFormatIndex=" + oSettings.BlockFormatIndex.ToString(CultureInfo.InvariantCulture));
+                lstLines.Add("BlockCompareProp=" + oSettings.BlockCompareProp.ToString(CultureInfo.InvariantCulture));
                 lstLines.Add("OrientationMode=" + OrientationName(oSettings.OrientationMode));
                 foreach (KeyValuePair<string, double> oKv in oSettings._dicGridPitch)
                     lstLines.Add(GRID_PITCH_PREFIX + oKv.Key + "=" +
@@ -253,7 +290,8 @@ namespace MyEplanActions
         /// <summary>Применение пары key=value: известный ключ — поле,
         /// GridPitch.&lt;форма&gt; — кэш шага; непарсable значения, известный
         /// ключ с пустым значением и неизвестные ключи — пропуск (поле остаётся
-        /// прежним).</summary>
+        /// прежним; ИСКЛЮЧЕНИЕ rev.16.0: BlockFormat1/2 — пустое записывается
+        /// как "").</summary>
         private static void ApplyValue(AddInSettings oSettings, string strKey, string strValue)
         {
             switch (strKey)
@@ -286,6 +324,31 @@ namespace MyEplanActions
                         int iValue;
                         if (int.TryParse(strValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out iValue))
                             oSettings.VariantV = iValue;
+                        break;
+                    }
+                // rev.16.0 (спека §3): пустое значение формата ЗАПИСЫВАЕТСЯ как ""
+                // (явное отключение фичи) — исключение из общего правила «известный
+                // ключ с пустым значением — пропуск»; Save пишет BlockFormat1/2
+                // ВСЕГДА, в т.ч. пустыми (см. Save) — off-состояние переживает
+                // цикл Save→Load.
+                case "BlockFormat1":
+                    oSettings.BlockFormat1 = strValue ?? "";
+                    break;
+                case "BlockFormat2":
+                    oSettings.BlockFormat2 = strValue ?? "";
+                    break;
+                case "BlockFormatIndex":
+                    {
+                        int i1;
+                        if (int.TryParse(strValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out i1))
+                            oSettings.BlockFormatIndex = i1;
+                        break;
+                    }
+                case "BlockCompareProp":
+                    {
+                        int i2;
+                        if (int.TryParse(strValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out i2))
+                            oSettings.BlockCompareProp = i2;
                         break;
                     }
                 case "OrientationMode":
