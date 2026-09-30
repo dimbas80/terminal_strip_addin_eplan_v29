@@ -36,7 +36,21 @@ namespace MyEplanActions
     ///     доходят (pre-check/штатный выход), но в ветке держим FALLBACK.
     /// Ключ словаря = полный DT кабеля. Отсутствие ключа = для этого кабеля
     /// НЕ писать (потребитель — Task 4, CableSymbolCreator). Отказ имени
-    /// кабеля = skip с WARN, обход продолжается.</summary>
+    /// кабеля = skip с WARN, обход продолжается.
+    /// rev.16.1: 20376/20377 читаются ТОЛЬКО с ГЛАВНОГО определения функции
+    /// кабеля (#20122 «Главная функция» = TRUE; сырая строка — через
+    /// SafeAnyProp, разбор — BlockPropMath.IsMainFlag, выбор индекса —
+    /// BlockPropMath.PickMainIndex). Причина: DefinitionsFilter
+    /// Category=Cable возвращает КАЖДОЕ определение (двойники), а чекбокс
+    /// «Кабель: заменить источник и цель» (#20064; в API 2.9 не
+    /// индексирован) на НЕ-главных определениях МЕНЯЕТ их 20376/20377 →
+    /// старый last-write-wins по определениям давал нестабильное решение
+    /// (стенд p1/p2 30.09). Схема: фаза A — группировка определений по
+    /// имени кабеля; фаза B — решение ОДИН раз на УНИКАЛЬНЫЙ кабель в
+    /// порядке встречи (главное определение, иначе первое + WARN).
+    /// SUM «кабелей N» теперь считает УНИКАЛЬНЫЕ кабели (не определения).
+    /// Имя не читается → WARN «имя не читается — skip» — как раньше,
+    /// с ключом в логе «<unparseable#i>».</summary>
     public static class BlockFormatResolver
     {
         /// <summary>Обход кабелей проекта (паттерн ReadCables) и сбор решений.
@@ -139,39 +153,101 @@ namespace MyEplanActions
 
             int nSkip = 0;
             int nIdle = 0;
+            // Фаза A (rev.16.1): группировка ОПРЕДЕЛЕНИЙ функций кабелей по
+            // имени. DefinitionsFilter Category=Cable возвращает КАЖДОЕ
+            // определение — у K140 их было ×3; решение должно быть ЛОЖНО
+            // ОДИН раз на уникальный кабель.
+            List<CableDefGroup> lstGroups = new List<CableDefGroup>();
+            Dictionary<string, CableDefGroup> dicGroups =
+                new Dictionary<string, CableDefGroup>();
             for (int i = 0; i < arrFunctions.Length; i++)
             {
                 Cable oCable = arrFunctions[i] as Cable;
                 if (oCable == null) continue;
-                nCables++;
 
-                // Имя кабеля = ключ словаря (полный DT). Нечитаемо — писать некуда.
+                // Имя кабеля = ключ группировки (полный DT). Нечитаемо —
+                // старый путь skip: WARN, nSkip++ (ключ в логе отдельный).
                 string strName;
                 try { strName = oCable.Name; }
                 catch { strName = null; }
                 if (string.IsNullOrEmpty(strName))
                 {
-                    log.Warn("[BLOCKFMT] кабель '<n/a>': имя не читается — skip");
+                    log.Warn("[BLOCKFMT] кабель '<unparseable#" +
+                        i.ToString(CultureInfo.InvariantCulture) + "'>: имя не читается — skip");
                     nSkip++;
                     continue;
                 }
 
-                // 6) полные структуры концов: 20376 «Кабели: источник» и
-                //    20377 «Кабели: цель» (SafeAnyProp; «—» = «не читается»
-                //    → ""). Механика v3: сверка идёт ПО СТРОКАМ 20376/20377
-                //    через Decide — сторона кабеля (развёрнут он или нет)
-                //    не имеет значения.
-                string strCabSource = ReadSidesValue(oCable,
+                CableDefGroup oGroup;
+                if (!dicGroups.TryGetValue(strName, out oGroup))
+                {
+                    oGroup = new CableDefGroup();
+                    oGroup.Name = strName;
+                    oGroup.Definitions = new List<Function>();
+                    lstGroups.Add(oGroup);          // порядок встречи уникальных кабелей
+                    dicGroups.Add(strName, oGroup);
+                }
+                oGroup.Definitions.Add(arrFunctions[i]);
+            }
+
+            // Фаза B (rev.16.1): решение по УНИКАЛЬНЫМ кабелям в порядке
+            // встречи. Чтение 20376/20377 — ТОЛЬКО у выбранного определения
+            // (главное #20122=TRUE; иначе первое + WARN: чекбокс #20064
+            // «Кабель: заменить источник и цель» на двойниках меняет их
+            // 20376/20377 → last-write-wins был нестабилен, root cause
+            // стенда p1/p2 30.09).
+            nCables = lstGroups.Count;
+            for (int g = 0; g < lstGroups.Count; g++)
+            {
+                CableDefGroup oGroup = lstGroups[g];
+                string strName = oGroup.Name;
+
+                // Выбор главного определения: FIRST TRUE из #20122
+                // (IsMainFlag), иначе первое определение + WARN.
+                List<bool> lstFlags = new List<bool>();
+                for (int d = 0; d < oGroup.Definitions.Count; d++)
+                {
+                    // «—» = не читается (как у 20376/20377).
+                    string strRaw = EplanTerminalStripReader.SafeAnyProp(oGroup.Definitions[d], 20122);
+                    if (strRaw == "—") strRaw = "";
+                    lstFlags.Add(BlockPropMath.IsMainFlag(strRaw));
+                }
+                int iMain = BlockPropMath.PickMainIndex(
+                    oGroup.Definitions.Count, lstFlags);
+                if (iMain >= 0)
+                {
+                    if (iMain != 0)
+                    {
+                        log.Log("[BLOCKFMT] кабель '" + strName +
+                            "': чтение с главного определения (найдено среди " +
+                            oGroup.Definitions.Count.ToString(CultureInfo.InvariantCulture) + ")");
+                    }
+                }
+                else
+                {
+                    log.Warn("[BLOCKFMT] кабель '" + strName +
+                        "': главное определение (#20122=TRUE) не найдено среди " +
+                        oGroup.Definitions.Count.ToString(CultureInfo.InvariantCulture) +
+                        " определений — чтение с первого найденного (порядок не гарантирован)");
+                    iMain = 0;
+                }
+                Function oMainDefinition = oGroup.Definitions[iMain];
+
+                // Полные структуры концов: 20376 «Кабели: источник» и
+                // 20377 «Кабели: цель» (SafeAnyProp; «—» = «не читается»
+                // → ""). Механика v3: сверка идёт ПО СТРОКАМ через Decide.
+                string strCabSource = ReadSidesValue(oMainDefinition,
                     AddInConfiguration.BlockCabSourceProp);
-                string strCabTarget = ReadSidesValue(oCable,
+                string strCabTarget = ReadSidesValue(oMainDefinition,
                     AddInConfiguration.BlockCabTargetProp);
 
-                // 7) решение — чистый BlockPropMath.Decide.
+                // Решение — чистый BlockPropMath.Decide.
                 BlockFormatDecision oDec = BlockPropMath.Decide(strOurLoc,
                     strCabSource, strCabTarget,
                     oSettings.BlockFormat1, oSettings.BlockFormat2);
 
-                // Лог решения (строки 20376/20377 — до 60 символов).
+                // Лог решения — ОДИН раз на уникальный кабель (строки
+                // 20376/20377 — до 60 символов).
                 log.Log("[BLOCKFMT] кабель '" + strName + "': наш='" + strOurLoc +
                     "' 20376='" + TrimForLog(strCabSource) +
                     "' 20377='" + TrimForLog(strCabTarget) + "' → " + oDec.Reason);
@@ -356,6 +432,15 @@ namespace MyEplanActions
             if (strValue == null) return "";
             if (strValue.Length <= 60) return strValue;
             return strValue.Substring(0, 60);
+        }
+
+        /// <summary>rev.16.1: группа ОПРЕДЕЛЕНИЙ функции одного уникального
+        /// кабеля (полный DT = ключ). Решение — по главному определению
+        /// (#20122=TRUE), иначе по первому + WARN.</summary>
+        private sealed class CableDefGroup
+        {
+            public string Name;
+            public List<Function> Definitions;
         }
     }
 }
