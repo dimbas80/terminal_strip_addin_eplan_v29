@@ -528,8 +528,8 @@ namespace MyEplanActions
         /// ПОЛЬЗОВАТЕЛЯ (Options > Settings > User > Management > Directories;
         /// разворачивается PathMap.SubstitutePath — KB PathMap~Remarks; решение
         /// пользователя 30.09: путь только из настроек EPLAN, захардкод запрещён;
-        /// Paths.Forms = дефолт, настройку НЕ отражает — факт прогона 10:28),
-        /// (2) Project.ProjectDirectoryPath, (3) Paths.Forms (дефолт, KB).
+        /// MD_FORMS следует активной схеме настроек — факт 10:37: схема Стандартные → D:\Мои документы),
+        /// ProjectDirectoryPath УДАЛЁН (решение 30.09); (2) Paths.Forms (дефолт, KB).
         /// Значения каталогов диагностируются в лог ВСЕГДА.
         /// Кандидат записи — последняя секция пути (после последнего '\\' или '/')
         /// равна strFormName+".f11" ИЛИ strFormName+" .f11" (OrdinalIgnoreCase,
@@ -537,31 +537,27 @@ namespace MyEplanActions
         private string FindFormFilePath(Project oProject, string strFormName)
         {
             string[] arrCandidates = new string[] { strFormName + ".f11", strFormName + " .f11" };
-            // rev.15.9: $(MD_FORMS) — каталог форм ИЗ НАСТРОЕК ПОЛЬЗОВАТЕЛЯ
+            // rev.15.10: $(MD_FORMS) — каталог форм ИЗ АКТИВНОЙ СХЕМЫ НАСТРОЕК
             // («Options > Settings > User > Management > Directories», KB 2.9
             // PathMap~Remarks), разворачивается PathMap.SubstitutePath (KB:
             // «Substitutes variables with their values»); Paths.Forms = дефолт,
             // настройку НЕ отражает (факт прогона 10:28: настройка
             // D:\YandexDisk\!EPLAN, Paths.Forms вернул D:\Мои документы\...).
-            // Порядок кандидатов: $(MD_FORMS) → ProjectDirectoryPath → Paths.Forms.
+            // ProjectDirectoryPath УДАЛЁН (решение 30.09: формы в каталоге проекта не хранятся); Paths.Forms — фоллбэк-дефолт.
             string[] arrBaseDirs = null;
             try
             {
                 string strFormsCfg = PathMap.SubstitutePath("$(MD_FORMS)");
-                string strProjDir = oProject.ProjectDirectoryPath;
                 string strFormsDef = new ProjectManager().Paths.Forms;
                 _log.Log("[INFO] [GHOST-SIZE] каталоги-кандидаты: MD_FORMS(настройка)='" +
-                    (strFormsCfg ?? "<null>") + "', ProjectDirectoryPath='" +
-                    (strProjDir ?? "<null>") + "', Paths.Forms(дефолт)='" +
+                    (strFormsCfg ?? "<null>") + "', Paths.Forms(дефолт)='" +
                     (strFormsDef ?? "<null>") + "'");
                 int nCount = 0;
                 if (!string.IsNullOrEmpty(strFormsCfg)) nCount++;
-                if (!string.IsNullOrEmpty(strProjDir)) nCount++;
                 if (!string.IsNullOrEmpty(strFormsDef)) nCount++;
                 arrBaseDirs = new string[nCount];
                 int nIdx = 0;
                 if (!string.IsNullOrEmpty(strFormsCfg)) arrBaseDirs[nIdx++] = strFormsCfg;
-                if (!string.IsNullOrEmpty(strProjDir)) arrBaseDirs[nIdx++] = strProjDir;
                 if (!string.IsNullOrEmpty(strFormsDef)) arrBaseDirs[nIdx++] = strFormsDef;
             }
             catch (Exception oPmEx)
