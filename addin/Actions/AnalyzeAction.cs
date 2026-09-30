@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-30 Этап 8 rev.15.5 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=N_клемм; фоллбэк — эвристика n×pitch)";
+        private const string BUILD_STAMP = "2026-09-30 Этап 8 rev.15.7 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=Ext+Int (ConnCount), фоллбэк nTerminals; фоллбэк размера — эвристика n×pitch; rev.15.7: ориентация призрака из ВЫРАВНИВАНИЯ ФОРМЫ P13008 (1=по столбцам=Horizontal, 0=по строкам=Vertical — метод-рекомендация EPLAN; решение пользователя 30.09); ResolveOrientation (имя/диалог) — фоллбэк; поиск .f11: Forms-каталог настроек EPLAN (ProjectManager().Paths.Forms) → мастер-данные";
 
         // rev.14.14: однократная установка хуков исключений + статическая ссылка
         // на логгер текущего прогона (хуки статические — экземпляра в них нет).
@@ -106,7 +106,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.15.5 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=N_клемм; фоллбэк — эвристика n×pitch)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.15.7 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=Ext+Int (ConnCount), фоллбэк nTerminals; фоллбэк размера — эвристика n×pitch; rev.15.7: ориентация призрака из ВЫРАВНИВАНИЯ ФОРМЫ P13008 (1=по столбцам=Horizontal, 0=по строкам=Vertical — метод-рекомендация EPLAN; решение пользователя 30.09); ResolveOrientation (имя/диалог) — фоллбэк; поиск .f11: Forms-каталог настроек EPLAN (ProjectManager().Paths.Forms) → мастер-данные", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -871,7 +871,9 @@ namespace MyEplanActions
             //        «шаблон/имя расходятся», значения КАК ЕСТЬ (по шаблону,
             //        не по имени). Отказ парсинга — прежняя эвристика
             //        nTerminals×pitch (там маппинг CreateGhostFrame осмыслен:
-            //        длинная/короткая). ---
+            //        длинная/короткая). Ориентация призрака — из выравнивания
+            //        формы (P13008) при успехе парсинга; ResolveOrientation
+            //        (имя) — фоллбэк. ---
             double dLong;
             double dShort;
             // N строк данных шаблона (решение пользователя 30.09): Ext+Int
@@ -887,10 +889,27 @@ namespace MyEplanActions
             double dFooterMm;
             double dAcrossMm;
             bool bDataAlongX;
+            bool bFormByColumns;
             if (oReader != null &&
                 oReader.TryGetFormTemplateMetrics(oProject, strForm, out dHeaderMm,
-                    out dDataColMm, out dFooterMm, out dAcrossMm, out bDataAlongX))
+                    out dDataColMm, out dFooterMm, out dAcrossMm, out bDataAlongX,
+                    out bFormByColumns))
             {
+                // rev.15.7: ориентация призрака — из ВЫРАВНИВАНИЯ ФОРМЫ
+                // (P13008) при успехе парсинга (решение пользователя 30.09:
+                // форма авторитетнее имени); ResolveOrientation (имя/диалог) —
+                // фоллбэк (эвристика/сбой парсинга). eOrient объявлена выше
+                // (шаг 3) и используется ниже (маппинг ALONG/ACROSS, WARN,
+                // CreateGhostFrame) — присваиваем заново, НЕ переобъявляем.
+                ReportOrientation eFormOrient = bFormByColumns
+                    ? ReportOrientation.Horizontal
+                    : ReportOrientation.Vertical;
+                _logger.Log("[INFO] [GHOST-SIZE] выравнивание формы: " +
+                    (bFormByColumns ? "по столбцам → Horizontal" : "по строкам → Vertical") +
+                    " — заменяет ориентацию по имени (" +
+                    (eOrient == ReportOrientation.Vertical ? "Vertical" : "Horizontal") +
+                    ")");
+                eOrient = eFormOrient;
                 // DmReport — ОДИН Read на вызов TryPickInsertPoint, только при
                 // успехе парсинга .f11 (эталон-идиома аналайзера:1485-1492:
                 // PerStrip.TryGetValue(полное имя) → ConnCount = Ext+Int).

@@ -329,6 +329,16 @@ namespace MyEplanActions
         /// направление ПОВТОРЕНИЯ данных шаблона: вдоль УЗКОЙ оси блока данных
         /// (эталон: полоска-столбец 7 (X) × 180 (Y) — каждая «строка» данных =
         /// вертикальная полоса 7 мм во всю высоту, полосы идут вдоль X → true).
+        /// bFormByColumns (rev.15.7) — ВЫРАВНИВАНИЕ ФОРМЫ (свойство формы
+        /// «Выравнивание формы») из атрибута P13008 тега &lt;P11 ...&gt;
+        /// страницы формы (метод-рекомендация EPLAN: 0 = по строкам,
+        /// 1 = по столбцам; решение пользователя 30.09 — форма авторитетнее
+        /// имени): "1" → true (по столбцам → Horizontal), "0" → false
+        /// (по строкам → Vertical); отсутствует / неожиданное значение /
+        /// сбой — true (дефолт = горизонтальная, консистентно с фоллбэком
+        /// ResolveOrientation) + INFO/WARN. Это выравнивание ФОРМЫ, не
+        /// геометрия шаблона — bDataAlongX (направление повторения данных)
+        /// остаётся независимым.
         /// Проверено на эталоне песочницей: брифовое правило «шире по X → вдоль
         /// X» даёт мусор (header=0, dataCol=180) — ИНВЕРТИРОВАНО; сверяется
         /// вызывателем с ориентацией призрака. ВАЖНО: геометрия шаблона по ALONG
@@ -342,13 +352,14 @@ namespace MyEplanActions
         /// размера).</summary>
         public bool TryGetFormTemplateMetrics(Project oProject, string strFormName,
             out double dHeaderMm, out double dDataColMm, out double dFooterMm,
-            out double dTotalAcrossMm, out bool bDataAlongX)
+            out double dTotalAcrossMm, out bool bDataAlongX, out bool bFormByColumns)
         {
             dHeaderMm = 0.0;
             dDataColMm = 0.0;
             dFooterMm = 0.0;
             dTotalAcrossMm = 0.0;
             bDataAlongX = true;
+            bFormByColumns = true;
             if (oProject == null || string.IsNullOrEmpty(strFormName))
             {
                 _log.Warn("[GHOST-SIZE] вход не задан (проект/имя формы пусты) — метрики шаблона не получены");
@@ -367,6 +378,45 @@ namespace MyEplanActions
 
                 // --- 2. Чтение (ReadAllText — PXF-XML в UTF-8).
                 string strXml = System.IO.File.ReadAllText(strPath);
+
+                // --- 2b. Выравнивание формы (P13008) из тега <P11 ...> страницы
+                //        формы (rev.15.7, решение пользователя 30.09): свойство
+                //        формы «Выравнивание формы» — метод-рекомендация EPLAN:
+                //        0 = по строкам, 1 = по столбцам. Эталон
+                //        example/Клемник_ОУ(горизонтально)_addin.f11:
+                //        <P11 ... P13008="1" ...> — горизонтальная. Дефолт
+                //        «по столбцам» (true = Horizontal) консистентен
+                //        с фоллбэком ResolveOrientation; разбор под общим
+                //        try/catch метода, дефолт выставлен ДО try — сбой не
+                //        роняет метрики. bDataAlongX — геометрия шаблона,
+                //        выравнивание — отдельный факт.
+                int nP11 = strXml.IndexOf("<P11", StringComparison.Ordinal);
+                // Защита от более длинного имени тега с тем же префиксом (<P11x).
+                while (nP11 >= 0 && nP11 + 4 < strXml.Length &&
+                    char.IsLetterOrDigit(strXml[nP11 + 4]))
+                    nP11 = strXml.IndexOf("<P11", nP11 + 1, StringComparison.Ordinal);
+                int nP11Close = nP11 >= 0 ? strXml.IndexOf('>', nP11) : -1;
+                string strAlign = null;
+                if (nP11 >= 0 && nP11Close > nP11)
+                {
+                    string strP11Tag = strXml.Substring(nP11, nP11Close + 1 - nP11);
+                    strAlign = GetTagAttributeValue(strP11Tag, "P13008");
+                }
+                if (strAlign == null)
+                {
+                    _log.Log("[INFO] [GHOST-SIZE] выравнивание формы (P13008 в <P11>) не найдено — дефолт «по столбцам» (Horizontal)");
+                }
+                else if (strAlign == "0")
+                {
+                    bFormByColumns = false; // по строкам → Vertical.
+                }
+                else if (strAlign != "1")
+                {
+                    _log.Warn("[GHOST-SIZE] выравнивание формы: неожиданное значение P13008=\"" + strAlign + "\" (ожидалось 0/1) — дефолт «по столбцам» (Horizontal)");
+                }
+                // strAlign=="1" (по столбцам) → bFormByColumns=true (дефолт).
+                _log.Log("[INFO] [GHOST-SIZE] выравнивание формы (P13008): " +
+                    (bFormByColumns ? "по столбцам" : "по строкам"));
 
                 // --- 3. Разбор областей <O128 .../> (чистый string-парсинг).
                 int nSkipped;
@@ -469,18 +519,50 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>Полный путь файла формы: проектные записи
-        /// (Masterdata.get_ProjectEntries) ЗАТЕМ системные (Masterdata.SystemEntries
-        /// — KB 2.9: StringCollection, свойство) — идиома CollectFormNamesFrom
-        /// (foreach по IEnumerable; отказ источника — WARN в лог, обход не
-        /// прерывается). Кандидат — запись, чья последняя секция пути (после
-        /// последнего '\\' или '/') равна strFormName+".f11" ИЛИ
-        /// strFormName+" .f11" (OrdinalIgnoreCase, БЕЗ trim — урок п.33).
-        /// null — не найден ни в одном пуле.</summary>
+        /// <summary>Полный путь файла формы: (0) каталог форм ИЗ НАСТРОЕК EPLAN —
+        /// ProjectManager().Paths.Forms (rev.15.6, KB 2.9: «Returns default Forms
+        /// directory»; захардкод запрещён — решение пользователя 30.09; факт
+        /// прогона 09:24: запись мастер-данных указывала на C:\Users\Public\EPL\,
+        /// где файла нет → FileNotFoundException → эвристика 150×28 вместо
+        /// точного размера); далее проектные записи
+        /// (Masterdata.get_ProjectEntries) ЗАТЕМ системные
+        /// (Masterdata.SystemEntries — KB 2.9: StringCollection, свойство) —
+        /// идиома CollectFormNamesFrom (foreach по IEnumerable; отказ источника —
+        /// WARN в лог, обход не прерывается). Кандидат — запись, чья последняя
+        /// секция пути (после последнего '\\' или '/') равна strFormName+".f11"
+        /// ИЛИ strFormName+" .f11" (OrdinalIgnoreCase, БЕЗ trim — урок п.33).
+        /// null — не найден ни в одном источнике.</summary>
         private string FindFormFilePath(Project oProject, string strFormName)
         {
             string[] arrCandidates = new string[] { strFormName + ".f11", strFormName + " .f11" };
             string strFound = null;
+            // rev.15.6: каталог форм ИЗ НАСТРОЕК EPLAN — ProjectManager().Paths.Forms
+            // (KB 2.9, страница ProjectManager~Paths + PathInfo: «Returns default
+            // Forms directory» — значения берутся из настроек EPLAN и могут
+            // меняться пользователем; захардкоженный каталог НЕ допустим —
+            // решение пользователя 30.09). Порядок: Forms-каталог → проектные
+            // записи → системные записи.
+            try
+            {
+                string strFormsDir = new ProjectManager().Paths.Forms;
+                if (!string.IsNullOrEmpty(strFormsDir) && System.IO.Directory.Exists(strFormsDir))
+                {
+                    foreach (string strName in arrCandidates)
+                    {
+                        string strPath = System.IO.Path.Combine(strFormsDir, strName);
+                        if (System.IO.File.Exists(strPath))
+                        {
+                            _log.Log("[INFO] [GHOST-SIZE] файл формы найден в Forms-каталоге настроек EPLAN: " + strPath);
+                            return strPath;
+                        }
+                    }
+                }
+            }
+            catch (Exception oPmEx)
+            {
+                _log.Warn("[GHOST-SIZE] Forms-каталог настроек EPLAN недоступен: " +
+                    oPmEx.GetType().Name + ": " + oPmEx.Message);
+            }
             try
             {
                 strFound = FindFormFileIn(new Masterdata().get_ProjectEntries(oProject), arrCandidates);
@@ -574,9 +656,9 @@ namespace MyEplanActions
         {
             oBlock = null;
             if (string.IsNullOrEmpty(strFragment)) return false;
-            string strIdx = GetO128AttributeValue(strFragment, "A2096");
-            string strP1 = GetO128AttributeValue(strFragment, "A1651");
-            string strP2 = GetO128AttributeValue(strFragment, "A1652");
+            string strIdx = GetTagAttributeValue(strFragment, "A2096");
+            string strP1 = GetTagAttributeValue(strFragment, "A1651");
+            string strP2 = GetTagAttributeValue(strFragment, "A1652");
             if (strIdx == null || strP1 == null || strP2 == null) return false;
             int nIdx;
             if (!int.TryParse(strIdx, NumberStyles.Integer, CultureInfo.InvariantCulture, out nIdx))
@@ -599,8 +681,10 @@ namespace MyEplanActions
         /// <summary>Значение атрибута name="value" во фрагменте тега: ищем
         /// name+"=\"" с границей имени (перед ним пробел/таб/перевод строки/'&lt;'
         /// — исключает ложное попадание внутрь другого имени или значения);
-        /// значение — до следующего '"'. Нет — null.</summary>
-        private static string GetO128AttributeValue(string strFragment, string strName)
+        /// значение — до следующего '"'. Нет — null. Обобщён (rev.15.7):
+        /// работает для любого открытого тега — и &lt;O128 .../&gt;, и
+        /// &lt;P11 ...&gt; страницы формы (атрибут P13008).</summary>
+        private static string GetTagAttributeValue(string strFragment, string strName)
         {
             string strNeedle = strName + "=\"";
             int iSearch = 0;
