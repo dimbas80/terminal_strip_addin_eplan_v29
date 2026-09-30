@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-29 Этап 8 rev.15.0 (H-5/H-6: интерактивная точка вставки — XGedStartInteractionAction /Name:TSA_INSERT_POINT, рамка-призрак SetStaticCursor по ориентации формы [IPING], Esc → возврат в диалог; EmbeddedReportReader +опц. PointD; GhostFrameMath + тесты)";
+        private const string BUILD_STAMP = "2026-09-30 Этап 8 rev.15.3 (фикс [IPING-FIX2]: возврат OnStart — ТОЛЬКО RequestCode.Point (16), docs-пример MyInteraction (KB ...Ged.Interaction.html). Опровергнуто стендами: Stop|Point=17 → мгновенный OnCancel (07:14, rev.15.0); Success|Point=1040 → мгновенный OnSuccess БЕЗ клика (07:35, rev.15.2). Спайк rev.15.1 отложен, гейт SpikeCreateReportProbe=false)";
 
         // rev.14.14: однократная установка хуков исключений + статическая ссылка
         // на логгер текущего прогона (хуки статические — экземпляра в них нет).
@@ -106,7 +106,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.15.0 (H-5/H-6: интерактивная точка вставки — XGedStartInteractionAction /Name:TSA_INSERT_POINT, рамка-призрак SetStaticCursor по ориентации формы [IPING], Esc → возврат в диалог; EmbeddedReportReader +опц. PointD; GhostFrameMath + тесты)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.15.3 (фикс [IPING-FIX2]: возврат OnStart — ТОЛЬКО RequestCode.Point (16), docs-пример MyInteraction (KB ...Ged.Interaction.html). Опровергнуто стендами: Stop|Point=17 → мгновенный OnCancel (07:14, rev.15.0); Success|Point=1040 → мгновенный OnSuccess БЕЗ клика (07:35, rev.15.2). Спайк rev.15.1 отложен, гейт SpikeCreateReportProbe=false)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -832,6 +832,14 @@ namespace MyEplanActions
                 return true;
             }
 
+            // rev.15.1 (СПАЙК): проба 1-арг CreateEmbeddedReport — EPLAN сам показывает
+            // отчёт на курсоре; рамка-призрак и интеракция TSA_INSERT_POINT не нужны
+            // (их поток — в else-ветке ниже, не тронут).
+            if (AddInConfiguration.SpikeCreateReportProbe)
+            {
+                return TryPickViaReportProbe(oProject, strForm, out dPointX, out dPointY);
+            }
+
             // --- 1. Число клемм (идиома EplanTerminalStripReader.cs:86-90). ---
             int nTerminals = 0;
             try
@@ -1033,6 +1041,326 @@ namespace MyEplanActions
                 "), ожидание=" + dWaitSec.ToString(CultureInfo.InvariantCulture) +
                 " сек — интеракция может остаться активной — закрывается следующим кликом/Esc");
             return false;
+        }
+
+        /// <summary>rev.15.1 (СПАЙК throwaway, удалить после вердикта): захват точки
+        /// вставки отчёта через 1-арг CreateEmbeddedReport(ReportBlock) — KB 2.9:
+        /// «This method starts an interaction so the report is attached to the mouse
+        /// pointer». Пробный отчёт сам висит на курсоре EPLAN (лучший призрак —
+        /// реальный превью): пользователь кликает → читаем фактический bbox пробы
+        /// (SubPlacements-дерево, KB: ReportBlockReference : Group, цепочка
+        /// StorableObject → Placement → Group → ReportBlockReference) → верхний-левый
+        /// угол bbox = точка ((minX, maxY) — «верх страницы = большая Y», Этап 4;
+        /// upper-left 4-арг кладёт в точку — геометрия пробы и настоящего отчёта
+        /// совпадает) → Remove пробы → вызывающая сторона создаёт НАСТОЯЩИЙ отчёт
+        /// 4-арг с целями в этой точке (H-3b сохраняется).
+        /// Причина спайка: rev.15.0 [IPING-LAUNCH] возврат=False —
+        /// XGedStartInteractionAction не запускает кастомные API-интеракции по имени
+        /// (факт SPIKE-4/5 rev.13.4-13.7, подтверждён вторично).
+        /// true — точка получена (out dPointX/dPointY); false — отмена (Esc),
+        /// таймаут, отказ создания, нулевой bbox. Исключения наружу не выпускаются.
+        /// ОТМЕНА (каналы): (а) oProbe == null после 1-арг-вызова; (б) oProbe.IsValid
+        /// = false в цикле ожидания (объект удалён/отменён); (в) исключение из 1-арг
+        /// вызова при Esc — вероятный канал отмены (маркер в [SPIKERPT-CALL]).</summary>
+        private bool TryPickViaReportProbe(Project oProject, string strForm,
+            out double dPointX, out double dPointY)
+        {
+            dPointX = 0.0;
+            dPointY = 0.0;
+            // MINOR-1 ревью rev.15.1 (стэйл-риск): Reset() живёт в else-ветке
+            // (TSA_INSERT_POINT) — в probe-режиме флаг Cancelled от прошлого
+            // Esc пережил бы цикл и проглотил MessageBox при таймауте. Сброс на входе.
+            InsertPointInteraction.Cancelled = false;
+            ReportBlockReference oProbe = null;   // вне try: видна в finally (уборка)
+            try
+            {
+                // --- 1. Форма обязана лежать в проекте (S029153): публичный шов ---
+                EmbeddedReportReader oProbeReader = new EmbeddedReportReader(_logger);
+                try
+                {
+                    oProbeReader.EnsureFormInProject(oProject, strForm);
+                }
+                catch (Exception oFormEx)
+                {
+                    _logger.Log("[INFO] " + "[SPIKERPT-FORM] EnsureFormInProject бросил: " +
+                        oFormEx.GetType().Name + ": " + oFormEx.Message);
+                    _logger.Warn("[SPIKERPT-FORM] форма недоступна ('" + strForm +
+                        "') — проба невозможна");
+                    return false;
+                }
+
+                // --- 2. Блок пробы: FormName/Type; FilterSchemaName НЕ задаю
+                //        (KB-пример: пусто = заполнится автоматически) ---
+                ReportBlock oBlock = new ReportBlock();
+                oBlock.Create(oProject);
+                oBlock.FormName = strForm;
+                // Тип: AddInConfiguration.ReportTypeName = "TerminalConnectiondiagram"
+                // — исторически рабочий для наших форм (headless-прогоны);
+                // Enum.Parse в DocumentTypeManager.DocumentType.
+                oBlock.Type = (DocumentTypeManager.DocumentType)Enum.Parse(
+                    typeof(DocumentTypeManager.DocumentType), AddInConfiguration.ReportTypeName);
+                _logger.Log("[INFO] [SPIKERPT-BLOCK] FormName='" + strForm + "', Type=" +
+                    AddInConfiguration.ReportTypeName);
+
+                // --- 3. Замер + 1-АРГ CreateEmbeddedReport (прямой вызов, не
+                //        reflection; TargetInvocationException не ждём) ---
+                DateTime oT0 = DateTime.Now;
+                try
+                {
+                    oProbe = new Reports().CreateEmbeddedReport(oBlock);
+                }
+                catch (Exception oCallEx)
+                {
+                    _logger.Log("[INFO] " + "[SPIKERPT-CALL] исключение: " + oCallEx.GetType().FullName +
+                        ": " + oCallEx.Message);
+                    // Исключение при Esc — вероятный канал отмены (пометить при вердикте).
+                    _logger.Warn("[SPIKERPT-CALL] 1-арг CreateEmbeddedReport не создал пробу" +
+                        " — вероятна отмена Esc или отказ взаимодействия");
+                    // MINOR-1 ревью rev.15.1: канал отмены — Esc возвращает диалог
+                    // молча (как при TSA_INSERT_POINT), а не с ложным MessageBox.
+                    InsertPointInteraction.Cancelled = true;
+                    // MAJOR-1 ревью rev.15.1 — ОТМЕНЁН (rev.15.2, факт CS1061 30.09 +
+                    // KB: «public class ReportBlock : StorableObject» — класс НЕ является
+                    // Placement, метода Remove() в API 2.9 у него нет; паттерн
+                    // GhostFrameCreator удаляет PolyLine : Placement — не эквивалент).
+                    // Останец-настройка блока при Esc/отказе остаётся — ТОТ ЖЕ паттерн,
+                    // что в продакшн-фоллбэках EmbeddedReportReader (там ReportBlock
+                    // на failure-путях тоже не удаляется). Чистка спайка — rev.15.3.
+                    return false;
+                }
+                TimeSpan oSpan = DateTime.Now - oT0;
+                bool bValid0 = true;
+                try { bValid0 = oProbe.IsValid; }
+                catch (Exception) { bValid0 = false; }
+                _logger.Log("[INFO] [SPIKERPT-CALL] длительность " +
+                    oSpan.TotalMilliseconds.ToString("F0", CultureInfo.InvariantCulture) +
+                    " мс; oProbe=" + (oProbe == null ? "null" : "не-null") +
+                    "; IsValid=" + (bValid0 ? "True" : "False"));
+
+                // --- 5. null-возврат — вероятная отмена/отказ ---
+                if (oProbe == null)
+                {
+                    _logger.Warn("[SPIKERPT-CALL] возврат null (вероятна отмена/отказ) — точки нет");
+                    // MINOR-1 ревью rev.15.1: канал отмены — молча в диалог.
+                    InsertPointInteraction.Cancelled = true;
+                    return false;
+                }
+
+                // --- 6. Начальное состояние placements ---
+                int nCount0 = TryCountPlacements(oProbe);
+                _logger.Log("[INFO] [SPIKERPT-INIT] placements=" + nCount0);
+
+                // --- 7. Ожидание размещения (модель SPIKE-8: DoEvents + Sleep(50);
+                //        -1 = SubPlacements бросил («ещё не готов»), НЕ трактуем как 0 ---
+                DateTime oDeadline = DateTime.Now.AddSeconds(AddInConfiguration.SelectPointTimeoutSec);
+                int nPrev = 0;
+                while (nCount0 <= 0 && DateTime.Now < oDeadline)
+                {
+                    System.Windows.Forms.Application.DoEvents();
+                    System.Threading.Thread.Sleep(50);
+                    int nNow = TryCountPlacements(oProbe);
+                    if (nNow != nPrev)
+                    {
+                        _logger.Log("[INFO] [SPIKERPT-PROG] placements=" + nNow);
+                        nPrev = nNow;
+                        if (nNow > 0)
+                        {
+                            nCount0 = nNow;
+                            break;
+                        }
+                    }
+                    bool bValid = true;
+                    try { bValid = oProbe.IsValid; }
+                    catch (Exception) { bValid = false; }
+                    if (!bValid) break;   // отмена/удаление пробы
+                    nCount0 = nNow;       // держим актуальным (0 / -1 — «ещё не готов»)
+                }
+                // Финально пере-прочитать count; положительный результат ценнее
+                // (пере-чтение сразу после break может вернуть -1 «ещё не готов»).
+                int nFinal = TryCountPlacements(oProbe);
+                if (nFinal > nCount0) nCount0 = nFinal;
+                bool bCancelled = false;
+                try { bCancelled = !oProbe.IsValid; }
+                catch (Exception) { bCancelled = true; }
+
+                // --- 8. bbox пробы: тихий рекурсивный обход SubPlacements (без
+                //        [TREE]-логирования CollectSubPlacementsTree) ---
+                double dMinX = double.MaxValue, dMinY = double.MaxValue;
+                double dMaxX = double.MinValue, dMaxY = double.MinValue;
+                int nGraphCount = 0;
+                if (nCount0 > 0)
+                {
+                    Placement[] arrTop = null;
+                    try { arrTop = oProbe.SubPlacements; }
+                    catch (Exception oSubEx)
+                    {
+                        _logger.Log("[INFO] " + "[SPIKERPT-BBOX] SubPlacements бросил: " +
+                            oSubEx.GetType().Name + ": " + oSubEx.Message);
+                    }
+                    if (arrTop != null)
+                    {
+                        CollectProbeBounds(arrTop, new HashSet<Placement>(),
+                            ref dMinX, ref dMinY, ref dMaxX, ref dMaxY, ref nGraphCount);
+                        _logger.Log("[INFO] [SPIKERPT-BBOX] minX=" +
+                            dMinX.ToString("F3", CultureInfo.InvariantCulture) + " maxX=" +
+                            dMaxX.ToString("F3", CultureInfo.InvariantCulture) + " minY=" +
+                            dMinY.ToString("F3", CultureInfo.InvariantCulture) + " maxY=" +
+                            dMaxY.ToString("F3", CultureInfo.InvariantCulture) + " (" +
+                            nGraphCount + " placements, top=" + arrTop.Length + ")");
+                    }
+                }
+
+                // --- 10. Исходы (уборка пробы — в finally: выполняется при ЛЮБОМ
+                //        исходе, порядок соблюдён: bbox прочитан до Remove) ---
+                if (nCount0 > 0 && nGraphCount > 0)
+                {
+                    // Верхний-левый угол = (minX, maxY), т.к. верх страницы = большая Y
+                    // (Этап 4); 4-арг кладёт upper-left в точку — геометрия пробы и
+                    // настоящего отчёта совпадает.
+                    dPointX = dMinX;
+                    dPointY = dMaxY;
+                    _logger.Log("[INFO] [SPIKERPT-POINT] точка (" +
+                        dPointX.ToString("F3", CultureInfo.InvariantCulture) + "; " +
+                        dPointY.ToString("F3", CultureInfo.InvariantCulture) + ")");
+                    return true;
+                }
+                if (nCount0 > 0 && nGraphCount == 0)
+                {
+                    _logger.Warn("[SPIKERPT-BBOX] placements=" + nCount0 +
+                        ", но ни одного Location не прочитано — точки нет");
+                    return false;
+                }
+                if (bCancelled)
+                {
+                    _logger.Log("[INFO] " + "[SPIKERPT] отмена (probe !IsValid после цикла — Esc?)");
+                    _logger.Warn("[SPIKERPT] проба не размещена (вероятна отмена Esc или отказ) — точки нет");
+                    // MINOR-1 ревью rev.15.1: канал отмены — молча в диалог.
+                    InsertPointInteraction.Cancelled = true;
+                    return false;
+                }
+                if (DateTime.Now >= oDeadline && nCount0 <= 0)
+                {
+                    _logger.Warn("[SPIKERPT] ТАЙМАУТ " +
+                        AddInConfiguration.SelectPointTimeoutSec.ToString(CultureInfo.InvariantCulture) +
+                        " с — проба не размещена (0 placements) — точки нет");
+                    return false;
+                }
+                _logger.Warn("[SPIKERPT] проба не размещена (0 placements, не таймаут) — точки нет");
+                return false;
+            }
+            catch (Exception oOuterEx)
+            {
+                // Весь метод НЕ бросает наружу.
+                _logger.Log("[INFO] " + "[SPIKERPT] внешний catch: " + oOuterEx.GetType().FullName +
+                    ": " + oOuterEx.Message);
+                return false;
+            }
+            finally
+            {
+                // --- 9. Уборка ВСЕГДА (finally-семантика на исходах; если bbox не
+                //        прочитан — точка не получена всё равно, лишняя проба хуже) ---
+                try
+                {
+                    if (oProbe != null && oProbe.IsValid)
+                    {
+                        oProbe.Remove();
+                        _logger.Log("[INFO] [SPIKERPT-CLEAN] проба удалена");
+                    }
+                    else
+                    {
+                        _logger.Log("[INFO] [SPIKERPT-CLEAN] нечего удалять (null или !IsValid)");
+                    }
+                }
+                catch (Exception oCleanEx)
+                {
+                    _logger.Log("[INFO] " + "[SPIKERPT-CLEAN] Remove бросил: " +
+                        oCleanEx.GetType().Name + ": " + oCleanEx.Message);
+                }
+            }
+        }
+
+        /// <summary>Хелпер rev.15.1: число SubPlacements пробы или -1 = нечитаемо
+        /// (ещё не размещён/удалён); -1 в цикле трактуется как «ещё не готов» (не 0).</summary>
+        private static int TryCountPlacements(ReportBlockReference oRef)
+        {
+            try { return oRef.SubPlacements.Length; }
+            catch { return -1; }
+        }
+
+        /// <summary>Хелпер rev.15.1: тихий рекурсивный bbox-обход дерева пробы.
+        /// Компилируемость: Group : Placement (KB: ReportBlockReference : Group,
+        /// цепочка StorableObject → Placement → Group → ReportBlockReference) —
+        /// `p as Group` легален, SubPlacements — свойство Group (KB: Group~SubPlacements
+        /// НЕ найден прямым fts; найден Group~RemoveSubPlacements и Block~SubPlacements;
+        /// EmbeddedReportReader.CollectSubPlacementsTree уже рекурсивно идёт
+        /// oPlacement as Group → SafeSubPlacements(oGroup) — паттерн доказан кодом).
+        /// ВЕСЬ метод под внешним try/catch (тихий) — чтение Location на живой
+        /// странице доказано (AnalyzeAction:289 oPh.Location).</summary>
+        private static void CollectProbeBounds(Placement[] arrTop, HashSet<Placement> hsVisited,
+            ref double dMinX, ref double dMinY, ref double dMaxX, ref double dMaxY, ref int nCount)
+        {
+            try
+            {
+                CollectProbeBoundsCore(arrTop, hsVisited, ref dMinX, ref dMinY,
+                    ref dMaxX, ref dMaxY, ref nCount, 0);
+            }
+            catch (Exception)
+            {
+                // Тихий: любые проблемы чтения не должны ломать пробу; частичный
+                // bbox лучше исключения.
+            }
+            if (nCount == 0)
+            {
+                // Ни одного GraphicalPlacement не прочитано — вызывающая сторона
+                // увидит count=0 и вернёт false («проба не размещена»).
+            }
+        }
+
+        /// <summary>Ядро хелпера rev.15.1: рекурсия по детям Group с капами
+        /// (глубина 8, N 5000 — plain counters, без reflection).</summary>
+        private static void CollectProbeBoundsCore(Placement[] arr, HashSet<Placement> hsVisited,
+            ref double dMinX, ref double dMinY, ref double dMaxX, ref double dMaxY,
+            ref int nCount, int nDepth)
+        {
+            if (nDepth > 8) return;
+            if (nCount > 5000) return;
+            if (arr == null) return;
+            foreach (Placement p in arr)
+            {
+                if (p == null) continue;
+                if (hsVisited.Contains(p)) continue;
+                hsVisited.Add(p);
+                GraphicalPlacement oGp = p as GraphicalPlacement;
+                if (oGp != null)
+                {
+                    try
+                    {
+                        PointD oLoc = oGp.Location;
+                        dMinX = Math.Min(dMinX, oLoc.X);
+                        dMinY = Math.Min(dMinY, oLoc.Y);
+                        dMaxX = Math.Max(dMaxX, oLoc.X);
+                        dMaxY = Math.Max(dMaxY, oLoc.Y);
+                        nCount++;   // считаем ТИЛЬКО графические (носители Location)
+                    }
+                    catch (Exception)
+                    {
+                        // Location бросил на отдельном элементе — не топим весь bbox.
+                    }
+                }
+                Group oG = p as Group;
+                if (oG != null)
+                {
+                    try
+                    {
+                        CollectProbeBoundsCore(oG.SubPlacements, hsVisited, ref dMinX,
+                            ref dMinY, ref dMaxX, ref dMaxY, ref nCount, nDepth + 1);
+                    }
+                    catch (Exception)
+                    {
+                        // SubPlacements бросил — ветка детей пропущена, не топим bbox.
+                    }
+                }
+            }
         }
 
         /// <summary>rev.14.14: необработанное исключение UI-потока WinForms —

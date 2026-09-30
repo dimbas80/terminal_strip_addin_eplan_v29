@@ -191,5 +191,17 @@ namespace MyEplanActions
         // H-5/H-6 (rev.15.0): кап ожидания клика вставки точки (сек) — модель
         // ожидания SPIKE-8 (AnalyzeAction, кап 120 с на интеракцию спайка).
         public const int SelectPointTimeoutSec = 120;
+
+        // rev.15.1 (СПАЙК throwaway): захват точки вставки через 1-арг
+        // CreateEmbeddedReport(ReportBlock) — «starts an interaction so the report
+        // is attached to the mouse pointer» (KB 2.9). Причина спайка: rev.15.0
+        // [IPING-LAUNCH]=False — XGedStartInteractionAction не стартует кастомные
+        // интеракции (факт SPIKE-4/5, повторён).
+        // rev.15.2: спайк ОТЛОЖЕН (обе сборки 29.09 21:13 были rev.15.0 — вердикт
+        // не получен), причина спайка опровергнута прогоном 07:14: [IPING-LAUNCH]=True,
+        // OnStart шёл — гасла интеракция из-за Stop|Point (фикс [IPING-FIX] в
+        // InsertPointInteraction.OnStart). Гейт OFF → фиксированный 15.0-путь;
+        // код спайка остаётся под гейтом до чистки rev.15.3.
+        public const bool SpikeCreateReportProbe = false;
     }
 }

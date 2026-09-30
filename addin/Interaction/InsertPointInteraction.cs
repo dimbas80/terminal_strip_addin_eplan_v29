@@ -24,10 +24,15 @@ namespace MyEplanActions
     ///   interactively» — поэтому ПЕРЕД запуском ShowDialog уже вернул OK и модального
     ///   окна нет; поведение — гипотеза H-5, проверяется прогоном);
     /// - RequestCode — enum [Flags()], члены (страница ...Ged.RequestCode.html):
-    ///   Nothing=0, Stop=1, Select=2, Point=16, Length=128, Angle=256,
-    ///   Success=1024 («input of data was successful»), Abort=512 и др. Для нашeй
-    ///   точечной интеракции: OnStart возвращает Success|Point — интеракция запущена
-    ///   И ждёт координаты; ClickOnPoint возвращает Success — завершение с успехом;
+    ///   Nothing=0, Stop=1 («stop interaction»), Select=2, Point=16 («input of
+    ///   point needed»), Length=128, Angle=256, Abort=512 («abort interaction»),
+    ///   Success=1024 («input of data was successful» = ввод ЗАВЕРШЁН) и др.
+    ///   Для нашeй точечной интеракции (docs-пример MyInteraction,
+    ///   ...Ged.Interaction.html): OnStart возвращает ТОЛЬКО Point — движок
+    ///   держит интеракцию и ждёт клик; Success возвращает OnPoint после сбора
+    ///   точки — завершение с успехом. Опровергнуто стендами:
+    ///   Stop|Point=17 → мгновенный OnCancel (прогон 07:14, rev.15.0),
+    ///   Success|Point=1040 → мгновенный OnSuccess без клика (07:35, rev.15.2);
     /// - Interaction.OnPoint(Position) — docs-пример: OnPoint читает
     ///   oPosition.FinalPosition, после нужных точек возвращает Success
     ///   (страница ...Ged.Interaction.html, класс MyInteraction);
@@ -131,10 +136,10 @@ namespace MyEplanActions
 
         /// <summary>OnStart: подсказка в строке состояния + проба рамки-призрака под
         /// курсором (SetStaticCursor по PendingGhost; отказ — НЕ ломает интеракцию,
-        /// деградация «промпт без рамки», спека §6), затем base.OnStart и
-        /// Success|Point: интеракция запущена И ждёт координаты (KB члены enum;
-        /// бит Point = «coordinates of point are needed», факт SPIKE-11:
-        /// SymbolPickInteraction.cs:239 проверяла eBaseCode на Point). Эксперимент:
+        /// деградация «промпт без рамки», спека §6), затем base.OnStart (его Stop
+        /// НЕ включаем в возврат) и [IPING-FIX2] ТОЛЬКО Point — «input of point
+        /// needed», движок держит интеракцию и ждёт клик (docs-пример
+        /// MyInteraction; Success — возврат OnPoint, НЕ отсюда). Эксперимент:
         /// если SetStaticCursor(призрак) отвергается рантаймом — [IPING-CURSOR] отказ
         /// в буфере/файле пробы, интеракция живёт без рамки.</summary>
         public override RequestCode OnStart(InteractionContext pContext)
@@ -185,8 +190,20 @@ namespace MyEplanActions
             Probe("OnStart: интеракция " + "TSA_INSERT_POINT запущена");
             RequestCode eBase = base.OnStart(pContext);
             Buf("eBase после base.OnStart: " + eBase + " (число=" + ((int)eBase).ToString(CultureInfo.InvariantCulture) + ")");
-            // Success|Point: запущена + ждёт клик (KB enum: Success=1024, Point=16).
-            return eBase | RequestCode.Point;
+            // [IPING-FIX2] rev.15.3, docs-пример KB ...Ged.Interaction.html (MyInteraction):
+            // OnStart возвращает ТОЛЬКО RequestCode.Point (16) — «input of point needed»,
+            // движок держит интеракцию и ждёт клик; Success (1024) — возврат OnPoint
+            // ПОСЛЕ сбора точки («ввод завершён»), НЕ из OnStart.
+            // Опровергнутые гипотезы (факты стендов):
+            //   rev.15.0: eBase|Point = Stop|Point = 17 → мгновенный OnCancel (~17 мс,
+            //     прогон 07:14; бит Stop = «stop interaction»);
+            //   rev.15.2: Success|Point = 1040 → мгновенный OnSuccess БЕЗ клика и
+            //     OnPoint (~15 мс, прогон 07:35; Success = «input of data was
+            //     successful» = завершение ввода).
+            // base-овский Stop (1) сознательно НЕ включаем — это ответ базы «ей
+            // ничего не нужно», а не наш запрос.
+            Buf("[IPING-FIX2] OnStart возвращает Point (16) — ждём клик");
+            return RequestCode.Point;
         }
 
         /// <summary>OnPoint: ОДИН клик — захват координат и ЗАВЕРШЕНИЕ интеракции
