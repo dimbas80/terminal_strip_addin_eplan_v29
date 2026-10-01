@@ -82,6 +82,30 @@ namespace MyEplanActions
         /// детекция из дерева отчёта).</summary>
         public SettingsOrientation OrientationMode;
 
+        /// <summary>Выбор профиля .emc для СТУБА, слот H (дефолт — null: выбора
+        /// нет). Значение — EmcProfileCatalog.EncodeSelection(file, name)
+        /// ("file|name", задача 2 rev.17); consumer — задача 5/7.</summary>
+        public string EmcStripH;
+
+        /// <summary>Выбор профиля .emc для СТУБА, слот V (дефолт — null).</summary>
+        public string EmcStripV;
+
+        /// <summary>Выбор профиля .emc для кабельного УСТРОЙСТВА, слот H
+        /// (дефолт — null).</summary>
+        public string EmcDeviceH;
+
+        /// <summary>Выбор профиля .emc для кабельного УСТРОЙСТВА, слот V
+        /// (дефолт — null).</summary>
+        public string EmcDeviceV;
+
+        /// <summary>Выбор профиля .emc для СВЯЗИ (кабельного соединения),
+        /// слот H (дефолт — null).</summary>
+        public string EmcLinkH;
+
+        /// <summary>Выбор профиля .emc для СВЯЗИ (кабельного соединения),
+        /// слот V (дефолт — null).</summary>
+        public string EmcLinkV;
+
         // Кэш шага сетки по имени формы (нижняя медиана шага стубов K4 прошлого
         // успешного прогона — спека §6). Пустой = кэша нет → fallback
         // AddInConfiguration.GhostPitchFallbackMm (потребитель — H-6).
@@ -100,6 +124,8 @@ namespace MyEplanActions
             VariantH = AddInConfiguration.SymbolVariant;
             VariantV = AddInConfiguration.SymbolVariant;
             OrientationMode = SettingsOrientation.Auto;
+            // rev.17 (спека 2026-10-01-ui-emc-profiles): профили .emc не выбраны —
+            // null (пустое значение Save не пишет; после Load поле остаётся null).
         }
 
         /// <summary>Шаг сетки кэша для формы: записи нет — false, dPitch=0.
@@ -201,6 +227,21 @@ namespace MyEplanActions
                 // запись 20202[x] на символ кабеля удалены. Unknown-ключи старых
                 // settings-файлов Load пропускает молча (default-ветка).
                 lstLines.Add("OrientationMode=" + OrientationName(oSettings.OrientationMode));
+                // rev.17 (спека 2026-10-01-ui-emc-profiles): 6 профилей .emc —
+                // строковые поля, пишутся только непустые ("file|name"). Пусто
+                // (null или "") — строки нет; после Load поле остаётся null.
+                if (!string.IsNullOrEmpty(oSettings.EmcStripH))
+                    lstLines.Add("EmcStripH=" + oSettings.EmcStripH);
+                if (!string.IsNullOrEmpty(oSettings.EmcStripV))
+                    lstLines.Add("EmcStripV=" + oSettings.EmcStripV);
+                if (!string.IsNullOrEmpty(oSettings.EmcDeviceH))
+                    lstLines.Add("EmcDeviceH=" + oSettings.EmcDeviceH);
+                if (!string.IsNullOrEmpty(oSettings.EmcDeviceV))
+                    lstLines.Add("EmcDeviceV=" + oSettings.EmcDeviceV);
+                if (!string.IsNullOrEmpty(oSettings.EmcLinkH))
+                    lstLines.Add("EmcLinkH=" + oSettings.EmcLinkH);
+                if (!string.IsNullOrEmpty(oSettings.EmcLinkV))
+                    lstLines.Add("EmcLinkV=" + oSettings.EmcLinkV);
                 foreach (KeyValuePair<string, double> oKv in oSettings._dicGridPitch)
                     lstLines.Add(GRID_PITCH_PREFIX + oKv.Key + "=" +
                         oKv.Value.ToString("R", CultureInfo.InvariantCulture));
@@ -314,6 +355,32 @@ namespace MyEplanActions
                         oSettings.OrientationMode = SettingsOrientation.Vertical;
                     else if (string.Equals(strValue, "Auto", StringComparison.OrdinalIgnoreCase))
                         oSettings.OrientationMode = SettingsOrientation.Auto;
+                    break;
+                // rev.17 (спека 2026-10-01-ui-emc-profiles): 6 профилей .emc.
+                // Пустое значение — пропуск (поле остаётся null, дефолт).
+                case "EmcStripH":
+                    if (strValue.Length == 0) break;
+                    oSettings.EmcStripH = strValue;
+                    break;
+                case "EmcStripV":
+                    if (strValue.Length == 0) break;
+                    oSettings.EmcStripV = strValue;
+                    break;
+                case "EmcDeviceH":
+                    if (strValue.Length == 0) break;
+                    oSettings.EmcDeviceH = strValue;
+                    break;
+                case "EmcDeviceV":
+                    if (strValue.Length == 0) break;
+                    oSettings.EmcDeviceV = strValue;
+                    break;
+                case "EmcLinkH":
+                    if (strValue.Length == 0) break;
+                    oSettings.EmcLinkH = strValue;
+                    break;
+                case "EmcLinkV":
+                    if (strValue.Length == 0) break;
+                    oSettings.EmcLinkV = strValue;
                     break;
                 default:
                     if (strKey.StartsWith(GRID_PITCH_PREFIX, StringComparison.Ordinal))
