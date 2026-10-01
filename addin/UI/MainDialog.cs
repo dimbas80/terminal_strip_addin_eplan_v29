@@ -425,7 +425,8 @@ namespace MyEplanActions
                     AddTreeNode(oTree.Nodes, oNode);
             }
             oTree.EndUpdate();
-            oTree.ExpandAll();
+            // rev.17 (решение пользователя 01.10): дерево свёрнуто по умолчанию.
+            oTree.CollapseAll();
         }
 
         private static void AddTreeNode(TreeNodeCollection oParent,
@@ -461,7 +462,7 @@ namespace MyEplanActions
             TreeNode oNode = FindNodeByFullName(oTree.Nodes, strFullName);
             if (oNode == null) return;
             oTree.SelectedNode = oNode;
-            oNode.EnsureVisible();
+            // EnsureVisible() НЕ вызываем: дерево остаётся свёрнутым по умолчанию.
         }
 
         private static TreeNode FindNodeByFullName(TreeNodeCollection oNodes,
