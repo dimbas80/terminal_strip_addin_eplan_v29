@@ -80,20 +80,36 @@ namespace MyEplanActions
         /// <summary>Пользователь отменил (Esc / abort); тоже сознательно неволатильна
         /// — та же однопоточная модель диспатчинга, что у Captured.</summary>
         public static bool Cancelled = false;
+        /// <summary>Esc нажат — ставится EscCancelFilter (B1, Track B 01.10.2026:
+        /// фильтр видит WM_KEYDOWN+VK_ESCAPE в очереди до диспетчеризации —
+        /// в том числе внутри блокирующего насоса Execute, факт стенда 01.10.2026).
+        /// volatile — как у Done: цикл ожидания хука обязан увидеть запись; в
+        /// однопоточной модели это избыточно, но оставлено defensively — фильтр
+        /// срабатывает внутри чужого насоса сообщений, гарантия дешёвая и единая
+        /// по стилю с Done (паттерн SymbolPickInteraction.StopSignaled).
+        /// Итерация 2: вместе с TryMarkCancelled ставит Cancelled мгновенно;
+        /// гвардия OnStart гасит перевооружение.</summary>
+        public static volatile bool EscPressed = false;
         /// <summary>Захваченная точка (FinalPosition в координатах страницы).</summary>
         public static double CapturedX = 0.0;
         public static double CapturedY = 0.0;
         /// <summary>Буфер диагностики (кап DUMP_CAP) — слив в лог хуком ([IPING-DUMP]).</summary>
         public static readonly List<string> IPingDump = new List<string>();
         /// <summary>Рамка-призрак: кладёт хук (TryPickInsertPoint) ПЕРЕД запуском
-        /// экшена; OnStart пробует SetStaticCursor по IsValid. PolyLine : StorableObject.</summary>
+        /// экшена; OnStart пробует SetStaticCursor по IsValid. PolyLine : StorableObject.
+        /// B2-1 (Track B 01.10.2026): сразу после SetStaticCursor реальный объект
+        /// удаляется со страницы (Remove) и ссылка обнуляется — остаётся только
+        /// курсорная копия.</summary>
         public static StorableObject PendingGhost = null;
 
         /// <summary>Единственный активный экземпляр интеракции (M2.1, ревью
         /// rev.15.0) — для TryClearCursor из хука при таймауте: курсорную
-        /// отрисовку призрака нужно снять ДО RemoveGhost, иначе курсор продолжает
-        /// рисовать уже удалённый PolyLine. Присваивается в OnStart (интеракция
-        /// инстанцируется EPLAN — поле заполняется только из OnStart).</summary>
+        /// отрисовку снимаем ДО RemoveGhost. B2-1 (Track B 01.10.2026):
+        /// «курсор рисует уже удалённый PolyLine» — теперь ШТАТНЫЙ сценарий
+        /// (объект удаляется сразу после SetStaticCursor, курсорная копия
+        /// переживает его сознательно), не авария; снять копию — обязанность
+        /// TryClearCursor. Присваивается в OnStart (интеракция инстанцируется
+        /// EPLAN — поле заполняется только из OnStart).</summary>
         private static InsertPointInteraction s_instance = null;
 
         /// <summary>M2.1: снять курсорную отрисовку призрака — KB 2.9, страница
@@ -101,7 +117,10 @@ namespace MyEplanActions
         /// Cursor-Representation». Ничего не бросает наружу: instance может не
         /// существовать (интеракция никогда не стартовала) или ClearCursor может
         /// бросить на остановленной интеракции — деградация штатная (рамка
-        /// останется под курсором до следующего клика/Esc, вреда нет).</summary>
+        /// останется под курсором до следующего клика/Esc, вреда нет).
+        /// B2-1 (Track B 01.10.2026): курсорная копия СОЗНАТЕЛЬНО переживает
+        /// удаление реального объекта — TryClearCursor обязателен на путях,
+        /// где интеракция не завершилась сама (таймаут/Esc).</summary>
         public static void TryClearCursor()
         {
             try
@@ -120,13 +139,15 @@ namespace MyEplanActions
         private static int s_nSuppressed = 0;
 
         /// <summary>Сброс ВСЕЙ статики перед новым запуском (хук, шаг 6 брифа):
-        /// флаги, координаты, буфер, PendingGhost (призрак держит вызывающий код
-        /// в локальной переменной — Reset только чистит ссылку).</summary>
+        /// флаги (Done/Captured/Cancelled/EscPressed), координаты, буфер,
+        /// PendingGhost (призрак держит вызывающий код в локальной переменной —
+        /// Reset только чистит ссылку).</summary>
         public static void Reset()
         {
             Done = false;
             Captured = false;
             Cancelled = false;
+            EscPressed = false;
             CapturedX = 0.0;
             CapturedY = 0.0;
             PendingGhost = null;
@@ -146,6 +167,18 @@ namespace MyEplanActions
         {
             // M2.1: единственный активный экземпляр — для TryClearCursor при таймауте.
             InsertPointInteraction.s_instance = this;
+            // Итерация 2 (01.10.2026): движок ПЕРЕВООРУЖАЕТ интеракцию после abort
+            // (факт стенда: 4 рестарта OnStart после OnCancel, IsAutorestartEnabled=false
+            // на abort-пути не работает; перевооружённая копия съедает клики пользователя).
+            // Флаги выставлены прежней цепочкой (Cancel/Esc/успех) — гасим перезапуск:
+            // Stop = «stop interaction» (KB 2.9 ...Ged.RequestCode.html). Флаги сбрасывает
+            // только Reset() хука при следующем легитимном запуске.
+            if (InsertPointInteraction.Done || InsertPointInteraction.Captured ||
+                InsertPointInteraction.Cancelled || InsertPointInteraction.EscPressed)
+            {
+                Probe("[IPING-REARM] перезапуск после завершения/отмены — гасим (return Stop), рамка не ставится");
+                return RequestCode.Stop;
+            }
             // Подсказка — паттерн SymbolPickInteraction.OnStart / docs-пример
             // Interactions.html («this.PromptForStatusLine = "select Terminals"»).
             this.PromptForStatusLine = "Укажите точку вставки отчёта клеммника (Esc — отмена)";
@@ -170,6 +203,35 @@ namespace MyEplanActions
                         PointD oZero = new PointD(0.0, 0.0);
                         this.SetStaticCursor(InsertPointInteraction.PendingGhost, oZero);
                         Buf("[IPING-CURSOR] призрак под курсором (valid=" + bGhostValid + ")");
+                        // B2 (гипотеза B2-1, Track B 01.10.2026): призрак в (0,0)
+                        // виден на странице рядом с курсорной копией — реальный
+                        // объект удаляем СРАЗУ после постановки курсора
+                        // (Remove на PolyLine — идиома GhostFrameCreator),
+                        // остаётся только курсорная копия; ссылка обнуляется.
+                        // Отказ Remove — НЕ ломает интеракцию: объект живёт до
+                        // уборки хука (RemoveGhost), диагноз в буфере.
+                        try
+                        {
+                            // Remove объявлен на Placement/PolyLine, НЕ на StorableObject
+                            // (KB 2.9 StorableObject~members: Dispose/LockObject/… — Remove нет;
+                            // идиома GhostFrameCreator.RemoveGhost — Remove на PolyLine).
+                            Eplan.EplApi.DataModel.Graphics.PolyLine oGhostObj =
+                                InsertPointInteraction.PendingGhost as Eplan.EplApi.DataModel.Graphics.PolyLine;
+                            if (oGhostObj != null)
+                            {
+                                oGhostObj.Remove();
+                                InsertPointInteraction.PendingGhost = null;
+                                Buf("[IPING-CURSOR] B2: реальный объект призрака удалён со страницы сразу после SetStaticCursor — остаётся только курсорная копия (гипотеза B2-1, Track B 01.10.2026)");
+                            }
+                            else
+                            {
+                                Buf("[IPING-CURSOR] B2: PendingGhost не PolyLine — Remove пропущен (объект живёт до уборки хука)");
+                            }
+                        }
+                        catch (Exception oRmEx)
+                        {
+                            Buf("[IPING-CURSOR] B2: Remove призрака после SetStaticCursor бросил " + oRmEx.GetType().Name + ": " + oRmEx.Message + " — объект живёт до уборки хука (как раньше)");
+                        }
                     }
                     catch (Exception oEx)
                     {
@@ -312,6 +374,42 @@ namespace MyEplanActions
             Probe(strLine);
             if (IPingDump.Count < DUMP_CAP) IPingDump.Add(strLine);
             else s_nSuppressed++;
+        }
+
+        /// <summary>Шимм для EscCancelFilter (B1, Track B 01.10.2026): Buf
+        /// приватен, классу фильтра нужен свой вход — диагноз Esc попадает в
+        /// тот же буфер [IPING-DUMP]/файл пробы, что и остальные пробы.</summary>
+        internal static void NoteEscFilter(string strWhat)
+        {
+            Buf(strWhat);
+        }
+
+        /// <summary>Мгновенная отмена из EscCancelFilter (итерация 2, 01.10.2026):
+        /// Cancelled=true — исход пайплайна «отмена» БЕЗ MessageBox даже если
+        /// движковый OnCancel придёт позже (задержка ~14 с, факт стенда) или не
+        /// придёт вовсе; ClearCursor() — курсорная копия призрака гаснет СРАЗУ
+        /// (визуальное подтверждение отмены; KB 2.9 ClearCursor — «Remove
+        /// Cursor-Representation», вызов в том же UI-потоке насоса — как в
+        /// таймаут-ветке хука); подсказка в статус-строке. Ошибки — в Buf,
+        /// наружу не бросаем (фильтр не должен ломать насос сообщений).</summary>
+        internal static void TryMarkCancelled()
+        {
+            InsertPointInteraction.Cancelled = true;
+            try
+            {
+                if (InsertPointInteraction.s_instance != null)
+                {
+                    InsertPointInteraction.s_instance.ClearCursor();
+                    InsertPointInteraction.s_instance.PromptForStatusLine =
+                        "Отменено (Esc) — возврат в диалог...";
+                    Buf("[IPING-ESC] TryMarkCancelled: Cancelled=true, курсорная копия снята, статус-строка обновлена");
+                }
+            }
+            catch (Exception oEx)
+            {
+                Buf("[IPING-ESC] TryMarkCancelled: " + oEx.GetType().Name + ": " +
+                    oEx.Message + " — деградация штатная (отмена остаётся в силе)");
+            }
         }
     }
 }

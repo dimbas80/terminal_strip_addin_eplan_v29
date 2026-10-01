@@ -781,9 +781,12 @@ namespace MyEplanActions
                     }
                     if (!bPointPicked)
                     {
-                        if (InsertPointInteraction.Cancelled)
+                        if (InsertPointInteraction.Cancelled || InsertPointInteraction.EscPressed)
                         {
                             // Отмена (Esc) — без MessageBox: пользователь сам решил.
+                            // Итерация 2 (01.10.2026): фильтр ставит Cancelled мгновенно
+                            // (TryMarkCancelled); EscPressed — страховка на путь, где
+                            // Invoke вернулся раньше движкового OnCancel.
                             _logger.Log("[MODE] выбор точки отменён (Esc)");
                         }
                         else
@@ -896,9 +899,13 @@ namespace MyEplanActions
         /// nTerminals×pitch (деградация штатная). oProject потребляется
         /// разбором шаблона.
         /// true — точка получена (dPointX/dPointY; гейт OFF — константная точка
-        /// InsertX/InsertY, легаси-поведение UI); false — отмена (Esc), таймаут,
-        /// провал запуска, завершение без точки — вызывающая сторона решает
-        /// (MessageBox для таймаута/провала, заново диалог; ничего НЕ создаётся).
+        /// InsertX/InsertY, легаси-поведение UI); false — отмена (Esc — теперь
+        /// реальна: EscCancelFilter через DoEvents-насос; движковый OnCancel по
+        /// Esc не приходит — факт стенда 01.10.2026; интеракция остаётся активной
+        /// в движке до следующего клика/«Создать» — как при таймауте, M2.4),
+        /// таймаут, провал запуска, завершение без точки — вызывающая сторона
+        /// решает (MessageBox для таймаута/провала, заново диалог; ничего НЕ
+        /// создаётся).
         /// Исключения наружу не выпускаются — false.</summary>
         private bool TryPickInsertPoint(Project oProject, Page oPage,
             TerminalStrip oTargetStrip, string strForm, SettingsOrientation eMode,
@@ -1068,6 +1075,13 @@ namespace MyEplanActions
             PolyLine oGhost = GhostFrameCreator.CreateGhostFrame(oPage, eOrient, dLong, dShort, _logger);
             InsertPointInteraction.PendingGhost = oGhost;
 
+            // Итерация 2b (01.10.2026): фильтр ставится ДО запуска экшена. ФАКТ
+            // стенда: Esc ловился фильтром ВО ВРЕМЯ блокирующего Invoke
+            // ([IPING-ESC] через ~2 с после запуска, возврат Invoke — через ~90 с),
+            // поэтому окно жизни фильтра = запуск экшена + цикл ожидания.
+            EscCancelFilter oEscFilter = new EscCancelFilter();
+            System.Windows.Forms.Application.AddMessageFilter(oEscFilter);
+
             bool bLaunched = false;
             try
             {
@@ -1096,6 +1110,8 @@ namespace MyEplanActions
                         // ctx.AddParameter("Name", ...) — docs-пример KB (...Ged.Interaction.html):
                         // oContext.AddParameter("Name","MyInteraction") + Execute. Факт run:
                         // запуск экшена из-под нашего действия доказан (p.82: Execute async).
+                        // Факт стенда 01.10.2026: фактический возврат Invoke — ПОСЛЕ
+                        // завершения цепочки интеракции (может блокировать минуты).
                         ActionCallingContext oCtx = new ActionCallingContext();
                         oCtx.AddParameter("Name", "TSA_INSERT_POINT");
                         object oRes = oExecMethod.Invoke(oLaunchAction, new object[] { oCtx });
@@ -1116,6 +1132,9 @@ namespace MyEplanActions
 
             if (!bLaunched)
             {
+                // Фильтр снять ДО выхода (окно = запуск+цикл; finally цикла ниже
+                // не выполнится на этом пути).
+                System.Windows.Forms.Application.RemoveMessageFilter(oEscFilter);
                 _logger.Warn("[IPING] запуск интеракции не удался (возврат/исключение — см. [IPING-LAUNCH])");
                 GhostFrameCreator.RemoveGhost(oGhost, _logger);
                 return false;
@@ -1123,13 +1142,24 @@ namespace MyEplanActions
 
             // --- 5. Цикл ожидания (модель SPIKE-8): DoEvents качает UI-очередь,
             //        события интеракции приходят в этом потоке; Sleep(50) — опрос;
-            //        кап 120 с. CalledOnPoint из OnPoint; Done/Cancelled — сигнал OnStop/OnCancel. ---
+            //        кап 120 с. CalledOnPoint из OnPoint; Done/Cancelled — сигнал
+            //        OnStop/OnCancel. B1 (Track B 01.10.2026): Esc ловится фильтром
+            //        EscCancelFilter — AddMessageFilter видит ВСЕ сообщения очереди
+            //        ДО диспетчеризации, не зависит от фокуса GED (KB: WinForms
+            //        IMessageFilter.PreFilterMessage); окно фильтра — запуск экшена
+            //        + этот цикл (ставится до Invoke, снимается в finally цикла —
+            //        и на раннем выходе !bLaunched выше).
+            //        Итерация 2: ФАКТ стенда — Execute БЛОКИРУЕТ до конца цепочки
+            //        (цикл стартует уже после возврата; мгновенную отмену делает
+            //        фильтр через TryMarkCancelled прямо в насосе Execute,
+            //        цикл — страховка). ---
             DateTime oDeadline = DateTime.Now.AddSeconds(AddInConfiguration.SelectPointTimeoutSec);
             DateTime oWaitStart = DateTime.Now;
             try
             {
                 while (!InsertPointInteraction.Captured && !InsertPointInteraction.Cancelled &&
-                    !InsertPointInteraction.Done && DateTime.Now < oDeadline)
+                    !InsertPointInteraction.Done && !InsertPointInteraction.EscPressed &&
+                    DateTime.Now < oDeadline)
                 {
                     System.Windows.Forms.Application.DoEvents();
                     System.Threading.Thread.Sleep(50);
@@ -1141,6 +1171,13 @@ namespace MyEplanActions
                 // ронять пайплайн (паттерн Ревью rev.13.10, [PICK-EXEC8]).
                 _logger.Log("[INFO] [IPING-WAIT] цикл ожидания бросил: " +
                     oWaitEx.GetType().Name + ": " + oWaitEx.Message);
+            }
+            finally
+            {
+                // Снятие фильтра — при ЛЮБОМ выходе из цикла (точка/отмена/стоп/
+                // Esc/таймаут/исключение): иначе Esc перехватывался бы и в других
+                // фазах (диалоги, следующая генерация).
+                System.Windows.Forms.Application.RemoveMessageFilter(oEscFilter);
             }
             double dWaitSec = Math.Round((DateTime.Now - oWaitStart).TotalSeconds, 1);
 
@@ -1185,13 +1222,20 @@ namespace MyEplanActions
                     oDumpEx.GetType().Name + ": " + oDumpEx.Message);
             }
 
-            // --- 7. Истинный таймаут (Done=false по дедлайну): интеракция МОЖЕТ
-            //        оставаться активной с рамкой-призраком под курсором — курсорную
-            //        отрисовку снимаем ДО удаления объекта (KB 2.9 ClearCursor —
-            //        «Remove Cursor-Representation»), иначе курсор рисует убранный
-            //        PolyLine. Успех/отмена/стоп — отрисовку снимает сама интеракция. ---
-            if (!InsertPointInteraction.Captured && !InsertPointInteraction.Cancelled &&
-                !InsertPointInteraction.Done)
+            // --- 7. Истинный таймаут/Esc (Done=false по дедлайну либо EscPressed
+            //        от фильтра): интеракция МОЖЕТ оставаться активной с
+            //        рамкой-призраком под курсором — курсорную отрисовку снимаем
+            //        ДО удаления объекта (KB 2.9 ClearCursor — «Remove
+            //        Cursor-Representation»). Esc (B1, Track B 01.10.2026) —
+            //        интеракция НЕ завершилась сама (движковый OnCancel по Esc не
+            //        приходит, факт стенда 01.10.2026), курсорную копию снимаем
+            //        мы; при B2-1 курсорная копия переживает удаление объекта —
+            //        снять её ОБЯЗАТЕЛЬНО. Успех/отмена/стоп — отрисовку снимает
+            //        сама интеракция; добавка || EscPressed покрывает и угол
+            //        Esc+успех — повторный ClearCursor безопасен (try/catch,
+            //        штатная деградация). ---
+            if ((!InsertPointInteraction.Captured && !InsertPointInteraction.Cancelled &&
+                !InsertPointInteraction.Done) || InsertPointInteraction.EscPressed)
             {
                 InsertPointInteraction.TryClearCursor();
             }
@@ -1213,6 +1257,16 @@ namespace MyEplanActions
             if (InsertPointInteraction.Cancelled)
             {
                 _logger.Log("[INFO] [IPING-WAIT] исход: cancel, ожидание=" +
+                    dWaitSec.ToString(CultureInfo.InvariantCulture) + " сек");
+                return false;
+            }
+            // B1 (Track B 01.10.2026): Esc поймал фильтр (движковый OnCancel по
+            // Esc не приходит — факт стенда 01.10.2026); в углу гонки
+            // Esc+завершение исход тот же (false), курсорную копию снял
+            // раздел 7 / движок.
+            if (InsertPointInteraction.EscPressed)
+            {
+                _logger.Log("[INFO] [IPING-WAIT] исход: Esc (фильтр), ожидание=" +
                     dWaitSec.ToString(CultureInfo.InvariantCulture) + " сек");
                 return false;
             }
