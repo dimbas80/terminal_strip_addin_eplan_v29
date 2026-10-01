@@ -414,7 +414,8 @@ namespace MyEplanActions
         }
 
         /// <summary>rev.17: наполнить TreeView узлами (рекурсивно; Text —
-        /// отображение, Tag — StripTreeNode) и раскрыть все уровни.</summary>
+        /// отображение, Tag — StripTreeNode) и СВЕРНУТЬ все уровни (дерево
+        /// свёрнуто по умолчанию — решение пользователя 01.10).</summary>
         private static void FillTree(TreeView oTree, List<StripTreeNode> lstNodes)
         {
             oTree.BeginUpdate();
