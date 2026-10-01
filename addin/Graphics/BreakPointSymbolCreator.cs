@@ -6,6 +6,7 @@ using System.Reflection;
 using Eplan.EplApi.Base;
 using Eplan.EplApi.DataModel;
 using Eplan.EplApi.DataModel.MasterData;
+using Eplan.EplApi.HEServices;   // NameService (AdjustVisibleName, путь B — S4)
 
 namespace MyEplanActions
 {
