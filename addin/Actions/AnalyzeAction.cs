@@ -672,12 +672,38 @@ namespace MyEplanActions
             _logger.Log("[INFO] Данные для диалога: клеммников " + lstStripNames.Count +
                 ", форм " + lstFormNames.Count + ".");
 
+            // --- 2b. rev.17 (Task 7, план 2026-10-01-ui-emc-profiles): каталог
+            //        профилей .emc (point/*.emc) по варианту символа BP (A=0,
+            //        H=7, G=6, F=5) для ComboBox'ов диалога. Папка/каталог не
+            //        найдены — ForVariant(null) даёт пустые списки (диалог всё
+            //        равно показывается; BP без набора — штатная деградация).
+            //        Скан тот же, что у BreakPointSymbolCreator (ResolvePointFolder). ---
+            string strPointFolder = BreakPointSymbolCreator.ResolvePointFolder();
+            List<EmcSchemeInfo> lstEmcProfiles = EmcSchemeCatalog.ParseDirectory(strPointFolder, _logger);
+            Dictionary<int, List<EmcSchemeInfo>> dicProfilesByVariant =
+                new Dictionary<int, List<EmcSchemeInfo>>();
+            dicProfilesByVariant[0] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 0);
+            dicProfilesByVariant[7] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 7);
+            dicProfilesByVariant[6] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 6);
+            dicProfilesByVariant[5] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 5);
+            _logger.Log("[INFO] Профили .emc: всего " +
+                (lstEmcProfiles == null ? 0 : lstEmcProfiles.Count) +
+                ", по вариантам A=" + dicProfilesByVariant[0].Count +
+                " H=" + dicProfilesByVariant[7].Count +
+                " G=" + dicProfilesByVariant[6].Count +
+                " F=" + dicProfilesByVariant[5].Count + ".");
+
             // --- 3. Цикл диалога: Отмена/закрытие — выход; «Создать» — пайплайн;
             //        провал создания отчёта — сообщение и заново диалог ---
             EmbeddedReportReader oReader = new EmbeddedReportReader(_logger);
             // rev.13.1 (H-4, R10): проект — браузеру символа (кнопка активна);
             // null — кнопка осталась бы выключенной (не наш проект — не наш случай).
-            MainDialog oDialog = new MainDialog(lstStripNames, lstFormNames, _oSettings, oProject, _logger);
+            // rev.17 (Task 7): первый аргумент — ДЕРЕВО клеммников (структура ОУ
+            // в промежуточных узлах, полные ОУ в листьях); его сборка ведётся по
+            // тому же обходу, что lstStripNames (гейт пустоты — по lstStripNames).
+            MainDialog oDialog = new MainDialog(
+                StripStructureTree.Build(CollectStripInputs(oProject)),
+                lstFormNames, _oSettings, oProject, _logger, dicProfilesByVariant);
             try
             {
                 while (true)
@@ -803,6 +829,14 @@ namespace MyEplanActions
                             _oSettings.TargetStrip = strStrip;
                             _oSettings.Form = strForm;
                             _oSettings.OrientationMode = eMode;
+                            // rev.17 (Task 7): выбор 6 профилей .emc слотами BP
+                            // (строка 'файл|имя схемы' либо null — нет выбора).
+                            _oSettings.EmcStripH = oDialog.SelectedEmcProfile(BpProfileSlot.StripH);
+                            _oSettings.EmcStripV = oDialog.SelectedEmcProfile(BpProfileSlot.StripV);
+                            _oSettings.EmcDeviceH = oDialog.SelectedEmcProfile(BpProfileSlot.DeviceH);
+                            _oSettings.EmcDeviceV = oDialog.SelectedEmcProfile(BpProfileSlot.DeviceV);
+                            _oSettings.EmcLinkH = oDialog.SelectedEmcProfile(BpProfileSlot.LinkH);
+                            _oSettings.EmcLinkV = oDialog.SelectedEmcProfile(BpProfileSlot.LinkV);
                             string strSavePath;
                             AddInSettings.Save(_oSettings, _arrSettingsDirs, out strSavePath);
                             _logger.Log("[SETTINGS] save: " +
@@ -1296,6 +1330,172 @@ namespace MyEplanActions
             _logger.Log("[INFO] клеммников в проекте: " + lstResult.Count +
                 " (обход " + arrPages.Length + " стр.)");
             return lstResult;
+        }
+
+        /// <summary>rev.17 (Task 7, план 2026-10-01-ui-emc-profiles): вход
+        /// построения дерева клеммников — для каждого TerminalStrip полное ОУ
+        /// (тот же источник, что CollectStripNames: oStrip.Name) и четыре
+        /// свойства структуры 1100 (Plant «=»)/1400 (MountingSite «++»)/
+        /// 1200 (PlaceOfInstallation «+»)/1600 (UserStruct «#»), каждый — с
+        /// подчинёнными сегментами (базовый + 1..9, склейка через '.';
+        /// образец — CableSymbolCreator.WriteStructureSegments/SplitSegments,
+        /// чтение — SafePropText-паттерн EplanTerminalStripReader 475–497).
+        /// ГЕЙТ (контроллер): если собранный префикс НЕ согласуется с полным ОУ
+        /// (частичное/нечитаемое чтение), все четыре части отдаются ПУСТЫМИ —
+        /// StripStructureTree уйдёт в фоллбэк разбора FullName и НЕ построит
+        /// частичную структуру. Дубликаты полного имени — как в
+        /// CollectStripNames: первый побеждает + WARN [STRIPDUP].</summary>
+        private List<StripNodeInput> CollectStripInputs(Project oProject)
+        {
+            List<StripNodeInput> lstResult = new List<StripNodeInput>();
+            Page[] arrPages;
+            try { arrPages = oProject.Pages; }
+            catch (Exception oException)
+            {
+                _logger.Log("[UIERR] Project.Pages (дерево клеммников): " +
+                    oException.GetType().Name + ": " + oException.Message);
+                return lstResult;
+            }
+            if (arrPages == null) return lstResult;
+            foreach (Page oPage in arrPages)
+            {
+                string strPageName = SafeText("<нет имени>", () => oPage.IdentifyingName);
+                TerminalStrip[] arrStrips;
+                try { arrStrips = oPage.TerminalStrips; }
+                catch (Exception oException)
+                {
+                    _logger.Log("[UIERR] Page.TerminalStrips (дерево, '" + strPageName + "'): " +
+                        oException.GetType().Name + ": " + oException.Message);
+                    continue;
+                }
+                if (arrStrips == null) continue;
+                foreach (TerminalStrip oStrip in arrStrips)
+                {
+                    string strStripName = SafeText("<n/a>", () => oStrip.Name);
+                    if (strStripName == null || strStripName.Length == 0 || strStripName == "<n/a>")
+                    {
+                        _logger.Log("[UIERR] TerminalStrip.Name (дерево, страница " + strPageName +
+                            ") не читается — клеммник пропущен");
+                        continue;
+                    }
+                    if (ContainsStripInput(lstResult, strStripName))
+                    {
+                        _logger.Warn("[STRIPDUP] дубликат полного имени клеммника '" + strStripName +
+                            "' (дерево, страница " + strPageName + ") — пропущен");
+                        continue;
+                    }
+
+                    // Структура: главный сегмент + подчинённые 1..9 (i<10 — как
+                    // WriteStructureSegments). Пустое чтение — "".
+                    string strPlant = ReadStructureValue(oStrip, 1100);
+                    string strMount = ReadStructureValue(oStrip, 1400);
+                    string strPlace = ReadStructureValue(oStrip, 1200);
+                    string strUser = ReadStructureValue(oStrip, 1600);
+
+                    // Гейт: префиксная склейка ('=' plant '++' mount '+' place
+                    // '#' user, пустые уровни пропущены) обязана быть префиксом
+                    // полного ОУ и остаток ОУ не должен начинаться со
+                    // структурного префикса (иначе есть неразобранный уровень).
+                    // Не сошлось — все четыре части пусты → фоллбэк дерева.
+                    string strPrefix = StructurePrefix(strPlant, strMount, strPlace, strUser);
+                    if (strPrefix.Length == 0 ||
+                        !strStripName.StartsWith(strPrefix, StringComparison.Ordinal) ||
+                        StartsWithStructurePrefix(strStripName.Substring(strPrefix.Length)))
+                    {
+                        if (strPrefix.Length > 0)
+                            _logger.Warn("[STRIPTREE] структура клеммника '" + strStripName +
+                                "' не согласуется с ОУ ('" + strPrefix + "') — фоллбэк разбора ОУ");
+                        strPlant = "";
+                        strMount = "";
+                        strPlace = "";
+                        strUser = "";
+                    }
+
+                    StripNodeInput oInput = new StripNodeInput();
+                    oInput.FullName = strStripName;
+                    oInput.Plant = strPlant;
+                    oInput.MountingSite = strMount;
+                    oInput.PlaceOfInstallation = strPlace;
+                    oInput.UserStruct = strUser;
+                    lstResult.Add(oInput);
+                }
+            }
+            _logger.Log("[INFO] клеммников для дерева: " + lstResult.Count +
+                " (обход " + arrPages.Length + " стр.)");
+            return lstResult;
+        }
+
+        /// <summary>rev.17: есть ли уже клеммник с таким полным ОУ во входе
+        /// дерева (локальный перебор — List.Contains по объекту не годится).</summary>
+        private static bool ContainsStripInput(List<StripNodeInput> lstInputs, string strFullName)
+        {
+            foreach (StripNodeInput oInput in lstInputs)
+                if (oInput != null && oInput.FullName == strFullName) return true;
+            return false;
+        }
+
+        /// <summary>rev.17: чтение одного структурного блока (главный + до 9
+        /// подчинённых, напр. 1100/1101..) и склейка НЕпустых сегментов через
+        /// '.' — обратная к SplitSegments ('HII-1' + '1' → 'HII-1.1'). Первый
+        /// пустой сегмент обрывает цепочку (дальше — иной уровень). Любой отказ
+        /// чтения — пустая строка (гейт вызывающей стороны уведёт в фоллбэк).</summary>
+        private static string ReadStructureValue(TerminalStrip oStrip, int nBaseId)
+        {
+            string strJoined = "";
+            for (int i = 0; i < 10; i++)
+            {
+                string strSeg = SafeStripPropText(oStrip, nBaseId + i);
+                if (strSeg.Length == 0) break;
+                if (strJoined.Length > 0) strJoined += ".";
+                strJoined += strSeg;
+            }
+            return strJoined;
+        }
+
+        /// <summary>rev.17: одно свойство TerminalStrip по номеру (образец
+        /// EplanTerminalStripReader.SafePropText: id — CreateAnyPropertyIdFromNumber,
+        /// чтение Properties[AnyPropertyId]; null id / пусто / исключение — "").
+        /// TerminalStrip : Function, Properties — TerminalStripPropertyListComplete
+        /// (UniversalPropertyList: индексатор по AnyPropertyId).</summary>
+        private static string SafeStripPropText(TerminalStrip oStrip, int nNumber)
+        {
+            try
+            {
+                AnyPropertyId oId = CableSymbolCreator.CreateAnyPropertyIdFromNumber(nNumber);
+                if (oId == null) return "";
+                PropertyValue oValue = oStrip.Properties[oId];
+                if (oValue == null || oValue.IsEmpty) return "";
+                string strValue = oValue.ToString();
+                return strValue == null ? "" : strValue;
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>rev.17: префиксная склейка четырёх структурных частей
+        /// (порядок '=' → '++' → '+' → '#'; пустые уровни пропущены) — для
+        /// гейта согласованности структуры с полным ОУ.</summary>
+        private static string StructurePrefix(string strPlant, string strMount,
+            string strPlace, string strUser)
+        {
+            string strPrefix = "";
+            if (!string.IsNullOrEmpty(strPlant)) strPrefix += "=" + strPlant;
+            if (!string.IsNullOrEmpty(strMount)) strPrefix += "++" + strMount;
+            if (!string.IsNullOrEmpty(strPlace)) strPrefix += "+" + strPlace;
+            if (!string.IsNullOrEmpty(strUser)) strPrefix += "#" + strUser;
+            return strPrefix;
+        }
+
+        /// <summary>rev.17: начинается ли остаток ОУ со структурного префикса
+        /// ('=' / '++' / '+' / '#') — признак неразобранного уровня структуры
+        /// (см. StripStructureTree.MatchPrefix; '++' раньше '+' не критично —
+        /// здесь достаточно факта совпадения).</summary>
+        private static bool StartsWithStructurePrefix(string strText)
+        {
+            if (string.IsNullOrEmpty(strText)) return false;
+            return strText.StartsWith("=", StringComparison.Ordinal) ||
+                   strText.StartsWith("++", StringComparison.Ordinal) ||
+                   strText.StartsWith("+", StringComparison.Ordinal) ||
+                   strText.StartsWith("#", StringComparison.Ordinal);
         }
 
         /// <summary>rev.12.5 (H-3b, «отчёт по выбранному клеммнику»): разрешение имени
@@ -1854,8 +2054,13 @@ namespace MyEplanActions
             int nRefs = ReferenceArrowCreator.CreateReferences(oPage, oGeom, oCableLayer, _logger);
             // rev.16.2: вставка точек разрыва BP (фича в обоих режимах; straight —
             // стрелку у линий не рисовать учтено в ReferenceArrowCreator).
+            // rev.17 (Task 7): выбор профилей .emc пользователем — 6 слотов из
+            // настроек (UI). Headless-путь (Run(), ~стр. 536) остаётся без
+            // selections (дефолт null → legacy-константы Emc*, байт-идентично).
+            BpProfileSelections oBpProfileSelections = BuildBpProfileSelections();
             int nBp = BreakPointSymbolCreator.CreateBreakPoints(oPage, oGeom,
-                bVerticalSym, BreakPointSymbolCreator.ResolvePointFolder(), _logger);
+                bVerticalSym, BreakPointSymbolCreator.ResolvePointFolder(), _logger,
+                oBpProfileSelections);
             _logger.Summarize("Фаза G: линий " + nLines + "/" + oGeom.Segments.Count +
                 ", символов " + nSymbols + "/" + oGeom.Symbols.Count +
                 ", ссылок " + nRefs + "/" + oGeom.References.Count +
@@ -1870,6 +2075,40 @@ namespace MyEplanActions
             // (урок п.48 — не засорять страницу); на счётчики этапов 1–5 не влияет.
             SymbolBoxProbe.Probe(oPage, oProject, _logger);
             return true;
+        }
+
+        /// <summary>rev.17 (Task 7): раскладка выбранных пользователем профилей
+        /// .emc из _oSettings по 6 слотам BP (BpProfileSelections). Каждое поле
+        /// настроек — строка EncodeSelection 'файл|имя схемы'; пусто/невалидно
+        /// (TryDecodeSelection false) → слот null (BP с дефолтным отображением,
+        /// штатно). Потребитель — RunPipeline (UI-ветка); headless Run() не
+        /// вызывает (selections = null).</summary>
+        private BpProfileSelections BuildBpProfileSelections()
+        {
+            BpProfileSelections oSelections = new BpProfileSelections();
+            oSelections.StripH = DecodeEmcProfile(_oSettings.EmcStripH);
+            oSelections.StripV = DecodeEmcProfile(_oSettings.EmcStripV);
+            oSelections.DeviceH = DecodeEmcProfile(_oSettings.EmcDeviceH);
+            oSelections.DeviceV = DecodeEmcProfile(_oSettings.EmcDeviceV);
+            oSelections.LinkH = DecodeEmcProfile(_oSettings.EmcLinkH);
+            oSelections.LinkV = DecodeEmcProfile(_oSettings.EmcLinkV);
+            return oSelections;
+        }
+
+        /// <summary>rev.17: строка настройки 'файл|имя схемы' → EmcSchemeInfo
+        /// (File/SchemeName), невалидно/пусто → null. Вариант (Variant) не
+        /// восстанавливается: потребителю (BpProfileSelections.For → ApplyEmcScheme)
+        /// он не нужен.</summary>
+        private static EmcSchemeInfo DecodeEmcProfile(string strValue)
+        {
+            string strFile;
+            string strScheme;
+            if (!EmcProfileCatalog.TryDecodeSelection(strValue, out strFile, out strScheme))
+                return null;
+            EmcSchemeInfo oInfo = new EmcSchemeInfo();
+            oInfo.File = strFile;
+            oInfo.SchemeName = strScheme;
+            return oInfo;
         }
 
         private static short SafeLayerId(GraphicalPlacement oPlacement)
