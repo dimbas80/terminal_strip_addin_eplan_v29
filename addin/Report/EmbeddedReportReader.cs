@@ -51,10 +51,12 @@ namespace MyEplanActions
         }
 
         // Тип отчёта НЕ фиксируем: «Схема подключения клемм» (f11) — НЕ TerminalDiagram
-        // (rev.6). Перебираем приоритетные типы + всё Terminal*/Interconnect* из enum.
+        // (rev.6: форма в проекте есть, но с этим типом S029153 «Форма не найдена»;
+        // 6 пробных комбинаций × 2 WARN = 12 строк шума в логе, не ошибка).
+        // TerminalDiagram исключён явно (blacklist) в приоритетном списке И в
+        // generic-цикле ниже: он содержит «Terminal» и без blacklist вернулся бы.
         private static readonly string[] REPORT_TYPE_NAME_PRIORITY = new string[]
         {
-            "TerminalDiagram",
             "TerminalConnectiondiagram",
             "InterconnectDiagram",
             "TerminalLineupDiagram",
@@ -75,7 +77,8 @@ namespace MyEplanActions
             foreach (string strName in lstAllNames)
             {
                 if ((strName.Contains("Terminal") || strName.Contains("Interconnect")) &&
-                    strName != "Invalid" && strName != "Undefined")
+                    strName != "Invalid" && strName != "Undefined" &&
+                    strName != "TerminalDiagram")
                 {
                     DocumentTypeManager.DocumentType eType =
                         (DocumentTypeManager.DocumentType)Enum.Parse(oEnumType, strName);
