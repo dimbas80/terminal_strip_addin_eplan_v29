@@ -47,7 +47,7 @@ namespace MyEplanActions
             return lst;
         }
 
-        /// <summary>Вариант символа BP для слота: StripH/DeviceH → A(0),
+        /// <summary>Вариант символа BPIN для слота: StripH/DeviceH → A(0),
         /// StripV/DeviceV → D(3), LinkH → E(4), LinkV → B(1). Значения — из
         /// констант AddInConfiguration (числа не хардкодим). Неизвестный слот
         /// (приведение произвольного int) → -1 — сентинел «нет варианта»,
