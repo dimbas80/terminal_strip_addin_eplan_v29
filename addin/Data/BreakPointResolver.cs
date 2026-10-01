@@ -41,9 +41,9 @@ namespace MyEplanActions
 
         /// <summary>Имя устройства в полном DT — хвост после ПОСЛЕДНЕГО дефиса
         /// (примеры стенда: '=HII-1.1++ЯЧ67+#1-X2' → 'X2'). null/пустой → "".
-        /// Паттерн ParseDeviceTag (CableSymbolCreator) — тут нужен только блок
-        /// имени, остальные блоки не разбираются (не используются правилами).</summary>
-        private static string DeviceNameOf(string strDt)
+        /// Публично с прод-волны rev.16.2: путь B (WriteBpDeviceTag) берёт
+        /// имя/код/счётчик прямо из собранного ComposeBpDeviceTag.</summary>
+        public static string DeviceNameOf(string strDt)
         {
             if (string.IsNullOrEmpty(strDt)) return "";
             int nDash = strDt.LastIndexOf('-');
@@ -52,8 +52,9 @@ namespace MyEplanActions
 
         /// <summary>Буквенный код / счётчик имени устройства: ведущие нецифровые
         /// — код, хвост-цифры — счётчик (паттерн SplitDeviceTagLetterCounter).
-        /// Без цифр — всё в код, счётчик ""; имя начинается с цифры — всё в код.</summary>
-        private static void SplitLetterCounter(string strName, out string strCode, out string strCounter)
+        /// Без цифр — всё в код, счётчик ""; имя начинается с цифры — всё в код.
+        /// Публично с прод-волны rev.16.2 (путь B — WriteBpDeviceTag).</summary>
+        public static void SplitLetterCounter(string strName, out string strCode, out string strCounter)
         {
             strCode = strName ?? "";
             strCounter = "";
