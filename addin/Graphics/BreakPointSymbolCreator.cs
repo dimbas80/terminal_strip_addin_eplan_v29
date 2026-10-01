@@ -70,6 +70,21 @@ namespace MyEplanActions
                 }
             }
             catch { }
+            // Внешний кандидат (01.10): папки из Diagnostics (лог/настройки
+            // живут в D:\…\Сценарии\terminal_strip_addin — РЯДОМ с реальной
+            // сборкой; CodeBase может указывать в иное место после регистрации
+            // аддина в EPLAN). Первый существующий.
+            foreach (string strCandidate in DiagnosticLogger.LOG_DIR_CANDIDATES)
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(strCandidate)) continue;
+                    string strTryLog = Path.Combine(strCandidate,
+                        AddInConfiguration.PointSchemeFolder);
+                    if (Directory.Exists(strTryLog)) return strTryLog;
+                }
+                catch { }
+            }
             return null;
         }
 
@@ -99,6 +114,8 @@ namespace MyEplanActions
             }
             if (string.IsNullOrEmpty(strPointFolder))
                 log.Warn("[BP] папка point/ не разрешена — наборы .emc не применяются");
+            else
+                log.Log("[INFO] [BP] папка наборов point/ = '" + strPointFolder + "'");
 
             // rev.16.2 (01.10): скан point/ НА СТАРТЕ (до первой вставки) —
             // A2453/A2454 всех *.emc. Пусто/нечитаемо — WARN, вставки БЕЗ набора.
@@ -195,7 +212,10 @@ namespace MyEplanActions
 
         private static string WriteBpDeviceTagPreview(BreakPointPlacement oBp)
         {
-            return BreakPointResolver.ComposeBpDeviceTag(oBp.OppositeDt, oBp.CableName) ?? "<нечитаемо>";
+            // ОУ одинаков с WriteBpDeviceTag (multi — кабель как есть).
+            return oBp.Multi
+                ? (oBp.CableName ?? "<нечитаемо>")
+                : (BreakPointResolver.ComposeBpDeviceTag(oBp.OppositeDt, oBp.CableName) ?? "<нечитаемо>");
         }
 
         /// <summary>Набор отображения (.emc) — Import + Selected. Выбор ТОЛЬКО
@@ -341,34 +361,36 @@ namespace MyEplanActions
 
         /// <summary>ОУ на InterruptionPoint — путь B (вердикт S4-v11; Sepla
         /// InterruptionPointUtility.RenameAll): LockObject + NameParts =
-        /// offline-список (FUNC_CODE #20013 = код, FUNC_COUNTER #20014 =
-        /// счётчик имени) + AdjustVisibleName(Page, FunctionBase) (KB,
-        /// перегрузка есть; rev.12.9-паттерн). Структура НЕ пишется —
-        /// платформа наследует от страницы отчёта (S4 readback
-        /// '=+++#-K190(EXT)'). Полное ОУ — ComposeBpDeviceTag (null — WARN,
-        /// вставлен с пустым ОУ). Объект — SymbolReference от Create (S1);
-        /// каст в InterruptionPoint (S4: OK); не кастуется (другой производный
-        /// тип) — WARN, ОУ не записано.</summary>
+        /// offline-список + AdjustVisibleName(Page, FunctionBase) (KB,
+        /// перегрузка есть; rev.12.9-паттерн). ОУ: multi (шинный BP) — ПОЛНОЕ
+        /// ОУ САМОГО КАБЕЛЯ (CableName) без суффикса — решение пользователя
+        /// 01.10 (стенд); прямой — ComposeBpDeviceTag (структура обратного
+        /// конца + код кабеля + '(EXT)' / устройство как есть). Структура
+        /// пишется ЯВНО (правило 4, стенд 01.10: страница отчёта структуру
+        /// НЕ наследует). Объект — SymbolReference от Create (S1); каст в
+        /// InterruptionPoint (S4: OK); не кастуется — WARN, ОУ не записано.</summary>
         private static void WriteBpDeviceTag(SymbolReference oRef,
             BreakPointPlacement oBp, Page oPage, DiagnosticLogger log)
         {
             string strCable = oBp.CableName ?? "<без имени>";
-            string strDtBp = BreakPointResolver.ComposeBpDeviceTag(
-                oBp.OppositeDt, oBp.CableName);
+            // ОУ: multi (шинный BP) — полное ОУ САМОГО кабеля без (EXT)
+            // (решение 01.10: '=HII-1.1++М+#2-K140'); прямой — правило BP.
+            string strDtBp = oBp.Multi
+                ? oBp.CableName
+                : BreakPointResolver.ComposeBpDeviceTag(oBp.OppositeDt, oBp.CableName);
             if (string.IsNullOrEmpty(strDtBp))
             {
                 log.Warn("[BP] '" + strCable + "': ОУ не составлено (OppositeDt / имя кабеля пусты) — BP с пустым ОУ");
                 return;
             }
-            // BreakPointResolver: имя = хвост после последнего '-'; код —
-            // ведущие нецифровые, счётчик — хвост (хелперы там же, теперь
-            // public — путь B потребляет их напрямую).
-            string strCode, strCounter;
-            BreakPointResolver.SplitLetterCounter(
-                BreakPointResolver.DeviceNameOf(strDtBp), out strCode, out strCounter);
+            // BreakPointResolver: имя = хвост после последнего '-'; полный
+            // offline-список частей — CableSymbolCreator.BuildNamePartList
+            // (структура 1100/1400/1200/1600 + код/счётчик 20013/20014);
+            // правка стенда 01.10: только имена дали «K190(EXT)» без структуры
+            // — страница отчёта структуру НЕ наследует, пишем ЯВНО.
             try
             {
-                // C1/M1-ревью: каст ПЕРЕД построением parts (не-IP — части не нужны).
+                // C1/M1-ревью: каст ПЕРЕД сборкой частей (не-IP — части не нужны).
                 InterruptionPoint oIp = oRef as InterruptionPoint;
                 if (oIp == null)
                 {
@@ -376,9 +398,8 @@ namespace MyEplanActions
                         oRef.GetType().Name + ") — ОУ не записано");
                     return;
                 }
-                FunctionBasePropertyList oParts = new FunctionBasePropertyList();
-                SetNamePart(oParts, 20013, strCode, log, strCable);
-                SetNamePart(oParts, 20014, strCounter, log, strCable);
+                FunctionBasePropertyList oParts =
+                    CableSymbolCreator.BuildNamePartList(strDtBp, log);
                 oIp.LockObject();
                 oIp.NameParts = oParts;
                 NameService oNamesSvc = new NameService();
@@ -396,28 +417,5 @@ namespace MyEplanActions
             }
         }
 
-        /// <summary>oParts[nId] = значение (паттерн CableSymbolCreator.SetNamePart;
-        /// коротко: только WARN, без fallback — путь B сам отберёт пустые
-        /// части).</summary>
-        private static void SetNamePart(FunctionBasePropertyList oParts, int nProp,
-            string strValue, DiagnosticLogger log, string strCable)
-        {
-            if (string.IsNullOrEmpty(strValue)) return;
-            try
-            {
-                AnyPropertyId oId = CableSymbolCreator.CreateAnyPropertyIdFromNumber(nProp);
-                if (oId == null)
-                    throw new InvalidOperationException(
-                        "CreateAnyPropertyIdFromNumber(" +
-                        nProp.ToString(CultureInfo.InvariantCulture) + ") вернул null");
-                oParts[oId] = (PropertyValue)strValue;
-            }
-            catch (Exception oEx)
-            {
-                log.Warn("[BP-ERR] '" + strCable + "': часть " +
-                    nProp.ToString(CultureInfo.InvariantCulture) + " ('" + strValue +
-                    "'): " + oEx.GetType().Name + ": " + oEx.Message);
-            }
-        }
     }
 }

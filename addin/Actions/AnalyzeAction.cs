@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;   // SPIKE-2 fix-1: reflection-проба сигнатуры/возврата Execute
@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-09-30 Этап 8 rev.16.0 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=Ext+Int (ConnCount), фоллбэк nTerminals; фоллбэк размера — эвристика n×pitch; rev.15.7: ориентация из ВЫРАВНИВАНИЯ ФОРМЫ P13008 (1=по столбцам=Horizontal, 0=по строкам=Vertical; решение 30.09); ResolveOrientation (имя/диалог) — фоллбэк; rev.15.13: поиск .f11 — запись мастер-данных (голое имя) резолвится против $(MD_FORMS) = каталог форм ИЗ АКТИВНОЙ СХЕМЫ настроек (Options > Settings > User > Management > Directories, PathMap.SubstitutePath), затем Paths.Forms (дефолт); ProjectDirectoryPath удалён (формы в каталоге проекта не хранятся); rev.15.13: СПИСОК ФОРМ диалога = скан каталога из настроек ($(MD_FORMS) активной схемы, Directory.GetFiles *.f11; решение пользователя 30.09 — пользователь выбирает форму, доступную в текущем каталоге); пулы мастер-данных — фоллбэк (схемо-независимы, прогон 10:57: один список в обеих схемах). rev.15.12 вердикт: $(MD_FORMS) следует активной схеме (Яндекс→270.5×180+отчёт; Стандартные→WARN+эвристика штатно); спайк удалён; rev.16.0: свойство блока символа кабеля 20202[x] — BlockFormat1/2 (20211,1=источник / 20211,2=цель), BlockFormatIndex, сверка через Кабели:источник 20376 / Кабели:цель 20377 × поле клеммника 1429 (Contains); наш конец=источник → писать 20211,2, наш=цель → 20211,1 (правило 30.09); запись в CableSymbolCreator (typed-индексатор → PropertyValue-fallback); фича off при пустых строках; rev.16.1: чтение 20376/20377 — ТОЛЬКО с главного определения функции (#20122 TRUE): чекбокс 20064 «Кабель: заменить источник и цель» на определениях-двойниках меняет их 20376/20377 → решение нестабильно (стенд p1/p2); SUM считает УНИКАЛЬНЫЕ кабели; rev.16.2: точка разрыва BP «8 / BP» (SPECIAL, реш. 30.09) на обратном конце линии-ссылки (остриё) и на обратном конце шины (multi G/F): классификация конца BreakPointResolver (первая буква кода X/Х — клеммник, иначе устройство), чтение концов 20376/20377 с главного определения (ResolveCableEnds), ОУ BP = структура обратного конца + код кабеля + «(EXT)» / ОУ устройства как есть (NameParts), набор отображения .emc — SymbolReference.PropertyPlacementsSchemasList.Import из point/ рядом со сборкой (верификация Import — spike S1), стрелка PolyLine у прямых BP не строится; фича в UI и headless";
+        private const string BUILD_STAMP = "2026-10-01 Этап 8 rev.16.2 прод-волна (BP точка разрыва «8/BP» SPECIAL: вставка SymbolReference.Create→InterruptionPoint (Function.Create=S063085 навсегда, спайк S1); наборы .emc point/ — скан + парс A2453(вариант)/A2454(имя), выбор по kind-константе И варианту, Import из чужого варианта — тихий no-op (S2), Import идемпотентен на каждый BP + Selected по A2454 (S1); ОУ полное — путь B Sepla (S4): LockObject + NameParts (структура 1100/1400/1200/1600 + код 20013 + счётчик 20014) + AdjustVisibleName; папка point/ — bin → CodeBase (shadow-copy, S1) → каталоги лога; multi — ДВА BP (G/F на дальнем конце шины + A/H на острие линии, стрелка у BP-линий не строится — стенд 01.10); Формат блока 20202[x] УДАЛЁН целиком (реш. 01.10: запись BlockFormat*, слот, сверка 1429, тесты) — чтение 20376/20377 ОСТАЛОСЬ (BP-классификация); rev.16.1: чтение 20376/20377 только с главного определения (#20122 TRUE; 20064-двойники меняли значения — стенд p1/p2); rev.16.0–15.x: см. логи/коммиты) ";
 
         // rev.14.14: однократная установка хуков исключений + статическая ссылка
         // на логгер текущего прогона (хуки статические — экземпляра в них нет).
@@ -85,6 +85,13 @@ namespace MyEplanActions
         // читаются сводкой [SETTINGS] после загрузки; потребители
         // появятся в H-2 (диалог/режим UI).
         private AddInSettings _oSettings;
+
+        // rev.16.2 (решение пользователя 01.10): точка вставки отчёта (клик
+        // пользователя, TryPickInsertPoint) — ось этой точки задаёт хвост
+        // шинного BP («точка вставки + 20мм» по оси шины). Дефолт — конфиг
+        // (headless-путь не кликает).
+        private double _dInsertPointX = AddInConfiguration.InsertX;
+        private double _dInsertPointY = AddInConfiguration.InsertY;
 
         // H-2: кандидаты каталога настроек (те же, что у AddInSettings.Load в
         // Execute) — нужны UI-ветке для сохранения после успешной генерации.
@@ -106,7 +113,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.16.0 (призрак: курсор=левый ВЕРХНИЙ угол — ResolveAnchorSpans (+X,−Y); размер из ПАРСИНГА .f11 [GHOST-SIZE]: шапка + N_строк×колонка_данных + футер + зазор_кабелей GhostCableGapMm=100 (ALONG), высота шаблона (ACROSS); N строк=Ext+Int (ConnCount), фоллбэк nTerminals; фоллбэк размера — эвристика n×pitch; rev.15.7: ориентация из ВЫРАВНИВАНИЯ ФОРМЫ P13008 (1=по столбцам=Horizontal, 0=по строкам=Vertical; решение 30.09); ResolveOrientation (имя/диалог) — фоллбэк; rev.15.13: поиск .f11 — запись мастер-данных (голое имя) резолвится против $(MD_FORMS) = каталог форм ИЗ АКТИВНОЙ СХЕМЫ настроек (Options > Settings > User > Management > Directories, PathMap.SubstitutePath), затем Paths.Forms (дефолт); ProjectDirectoryPath удалён (формы в каталоге проекта не хранятся); rev.15.13: СПИСОК ФОРМ диалога = скан каталога из настроек ($(MD_FORMS) активной схемы, Directory.GetFiles *.f11; решение пользователя 30.09 — пользователь выбирает форму, доступную в текущем каталоге); пулы мастер-данных — фоллбэк (схемо-независимы, прогон 10:57: один список в обеих схемах). rev.15.12 вердикт: $(MD_FORMS) следует активной схеме (Яндекс→270.5×180+отчёт; Стандартные→WARN+эвристика штатно); спайк удалён; rev.16.0: свойство блока символа кабеля 20202[x] — BlockFormat1/2 (20211,1=источник / 20211,2=цель), BlockFormatIndex, сверка через Кабели:источник 20376 / Кабели:цель 20377 × поле клеммника 1429 (Contains); наш конец=источник → писать 20211,2, наш=цель → 20211,1 (правило 30.09); запись в CableSymbolCreator (typed-индексатор → PropertyValue-fallback); фича off при пустых строках; rev.16.1: чтение 20376/20377 — ТОЛЬКО с главного определения функции (#20122 TRUE): чекбокс 20064 «Кабель: заменить источник и цель» на определениях-двойниках меняет их 20376/20377 → решение нестабильно (стенд p1/p2); SUM считает УНИКАЛЬНЫЕ кабели; rev.16.2: точка разрыва BP «8 / BP» (SPECIAL, реш. 30.09) на обратном конце линии-ссылки (остриё) и на обратном конце шины (multi G/F): классификация конца BreakPointResolver (первая буква кода X/Х — клеммник, иначе устройство), чтение концов 20376/20377 с главного определения (ResolveCableEnds), ОУ BP = структура обратного конца + код кабеля + «(EXT)» / ОУ устройства как есть (NameParts), набор отображения .emc — SymbolReference.PropertyPlacementsSchemasList.Import из point/ рядом со сборкой (верификация Import — spike S1), стрелка PolyLine у прямых BP не строится; фича в UI и headless", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.16.2 прод-волна (см. BUILD_STAMP)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -456,6 +463,11 @@ namespace MyEplanActions
                 }
                 if (!double.IsInfinity(dExtreme)) dStripEndAxis = dExtreme;
             }
+            // rev.16.2: ось ТОЧКИ ВСТАВКИ ОТЧЁТА (headless — конфиг InsertX/Y) —
+            // хвост шинного BP тянется до «ось вставки + 20мм» в сторону отчёта.
+            oGeomCfg.InsertOriginAxisMm = AddInConfiguration.Orientation == ReportOrientation.Vertical
+                ? AddInConfiguration.InsertY
+                : AddInConfiguration.InsertX;
             CableGeometryResult oGeom = CableGeometryBuilder.Build(
                 oLayout, AddInConfiguration.Orientation, oGeomCfg, dStripEndAxis,
                 lstBpFlags, lstBpMulti);   // rev.16.2: BP-списки (фича в двух режимах)
@@ -735,6 +747,12 @@ namespace MyEplanActions
                     double dPointY = 0.0;
                     bool bPointPicked = TryPickInsertPoint(oProject, oPage, oTargetStrip,
                         strForm, eMode, oReader, strStrip, out dPointX, out dPointY);
+                    if (bPointPicked)
+                    {
+                        // rev.16.2: точка вставки отчёта — для хвоста шинного BP.
+                        _dInsertPointX = dPointX;
+                        _dInsertPointY = dPointY;
+                    }
                     if (!bPointPicked)
                     {
                         if (InsertPointInteraction.Cancelled)
@@ -1674,25 +1692,9 @@ namespace MyEplanActions
             _logger.Summarize("Фаза E: кабелей " + oLayout.Cables.Count +
                 ", проводных " + oLayout.NoCableConnections.Count + ".");
 
-            // --- 11.5. Фаза I: BlockFormatResolver — свойство блока символа
-            // кабеля (rev.16.0, Task 3): сбор №1429 «Место сборки (видимое)»
-            // обоих концов каждого кабеля и выбор строки формата (чистый
-            // BlockPropMath.Decide). Словарь потребляет Task 4
-            // (CableSymbolCreator при вставке символов); отсутствие ключа =
-            // для кабеля НЕ писать. Headless-Run() этот шаг не вызывает.
-            bool bBlockFmtUserError;
-            Dictionary<string, string> dicBlockFmt = BlockFormatResolver.Resolve(
-                oProject, _logger, _oSettings, strTargetStripName, out bBlockFmtUserError);
-            if (bBlockFmtUserError)
-            {
-                // Конфликт значений №1429 у клемм источника (UserError-сценарий,
-                // решение пользователя): один общий MessageBox на прогон, список
-                // клемм НЕ дублируется в текст — он построчно в [BLOCKFMT-ERR].
-                // MINOR-4: RunPipeline вызывается только из UI-ветки (headless —
-                // отдельная ветка Run() без гейта), MessageBox здесь уместен.
-                MessageBox.Show("У клемм некоторых кабелей разные значения «Место сборки» — см. [BLOCKFMT-ERR] в логе.\n\nСвойство блока для этих кабелей не записано. Исправьте клеммы и повторите генерацию.",
-                    UI_CAPTION, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
+            // --- 11.5. rev.16.2 (01.10): BlockFormatResolver.Resolve (запись
+            // 20202[x]) УДАЛЕНА — «Формат блока» не используется; чтение
+            // 20376/20377 остаётся для BP ниже.
 
             // --- 12. Фаза F: CableGeometryBuilder — чистая геометрия кабельной разводки ---
             // rev.10.7 (шаг 4 Фазы G, решение пользователя 23.09.2026): размер рабочего
@@ -1778,16 +1780,23 @@ namespace MyEplanActions
                 }
                 if (!double.IsInfinity(dExtreme)) dStripEndAxis = dExtreme;
             }
+            // rev.16.2: ось ТОЧКИ ВСТАВКИ ОТЧЁТА (UI — клик пользователя,
+            // _dInsertPoint*) — хвост шинного BP до «ось вставки + 20мм».
+            oGeomCfg.InsertOriginAxisMm = eOrientation == ReportOrientation.Vertical
+                ? _dInsertPointY
+                : _dInsertPointX;
             CableGeometryResult oGeom = CableGeometryBuilder.Build(
                 oLayout, eOrientation, oGeomCfg, dStripEndAxis,
                 lstBpFlags, lstBpMulti);   // rev.16.2: BP-списки (фича в двух режимах)
 
-            // rev.16.2 (Task 4): начинка BreakPointPlacement (OppositeDt/Kind) —
+            // rev.16.2 (01.10): начинка BreakPointPlacement (OppositeDt/Kind) —
             // решения по dicEnds; потребляет BreakPointSymbolCreator.
             for (int i = 0; i < oGeom.BreakPoints.Count; i++)
             {
-                BreakPointDecision oDec = lstDecisions.Count > oGeom.BreakPoints[i].CableIndex
-                    ? lstDecisions[oGeom.BreakPoints[i].CableIndex] : null;
+                if (oGeom.BreakPoints[i] == null) continue;
+                int nIdx = oGeom.BreakPoints[i].CableIndex;
+                if (nIdx < 0 || nIdx >= lstDecisions.Count) continue;
+                BreakPointDecision oDec = lstDecisions[nIdx];
                 if (oDec == null) continue;
                 string[] arrEndsForBp;
                 string strCableKey = oGeom.BreakPoints[i].CableName;
@@ -1797,18 +1806,6 @@ namespace MyEplanActions
                         (strStripOwnDt == arrEndsForBp[0]) ? arrEndsForBp[1] : arrEndsForBp[0];
                     oGeom.BreakPoints[i].Kind = oDec.Kind;
                 }
-            }
-
-            // rev.16.0 (Task 4): начинка поля BlockFormat у символов — строка
-            // формата из словаря BlockFormatResolver (Task 3). Нет ключа (или
-            // бинарный случай, CableName == null) — поле остаётся null, символ
-            // создаётся без записи 20202[x].
-            foreach (CableSymbolPlacement oSym in oGeom.Symbols)
-            {
-                if (oSym.CableName == null) continue;
-                string strFmt;
-                if (dicBlockFmt.TryGetValue(oSym.CableName, out strFmt))
-                    oSym.BlockFormat = strFmt;
             }
 
             foreach (CableSymbolPlacement oSym in oGeom.Symbols)
@@ -1850,7 +1847,7 @@ namespace MyEplanActions
             // ориентации + его компенсация центра (dx,dy) из замера [SYMSIZE-OFF].
             int nSymbols = CableSymbolCreator.CreateSymbols(oPage, oGeom, _logger,
                 _oSettings.SymbolLibrary, _oSettings.SymbolName, nSymbolVariant,
-                dSymOffX, dSymOffY, _oSettings.BlockFormatIndex);
+                dSymOffX, dSymOffY);
             // rev.11.0: линии-ссылки от символов — линия + замкнутая
             // PolyLine-стрелка с заливкой (решение пользователя 23.09.2026);
             // слой и перо — как у линий разводки.

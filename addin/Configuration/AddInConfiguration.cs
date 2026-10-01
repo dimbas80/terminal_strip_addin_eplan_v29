@@ -175,18 +175,11 @@ namespace MyEplanActions
         // ожидания SPIKE-8 (AnalyzeAction, кап 120 с на интеракцию спайка).
         public const int SelectPointTimeoutSec = 120;
 
-        // rev.16.0 (спека docs/superpowers/specs/2026-09-30-blockprop-format-design.md §3):
-        // строки формата свойства блока («Свойство блока: Формат [x]» символа кабеля;
-        // "" или не задана = механизм отключён), индекс слота [1..100], номер свойства
-        // сверки «Место сборки (видимое)».
-        // Конвенция №1/№2 — РЕВИЗИЯ 30.09 по факту стенда rev.16.0: 20211,1 → XT1
-        // (++ПУ чужая), 20211,2 → X2 (++ЯЧ67 своя); см. прогон 14:17+ — same → №2,
-        // cross → №1 (fix round 3). Значения строк НЕ менялись — затронута только
-        // логика выбора в BlockPropMath (same->fmt2 / cross->fmt1).
-        public const string BlockFormat1Default = "[20205,1,2<20211,1<20133<1002,0,0,0,0,0,0,0,0,ru_RU,0,0,0,0,0,0,0>>>]";
-        public const string BlockFormat2Default = "[20205,1,2<20211,2<20133<1002,0,0,0,0,0,0,0,0,ru_RU,0,0,0,0,0,0,0>>>]";
-        public const int BlockFormatIndexDefault = 1;
-        public const int BlockComparePropDefault = 1429;
+        // rev.16.2 (решение 01.10, стенд): фича «Формат блока» (запись 20202[x]
+        // на символ кабеля; строки BlockFormat1/2, слот BlockFormatIndex,
+        // сверка 1429 BlockCompareProp) УДАЛЕНА целиком — «теперь не
+        // используется». Чтение 20376/20377 (BlockCabSourceProp/BlockCabTargetProp)
+        // ОСТАЛОСЬ — на нём сидит классификация BP (BreakPointResolver).
 
         // Fix round 4 (rev.16.x, справка EPLAN 20376/20377): у кабеля есть
         // свойства «Кабели: источник» (№20376) и «Кабели: цель» (№20377) —
@@ -226,6 +219,15 @@ namespace MyEplanActions
         public const string EmcMultiStripH = "ТР_кабель(int_горизонт).emc";
         public const string EmcMultiStripV = "ТР_кабель(int_вертик).emc";
         public const string BreakPointSuffix = "(EXT)";
+
+        /// <summary>rev.16.2 (стенд 01.10, решение пользователя): шинный BP
+        /// (multi) выводится ЗА пределы клеммника — в шапку: хвост шины тянется
+        /// до точки «не доходя BreakPointHeaderGapMm (20)» до крайней клеммной
+        /// колонки блока (BreakPointHeaderGapMm-зазор от подписей выводов).
+        /// Фолбэк (ось блока не передана/вырождена) — короткий хвост
+        /// BreakPointBusTailMm (3.25 = полширины символа BP 2.25 + зазор 1).</summary>
+        public const double BreakPointHeaderGapMm = 20.0;
+        public const double BreakPointBusTailMm = 3.25;
 
     }
 }

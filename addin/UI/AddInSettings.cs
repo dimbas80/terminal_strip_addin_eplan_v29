@@ -74,23 +74,9 @@ namespace MyEplanActions
         /// AddInConfiguration.SymbolVariant, спека §2 п.7).</summary>
         public int VariantV;
 
-        /// <summary>Строка формата свойства блока №1 («Свойство блока: Формат [x]»
-        /// символа кабеля; "" или не задана = механизм откл.) — дефолт
-        /// AddInConfiguration.BlockFormat1Default.</summary>
-        public string BlockFormat1;
-
-        /// <summary>Строка формата свойства блока №2 (та же строка формата,
-        /// "" или не задана = механизм откл.) — дефолт
-        /// AddInConfiguration.BlockFormat2Default.</summary>
-        public string BlockFormat2;
-
-        /// <summary>Индекс слота формата свойства блока [1..100] (дефолт —
-        /// AddInConfiguration.BlockFormatIndexDefault).</summary>
-        public int BlockFormatIndex;
-
-        /// <summary>Номер свойства сверки «Место сборки (видимое)» (дефолт —
-        /// AddInConfiguration.BlockComparePropDefault).</summary>
-        public int BlockCompareProp;
+        /// <summary>Номер свойства сверки «Место сборки (видимое)» — УДАЛЕН
+        /// rev.16.2 (01.10): вся фича 20202 снята, сверка 1429 не нужна
+        /// (ResolveCableEnds для BP читает 20376/20377 без фильтра 1429).</summary>
 
         /// <summary>Режим выбора ориентации отчёта (дефолт — Auto:
         /// детекция из дерева отчёта).</summary>
@@ -113,10 +99,6 @@ namespace MyEplanActions
             SymbolName = AddInConfiguration.SymbolName;
             VariantH = AddInConfiguration.SymbolVariant;
             VariantV = AddInConfiguration.SymbolVariant;
-            BlockFormat1 = AddInConfiguration.BlockFormat1Default;
-            BlockFormat2 = AddInConfiguration.BlockFormat2Default;
-            BlockFormatIndex = AddInConfiguration.BlockFormatIndexDefault;
-            BlockCompareProp = AddInConfiguration.BlockComparePropDefault;
             OrientationMode = SettingsOrientation.Auto;
         }
 
@@ -214,14 +196,10 @@ namespace MyEplanActions
                     lstLines.Add("SymbolName=" + oSettings.SymbolName);
                 lstLines.Add("VariantH=" + oSettings.VariantH.ToString(CultureInfo.InvariantCulture));
                 lstLines.Add("VariantV=" + oSettings.VariantV.ToString(CultureInfo.InvariantCulture));
-                // rev.16.0 (спека §3): BlockFormat1/2 пишутся ВСЕГДА — пустое
-                // значение в файле = явное отключение механизма; off-состояние
-                // переживает цикл Save→Load (иначе ключи стёрлись бы, Load
-                // вернул бы дефолт и фича самопере-включилась бы).
-                lstLines.Add("BlockFormat1=" + oSettings.BlockFormat1);
-                lstLines.Add("BlockFormat2=" + oSettings.BlockFormat2);
-                lstLines.Add("BlockFormatIndex=" + oSettings.BlockFormatIndex.ToString(CultureInfo.InvariantCulture));
-                lstLines.Add("BlockCompareProp=" + oSettings.BlockCompareProp.ToString(CultureInfo.InvariantCulture));
+                // rev.16.2 (решение 01.10: «Формат блока — теперь не используется,
+                // удалить»): блок BlockFormat1/2/Index/BlockCompareProp и вся
+                // запись 20202[x] на символ кабеля удалены. Unknown-ключи старых
+                // settings-файлов Load пропускает молча (default-ветка).
                 lstLines.Add("OrientationMode=" + OrientationName(oSettings.OrientationMode));
                 foreach (KeyValuePair<string, double> oKv in oSettings._dicGridPitch)
                     lstLines.Add(GRID_PITCH_PREFIX + oKv.Key + "=" +
@@ -326,31 +304,9 @@ namespace MyEplanActions
                             oSettings.VariantV = iValue;
                         break;
                     }
-                // rev.16.0 (спека §3): пустое значение формата ЗАПИСЫВАЕТСЯ как ""
-                // (явное отключение фичи) — исключение из общего правила «известный
-                // ключ с пустым значением — пропуск»; Save пишет BlockFormat1/2
-                // ВСЕГДА, в т.ч. пустыми (см. Save) — off-состояние переживает
-                // цикл Save→Load.
-                case "BlockFormat1":
-                    oSettings.BlockFormat1 = strValue ?? "";
-                    break;
-                case "BlockFormat2":
-                    oSettings.BlockFormat2 = strValue ?? "";
-                    break;
-                case "BlockFormatIndex":
-                    {
-                        int i1;
-                        if (int.TryParse(strValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out i1))
-                            oSettings.BlockFormatIndex = i1;
-                        break;
-                    }
-                case "BlockCompareProp":
-                    {
-                        int i2;
-                        if (int.TryParse(strValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out i2))
-                            oSettings.BlockCompareProp = i2;
-                        break;
-                    }
+                // rev.16.2 (решение 01.10): ключи BlockFormat*/BlockCompareProp
+                // удалены — приходят из старых настроек → silently ignore
+                // (default-ветка «неизвестный ключ — пропуск»).
                 case "OrientationMode":
                     if (string.Equals(strValue, "Horizontal", StringComparison.OrdinalIgnoreCase))
                         oSettings.OrientationMode = SettingsOrientation.Horizontal;

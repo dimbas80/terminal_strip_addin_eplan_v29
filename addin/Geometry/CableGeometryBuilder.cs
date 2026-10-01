@@ -9,7 +9,8 @@ namespace MyEplanActions
     {
         public string CableName;         // имя кабеля или null (бинарный случай)
         public int CableIndex = -1;      // 0-based индекс в CableLayoutModel.Cables
-        public string BlockFormat;       // rev.16.0: строка «Свойство блока: Формат [x]» (20202[x]); null = не писать
+        // rev.16.2 (01.10): поле BlockFormat (строка формата 20202[x]) УДАЛЕНО —
+        // вся фича «Формат блока» снята (решение пользователя, стенд).
         public Pt Position;              // SymbolPosition, страничные координаты
     }
 
@@ -71,6 +72,13 @@ namespace MyEplanActions
     public sealed class CableGeometryConfig
     {
         public double BusOffsetMm = 10.0;          // отступ шины от крайних точек группы (perp)
+        // rev.16.2 (стенд 01.10, реш. пользователя): ось ТОЧКИ ВСТАВКИ ОТЧЁТА
+        // (клик пользователя, якорь верх-лево; H — X, V — Y). Хвост шинного BP
+        // тянется от конца шины до точки «InsertOriginAxis + 20мм» В СТОРОНУ
+        // отчёта (по оси шины) — BP в полосе шапки, вне зоны подписей выводов.
+        // NaN (по умолчанию) — фолбэк: короткий хвост BreakPointBusTailMm.
+        // Заполняет AnalyzeAction (UI — клик, headless — InsertX/InsertY конфига).
+        public double InsertOriginAxisMm = double.NaN;
         public double LevelPitchMinMm = 8.0;       // минимум шага уровней шин (perp; правило 2: расчётный = max(min, B·min/14))
         public double BusLiftMm = 8.0;             // подъём шины над отступом от кончиков выводов (perp; ревизия 4)
         public double ApproachOffsetMm = 10.0;     // отступ вертикали-подхода от края ряда (axis)
@@ -468,12 +476,19 @@ namespace MyEplanActions
                 if (bWithBp)
                 {
                     bool bBpMultiReq = lstMulti != null && nCable < lstMulti.Count && lstMulti[nCable];
-                    bool bBpMulti = bBpMultiReq;
                     string strBpName = oCable.Name ?? "<без имени>";   // rev.16.2: локальный контекст BP
-                    Pt? oBpPos = null;
+
+                    // Ссылка этого кабеля (создана AddReference строкой выше).
+                    ReferenceElement oRefStraight = null;
+                    if (oRes.References.Count > 0 &&
+                        oRes.References[oRes.References.Count - 1].CableIndex == nCable)
+                        oRefStraight = oRes.References[oRes.References.Count - 1];
+
+                    // Якорь шинного BP (multi-случай).
+                    Pt? oBusAnchor = null;
                     if (bBpMultiReq && bBilateral)
                     {
-                        // Якорь = обратный конец шины группы, НЕ несущей символ:
+                        // Обратный конец шины группы, НЕ несущей символ:
                         // symRow == busRight → Left, иначе → Right (rev.10.10 выбор).
                         Pt? oAnchor;
                         if (Math.Abs(arrSymRow[nCable] - arrBusRight[nCable]) <= EpsLen)
@@ -484,36 +499,89 @@ namespace MyEplanActions
                             oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
                                 "': multi-BP не возможен (шина противоположной группы пуста) — якорь прямой");
                         else
-                            oBpPos = oAnchor;
+                            oBusAnchor = oAnchor;
                     }
-                    if (oBpPos == null)
+
+                    if (oBusAnchor != null)
                     {
-                        // Прямой якорь (или multi не прошёл): остриё ссылки.
-                        if (oRes.References.Count > 0 &&
-                            oRes.References[oRes.References.Count - 1].CableIndex == nCable)
+                        // rev.16.2 (стенд 01.10, реш. пользователя): линию шины
+                        // ПРОДЛЕВАЕМ до точки «ось ТОЧКИ ВСТАВКИ ОТЧЁТА + 20мм»
+                        // (BreakPointHeaderGapMm) в сторону подхода — BP в полосе
+                        // шапки, вне зоны подписей выводов. Фолбэк (ось NaN /
+                        // вырождена / не с той стороны) — короткий хвост 3.25.
+                        double dAnchorAxis = AxisOf(oBusAnchor.Value, bV);
+                        int nSide = Math.Sign(dAnchorAxis - arrX[nCable]); // наружу от подхода
+                        double dInsertAxis = oCfg.InsertOriginAxisMm;
+                        bool bHeaderTail = !double.IsNaN(dInsertAxis) && nSide != 0 &&
+                            Math.Sign(dInsertAxis - arrX[nCable]) == nSide;
+                        double dTailEnd;
+                        if (bHeaderTail)
                         {
-                            oBpPos = oRes.References[oRes.References.Count - 1].Line.B;
-                            bBpMulti = false;
-                            oRes.References[oRes.References.Count - 1].WithBreakPoint = true;
-                            if (bBpMultiReq)
-                                oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
-                                    "': multi-BP не возможен (кабель односторонний) — якорь прямой");
+                            int nDir = Math.Sign(arrX[nCable] - dInsertAxis);
+                            dTailEnd = dInsertAxis +
+                                nDir * AddInConfiguration.BreakPointHeaderGapMm;
+                            if (double.IsNaN(dTailEnd) || nDir == 0 ||
+                                Math.Sign(dTailEnd - dAnchorAxis) != nSide)
+                                dTailEnd = dAnchorAxis +
+                                    nSide * AddInConfiguration.BreakPointBusTailMm;
                         }
                         else
+                            dTailEnd = dAnchorAxis +
+                                nSide * AddInConfiguration.BreakPointBusTailMm;
+                        // degenerate (шина вырождена в точку) — хвост не рисуем,
+                        // BP на исходном якоре.
+                        bool bTailOk = !double.IsNaN(dTailEnd) &&
+                            Math.Abs(dTailEnd - dAnchorAxis) > EpsLen &&
+                            Math.Sign(dTailEnd - arrX[nCable]) == nSide;
+                        if (bTailOk)
                         {
-                            oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
-                                "': BP запрошен, но ссылки нет (символ/ссылка не созданы) — BP пропущен");
-                            oBpPos = null;
+                            Seg oTail = new Seg();
+                            oTail.A = oBusAnchor.Value;
+                            oTail.B = PtOf(bV, dTailEnd, PerpOf(oBusAnchor.Value, bV));
+                            oRes.Segments.Add(oTail);
+                            oBusAnchor = PtOf(bV, dTailEnd, PerpOf(oBusAnchor.Value, bV));
                         }
+                        // Multi-успех: BP#1 — G/F на конце продлённого хвоста...
+                        BreakPointPlacement oBpBus = new BreakPointPlacement();
+                        oBpBus.CableName = oCable.Name;
+                        oBpBus.CableIndex = nCable;
+                        oBpBus.Position = oBusAnchor.Value;
+                        oBpBus.Multi = true;
+                        oRes.BreakPoints.Add(oBpBus);
+                        // ...BP#2 — A/H на остриё линии-ссылки (стенд 01.10: у
+                        // multi-кабеля ДВА BP); стрелка PolyLine НЕ строится.
+                        if (oRefStraight != null)
+                        {
+                            oRefStraight.WithBreakPoint = true;
+                            BreakPointPlacement oBpStraight = new BreakPointPlacement();
+                            oBpStraight.CableName = oCable.Name;
+                            oBpStraight.CableIndex = nCable;
+                            oBpStraight.Position = oRefStraight.Line.B;
+                            oBpStraight.Multi = false;
+                            oRes.BreakPoints.Add(oBpStraight);
+                        }
+                        else
+                            oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                                "': BP шины поставлен, но ссылки нет (символ/ссылка не созданы) — прямой BP пропущен");
                     }
-                    if (oBpPos != null)
+                    else if (oRefStraight != null)
                     {
+                        // Прямой якорь (немulti и multi-провал): остриё ссылки.
+                        oRefStraight.WithBreakPoint = true;
+                        if (bBpMultiReq)
+                            oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                                "': multi-BP не возможен (кабель односторонний) — якорь прямой");
                         BreakPointPlacement oBp = new BreakPointPlacement();
                         oBp.CableName = oCable.Name;
                         oBp.CableIndex = nCable;
-                        oBp.Position = oBpPos.Value;
-                        oBp.Multi = bBpMulti;
+                        oBp.Position = oRefStraight.Line.B;
+                        oBp.Multi = false;
                         oRes.BreakPoints.Add(oBp);
+                    }
+                    else
+                    {
+                        oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                            "': BP запрошен, но ссылки нет (символ/ссылка не созданы) — BP пропущен");
                     }
                 }
             }

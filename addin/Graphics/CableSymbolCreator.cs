@@ -166,8 +166,7 @@ namespace MyEplanActions
         {
             return CreateSymbols(oPage, oGeom, log,
                 AddInConfiguration.SymbolLibrary, AddInConfiguration.SymbolName,
-                AddInConfiguration.SymbolVariant, 0.0, 0.0,
-                AddInConfiguration.BlockFormatIndexDefault);
+                AddInConfiguration.SymbolVariant, 0.0, 0.0);
         }
 
         /// <summary>Символ на каждый CableSymbolPlacement. Возвращает число созданных.
@@ -177,13 +176,12 @@ namespace MyEplanActions
         /// визуального центра варианта (ruling R9): Location = desired − (dx,dy),
         /// чистая арифметика — SymbolPlacementMath.Compensate (non-finite offset →
         /// без компенсации). (0;0) — прежнее поведение (центр = точке вставки).
-        /// rev.16.0: nBlockFormatIndex — индекс слота «Свойство блока: Формат [x]»
-        /// (#20202, 1..100); при непустом oSym.BlockFormat строка пишется в 20202[x]
-        /// (WriteBlockFormat, отказ — WARN, символ создаётся).</summary>
+        /// rev.16.2 (01.10): BlockFormat-параметр и запись 20202[x] УДАЛЕНЫ
+        /// (решение пользователя «Формат блока — теперь не используется»).</summary>
         public static int CreateSymbols(Page oPage, CableGeometryResult oGeom,
             DiagnosticLogger log,
             string strLibrary, string strSymbolName, int nVariant,
-            double dOffsetX, double dOffsetY, int nBlockFormatIndex)
+            double dOffsetX, double dOffsetY)
         {
             if (oPage == null || oGeom == null)
             {
@@ -273,12 +271,6 @@ namespace MyEplanActions
                     // счётчик и остальные символы не страдают.
                     if (!string.IsNullOrEmpty(oSym.CableName))
                         WriteDeviceTagProperties(oPage, oFunc, oSym, log);
-
-                    // rev.16.0 (спека §4.4): строка «Свойство блока: Формат [x]» —
-                    // пишется ПОСЛЕ ОУ-санитарии (не мешать WriteDeviceTagProperties).
-                    // Поле null/пустое — фича off, тишина.
-                    if (!string.IsNullOrEmpty(oSym.BlockFormat))
-                        WriteBlockFormat(oFunc, oSym.BlockFormat, nBlockFormatIndex, log);
                 }
                 catch (Exception oEx)
                 {
@@ -289,71 +281,6 @@ namespace MyEplanActions
             }
             log.Log("[INFO] [SYMBOL-SUM] символов " + nCreated + " из " + nTotal + ".");
             return nCreated;
-        }
-
-        /// <summary>Запись строки формата в «Свойство блока: Формат [x]» —
-        /// rev.16.0 (спека §4.4): свойство #20202, индексы 1..100
-        /// (KB FunctionPropertyList~FUNC_BLOCK_FORMAT). Путь (a) — типизированный
-        /// индексатор Property(id,index); путь (b) — fallback через
-        /// PropertyValue-индексатор (KB PropertyValue~Item: oProperty[1]).
-        /// Отказ — WARN, символ создаётся (не мешает остальным). Пустая строка
-        /// или индекс вне 1..100 — тихий skip (фича off / некорректный индекс).</summary>
-        private static void WriteBlockFormat(Function oFunc, string strFormat, int nIdx,
-            DiagnosticLogger log)
-        {
-            if (string.IsNullOrEmpty(strFormat) || nIdx < 1 || nIdx > 100)
-            {
-                if (nIdx < 1 || nIdx > 100)
-                    log.Warn("[BLOCKFMT] индекс слота " + nIdx +
-                        " вне 1..100 — запись пропущена");
-                return;
-            }
-            // Путь (a): типизированный индексатор Properties[PropertyId, index].
-            string strErrA = null;
-            try
-            {
-                // rev.16.0 fix: ctor PropertyValue(string) в 2.9 нет —
-                // implicit op_Implicit(String→PropertyValue) (KB).
-                oFunc.Properties[Properties.Function.FUNC_BLOCK_FORMAT, nIdx] = strFormat;
-            }
-            catch (Exception oEx)
-            {
-                strErrA = oEx.GetType().Name + ": " + oEx.Message;
-            }
-            if (strErrA != null)
-            {
-                // Путь (b): fallback через PropertyValue-индексатор
-                // (get → oPV[nIdx] = … → set). Отказ — WARN без rethrow.
-                try
-                {
-                    AnyPropertyId oId = CreateAnyPropertyIdFromNumber(20202);
-                    PropertyValue oPV = oFunc.Properties[oId];
-                    oPV[nIdx] = strFormat;   // implicit (KB op_Implicit)
-                    oFunc.Properties[oId] = oPV;
-                    log.Log("[INFO] [BLOCKFMT] путь (a) не удался (" + strErrA +
-                        "), записано через PropertyValue-индексатор");
-                }
-                catch (Exception oEx)
-                {
-                    log.Warn("[BLOCKFMT] запись 20202[" + nIdx + "] не удалась (" +
-                        oEx.GetType().Name + ": " + oEx.Message + ")");
-                }
-            }
-            // Readback: 20202[nIdx] → INFO (до 60 симв; «—» при отказе/пустом).
-            try
-            {
-                AnyPropertyId oIdR = CreateAnyPropertyIdFromNumber(20202);
-                PropertyValue oVal = oFunc.Properties[oIdR];
-                // rev.16.0 fix: MaxIndex в 2.9 НЕТ (пример KB — другой API) —
-                // недопустимый индекс даст исключение → catch → «—».
-                string strRb = (oVal != null && !oVal.IsEmpty)
-                    ? oVal[nIdx].ToString() : "—";
-                log.Log("[INFO] [BLOCKFMT] 20202[" + nIdx + "]='" + Trim60(strRb) + "'");
-            }
-            catch
-            {
-                log.Log("[INFO] [BLOCKFMT] 20202[" + nIdx + "]='—'");
-            }
         }
 
         /// <summary>Обрезка строки до 60 символов (readback-лог); null → «—».</summary>
@@ -408,6 +335,48 @@ namespace MyEplanActions
             CableSymbolPlacement oSym, DiagnosticLogger log)
         {
             WriteDtPropertiesCore(oPage, oFunc, oSym.CableName, log);
+        }
+
+        /// <summary>ПРАВИЛО 4 (стенд 01.10): полное ОУ точки разрыва. Сборка
+        /// offline-списка NameParts из ПОЛНОГО DT (ComposeBpDeviceTag-строка):
+        /// структура 1100/1400/1200/1600 сегментами + имя 20013/20014 — путь B
+        /// (InterruptionPoint, BreakPointSymbolCreator.WriteBpDeviceTag):
+        /// S4-проба одной пары 20013/20014 на пустой тестовой странице дала
+        /// '=+++#-K190(EXT)'; на отчётной странице страница-структура НЕ
+        /// наследуется (не пуста, но другая) — структура пишется ЯВНО.
+        /// Отказ части — WARN [SYMDT], остальные пишутся. Возврат — список
+        /// (никогда null, кроме исключения offline-ctor).</summary>
+        internal static FunctionBasePropertyList BuildNamePartList(string strFullDt,
+            DiagnosticLogger log)
+        {
+            if (string.IsNullOrEmpty(strFullDt)) return new FunctionBasePropertyList();
+            string[] arrParts = ParseDeviceTag(strFullDt);
+            string strInstallation = arrParts[0];
+            string strMountingSite = arrParts[1];
+            string strPlaceOfInstallation = arrParts[2];
+            string strUserStruct = arrParts[3];
+            string strCode, strCounter;
+            SplitDeviceTagLetterCounter(arrParts[4], out strCode, out strCounter);
+            FunctionBasePropertyList oParts = new FunctionBasePropertyList();
+            try
+            {
+                WriteStructureSegments(oParts, 1100, SplitSegments(strInstallation),
+                    strInstallation, log);
+                WriteStructureSegments(oParts, 1400, SplitSegments(strMountingSite),
+                    strMountingSite, log);
+                WriteStructureSegments(oParts, 1200, SplitSegments(strPlaceOfInstallation),
+                    strPlaceOfInstallation, log);
+                WriteStructureSegments(oParts, 1600, SplitSegments(strUserStruct),
+                    strUserStruct, log);
+            }
+            catch (Exception oEx)
+            {
+                log.Warn("[SYMDT] структура NameParts: " + oEx.GetType().Name +
+                    ": " + oEx.Message);
+            }
+            SetNamePart(oParts, 20013, strCode, log);
+            SetNamePart(oParts, 20014, strCounter, log);
+            return oParts;
         }
 
         /// <summary>ОБЩИЙ контур записи ОУ (rev.11.13/11.15/13.0) от строки
