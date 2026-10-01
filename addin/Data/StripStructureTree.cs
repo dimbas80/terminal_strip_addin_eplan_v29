@@ -87,20 +87,22 @@ namespace MyEplanActions
             return lstRoot;
         }
 
-        /// <summary>Краткое имя устройства: если строка НАЧИНАЕТСЯ со
-        /// структурного префикса («=», «++», «+», «#») — остаток после
-        /// последнего «-» (хвост после последнего структурного токена, напр.
-        /// «-XT1»; при отсутствии «-» — пусто); иначе (нет структуры) — строка
-        /// целиком (напр. «-X9»). null/пусто → как есть. Хвост после ПОСЛЕДНЕГО
-        /// дефиса — соглашение BreakPointResolver.DeviceNameOf (дефис внутри
-        /// значения, напр. «HII-1.1», не является разделителем листа).</summary>
+        /// <summary>Краткое имя устройства — остаток ПОСЛЕ последнего
+        /// структурного токена (напр. «-XT1»). Если строка НЕ начинается со
+        /// структурного префикса («=», «++», «+», «#») — возвращается целиком
+        /// (напр. «-X9»); null/пусто → как есть. Единственный структурный
+        /// токен — вся строка есть его значение, устройства нет → пусто
+        /// (напр. «=HII-1.1» → "", дефис принадлежит значению Plant).
+        /// Граница листа — последний «-» после НАЧАЛА последнего токена,
+        /// поэтому «HII-1.1» внутри более длинной цепочки листом не станет.
+        /// Разделитель — та же конвенция, что в BreakPointResolver.DeviceNameOf,
+        /// НО LeafOf СОЗНАТЕЛЬНО включает дефис («-XT1»), тогда как
+        /// DeviceNameOf возвращает хвост БЕЗ дефиса («X2»).</summary>
         public static string LeafOf(string strFullName)
         {
             if (string.IsNullOrEmpty(strFullName)) return strFullName;
             if (MatchPrefix(strFullName, 0) == null) return strFullName;
-            int nDash = strFullName.LastIndexOf('-');
-            if (nDash < 0) return "";
-            return strFullName.Substring(nDash);
+            return strFullName.Substring(StructureEnd(strFullName));
         }
 
         // Список текстов уровней: приоритет — четыре свойства; все пусты —
@@ -125,7 +127,7 @@ namespace MyEplanActions
             return lst;
         }
 
-        // Линейный проход по СТРУКТУРНОЙ части строки (до последнего «-» —
+        // Линейный проход по СТРУКТУРНОЙ части строки (до StructureEnd —
         // граница листа): каждый токен = префикс + значение до начала
         // следующего структурного префикса; «++» проверяется раньше «+».
         // Нет структурного префикса в начале — уровней нет.
@@ -133,8 +135,9 @@ namespace MyEplanActions
         {
             List<string> lst = new List<string>();
             if (string.IsNullOrEmpty(strFullName)) return lst;
-            string strStructure = StructurePartOf(strFullName);
-            if (strStructure.Length == 0) return lst;
+            if (MatchPrefix(strFullName, 0) == null) return lst;
+            string strStructure = strFullName.Substring(0,
+                StructureEnd(strFullName));
             int nPos = 0;
             while (nPos < strStructure.Length)
             {
@@ -150,14 +153,33 @@ namespace MyEplanActions
             return lst;
         }
 
-        // Структурная часть ОУ: при наличии префикса в начале — всё до
-        // последнего «-» (граница листа); без префикса — пусто (лист в корне).
-        private static string StructurePartOf(string strFullName)
+        // Индекс конца структурной части (= начала листа) для строки,
+        // начинающейся со структурного префикса; = длине строки, если листа
+        // нет (вызывать после проверки MatchPrefix(…, 0) != null).
+        // Токены — префикс + значение до следующего префикса; лист — остаток
+        // после ПОСЛЕДНЕГО токена. Единственный структурный токен — вся строка
+        // есть его значение, устройства нет (напр. «=HII-1.1» → конец строки).
+        // Иначе граница листа — последний «-» ПОСЛЕ начала последнего токена
+        // (дефис внутри значения, напр. Plant «HII-1.1», листом не считается).
+        private static int StructureEnd(string strFullName)
         {
-            if (MatchPrefix(strFullName, 0) == null) return "";
+            int nLastTokenStart = 0;
+            int nCount = 0;
+            int nPos = 0;
+            while (nPos < strFullName.Length)
+            {
+                string strPrefix = MatchPrefix(strFullName, nPos);
+                if (strPrefix == null) break;
+                nLastTokenStart = nPos;
+                nCount++;
+                int nNext = FindNextPrefix(strFullName, nPos + strPrefix.Length);
+                if (nNext < 0) break;
+                nPos = nNext;
+            }
+            if (nCount <= 1) return strFullName.Length;
             int nDash = strFullName.LastIndexOf('-');
-            if (nDash < 0) return strFullName;
-            return strFullName.Substring(0, nDash);
+            if (nDash < nLastTokenStart) return strFullName.Length;
+            return nDash;
         }
 
         // Первый структурный префикс в позиции nPos (null — нет). «++» раньше «+».
