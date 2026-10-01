@@ -1394,13 +1394,15 @@ namespace MyEplanActions
 
                     // Гейт: префиксная склейка ('=' plant '++' mount '+' place
                     // '#' user, пустые уровни пропущены) обязана быть префиксом
-                    // полного ОУ и остаток ОУ не должен начинаться со
-                    // структурного префикса (иначе есть неразобранный уровень).
+                    // полного ОУ, а остаток ОУ — быть ПУСТЫМ (имя без устройства)
+                    // либо начинаться с '-' (лист устройства всегда '-XT…').
+                    // Любой иной остаток ('.' — оборванный подчинённый сегмент,
+                    // ещё структурный уровень) = неполное/несогласованное чтение.
                     // Не сошлось — все четыре части пусты → фоллбэк дерева.
                     string strPrefix = StructurePrefix(strPlant, strMount, strPlace, strUser);
                     if (strPrefix.Length == 0 ||
                         !strStripName.StartsWith(strPrefix, StringComparison.Ordinal) ||
-                        StartsWithStructurePrefix(strStripName.Substring(strPrefix.Length)))
+                        !IsDeviceLeafRemainder(strStripName.Substring(strPrefix.Length)))
                     {
                         if (strPrefix.Length > 0)
                             _logger.Warn("[STRIPTREE] структура клеммника '" + strStripName +
@@ -1485,17 +1487,16 @@ namespace MyEplanActions
             return strPrefix;
         }
 
-        /// <summary>rev.17: начинается ли остаток ОУ со структурного префикса
-        /// ('=' / '++' / '+' / '#') — признак неразобранного уровня структуры
-        /// (см. StripStructureTree.MatchPrefix; '++' раньше '+' не критично —
-        /// здесь достаточно факта совпадения).</summary>
-        private static bool StartsWithStructurePrefix(string strText)
+        /// <summary>rev.17 (fix R1): остаток ОУ после структурного префикса
+        /// допустим, только если он ПУСТ (имя без устройства) или начинается с
+        /// '-' (лист устройства всегда '-XT…'). Иной остаток — хвост
+        /// оборванного подчинённого сегмента (напр. '.1' при нечитаемой 1101),
+        /// ещё один структурный префикс или мусор — означает неполное/
+        /// несогласованное чтение структуры (гейт уводит в фоллбэк FullName).</summary>
+        private static bool IsDeviceLeafRemainder(string strRemainder)
         {
-            if (string.IsNullOrEmpty(strText)) return false;
-            return strText.StartsWith("=", StringComparison.Ordinal) ||
-                   strText.StartsWith("++", StringComparison.Ordinal) ||
-                   strText.StartsWith("+", StringComparison.Ordinal) ||
-                   strText.StartsWith("#", StringComparison.Ordinal);
+            if (strRemainder.Length == 0) return true;
+            return strRemainder.StartsWith("-", StringComparison.Ordinal);
         }
 
         /// <summary>rev.12.5 (H-3b, «отчёт по выбранному клеммнику»): разрешение имени
