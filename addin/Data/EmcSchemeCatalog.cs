@@ -18,6 +18,15 @@ namespace MyEplanActions
         public string File;
         public int Variant = -1;   // A2453; -1 — нечисловой/пустой (запись скипается)
         public string SchemeName;  // A2454
+
+        /// <summary>rev.17 (fix review): ComboBox рисует элемент через ToString
+        /// (DisplayMember по публичному ПОЛЮ SchemeName ненадёжен — TypeDescriptor
+        /// поля не гарантирует) — переопределение гарантирует имя схемы A2454
+        /// в списках профилей.</summary>
+        public override string ToString()
+        {
+            return SchemeName;
+        }
     }
 
     /// <summary>Каталог наборов отображения point/*.emc (rev.16.2): скан НА

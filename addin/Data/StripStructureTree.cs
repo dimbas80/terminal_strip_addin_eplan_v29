@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace MyEplanActions
@@ -50,6 +51,9 @@ namespace MyEplanActions
         /// уровней (из свойств или ParseLevels(FullName) при всех пустых
         /// свойствах), затем спуск по дереву с поиском/созданием узла по Text;
         /// лист (FullName = полное ОУ) добавляется под последним уровнем.
+        /// Лист при заданных свойствах — остаток FullName после префикса из
+        /// свойств (LeafAfterStructure, fix review: «=HII-XT1» → «-XT1»);
+        /// все свойства пусты — прежний LeafOf(FullName).
         /// null-вход — пустой список. Вход с пустым листом пропускается
         /// (уровни без устройства не создают узел-лист).</summary>
         public static List<StripTreeNode> Build(List<StripNodeInput> lstInputs)
@@ -60,7 +64,7 @@ namespace MyEplanActions
             {
                 if (oIn == null) continue;
                 List<string> lstLevels = LevelsOf(oIn);
-                string strLeaf = LeafOf(oIn.FullName);
+                string strLeaf = LeafAfterStructure(oIn);
                 List<StripTreeNode> lstCur = lstRoot;
                 foreach (string strLevel in lstLevels)
                 {
@@ -103,6 +107,36 @@ namespace MyEplanActions
             if (string.IsNullOrEmpty(strFullName)) return strFullName;
             if (MatchPrefix(strFullName, 0) == null) return strFullName;
             return strFullName.Substring(StructureEnd(strFullName));
+        }
+
+        // rev.17 (fix review): лист при ЗАДАННЫХ свойствах структуры —
+        // остаток FullName после ВОССТАНОВЛЕННОГО префикса («=Plant» +
+        // «++MountingSite» + «+PlaceOfInstallation» + «#UserStruct», пустые
+        // части пропускаются). «=HII-XT1» (Plant=HII) → «-XT1»; «=HII-1.1»
+        // (Plant=HII-1.1, устройства нет) → «» — клеммник остаётся
+        // выбираемым (fix: LeafOf давал «» и лист не создавался). Все четыре
+        // свойства пусты → прежний LeafOf(FullName) (фоллбэк). Рассинхрон
+        // FullName/свойства или пустое имя → фоллбэк LeafOf (безопасно).
+        private static string LeafAfterStructure(StripNodeInput oIn)
+        {
+            if (string.IsNullOrEmpty(oIn.Plant) &&
+                string.IsNullOrEmpty(oIn.MountingSite) &&
+                string.IsNullOrEmpty(oIn.PlaceOfInstallation) &&
+                string.IsNullOrEmpty(oIn.UserStruct))
+                return LeafOf(oIn.FullName);
+            string strPrefix = "";
+            if (!string.IsNullOrEmpty(oIn.Plant))
+                strPrefix += PrefixPlant + oIn.Plant;
+            if (!string.IsNullOrEmpty(oIn.MountingSite))
+                strPrefix += PrefixMount + oIn.MountingSite;
+            if (!string.IsNullOrEmpty(oIn.PlaceOfInstallation))
+                strPrefix += PrefixPlace + oIn.PlaceOfInstallation;
+            if (!string.IsNullOrEmpty(oIn.UserStruct))
+                strPrefix += PrefixUser + oIn.UserStruct;
+            if (string.IsNullOrEmpty(oIn.FullName)) return oIn.FullName;
+            if (!oIn.FullName.StartsWith(strPrefix, StringComparison.Ordinal))
+                return LeafOf(oIn.FullName);
+            return oIn.FullName.Substring(strPrefix.Length);
         }
 
         // Список текстов уровней: приоритет — четыре свойства; все пусты —

@@ -94,7 +94,8 @@ namespace MyEplanActions
         /// (TerminalStrip → EmcStraightStrip*, Device → EmcStraightDevice*) и
         /// ориентации; вариант проверяется по A2453 (чужой вариант = тихий
         /// no-op Import — не импортируем). Каталог point/ строится при
-        /// ПЕРВОЙ вставке (решение 01.10: скан на старте команды — здесь
+        /// ПЕРВОЙ вставке ТОЛЬКО на headless-ветке (selections == null;
+        /// решение 01.10: скан на старте команды — здесь
         /// эквивалентно, скан дешевле страниц). bVertical — ориентация ОТЧЁТА
         /// (как eOrientation). rev.17 (Task 8): selections == null — прежний
         /// headless-путь (kind-константы Emc* + PickScheme по A2453,
@@ -124,8 +125,11 @@ namespace MyEplanActions
 
             // rev.16.2 (01.10): скан point/ НА СТАРТЕ (до первой вставки) —
             // A2453/A2454 всех *.emc. Пусто/нечитаемо — WARN, вставки БЕЗ набора.
+            // rev.17 (fix review): каталог нужен ТОЛЬКО headless-ветке
+            // (selections == null) — на ветке выбора пользователя файл и имя
+            // схемы берутся из BpProfileSelections.For, скан не нужен.
             List<EmcSchemeInfo> lstEmc = null;
-            if (!string.IsNullOrEmpty(strPointFolder))
+            if (selections == null && !string.IsNullOrEmpty(strPointFolder))
                 lstEmc = EmcSchemeCatalog.ParseDirectory(strPointFolder, log);
             // Лукап библиотеки/символа — ОДИН раз на прогон (M2-ревью:
             // библиотека перечитывалась на каждый BP); вариант от Symbol.
@@ -147,6 +151,7 @@ namespace MyEplanActions
             }
             HashSet<string> setImportLogged = new HashSet<string>(); // [BP-EMC] 1 раз на файл/прогон (Import — на КАЖДЫЙ BP, идемпотентен S2)
             HashSet<string> setMissingWarned = new HashSet<string>(); // WARN 1 раз на имя файла
+            HashSet<string> setProfileMissingLogged = new HashSet<string>(); // rev.17: «профиль не выбран» 1 раз на (kind,multi,ориентация)
 
             int nCreated = 0;
             foreach (BreakPointPlacement oBpPlacement in oGeom.BreakPoints)
@@ -172,8 +177,8 @@ namespace MyEplanActions
                         oBpPlacement.Position.Y);
 
                     ApplyEmcScheme(oRef, nVariant, oBpPlacement, bVertical,
-                        strPointFolder, lstEmc, setImportLogged, setMissingWarned, log,
-                        selections);
+                        strPointFolder, lstEmc, setImportLogged, setMissingWarned,
+                        setProfileMissingLogged, log, selections);
 
                     WriteBpDeviceTag(oRef, oBpPlacement, oPage, log);
 
@@ -230,7 +235,8 @@ namespace MyEplanActions
         /// PickScheme не нашёл — WARN (Review Focus 4/5), BP с дефолтным
         /// отображением. selections != null — профиль из BpProfileSelections.For
         /// (kind/multi/ориентация), каталог point/ не сканируется; For вернул
-        /// null — лог «профиль не выбран», BP с дефолтным отображением.
+        /// null — лог «профиль не выбран» один раз на слот за прогон,
+        /// BP с дефолтным отображением.
         /// Применение (Import + Selected) ОБЩЕЕ — ApplyEmcSchemeInfo.
         /// Import — на КАЖДЫЙ BP (идемпотентен, S2: All 22→22); C1-ревью: кеш
         /// Imports на прогон был бы верен ТОЛЬКО если склад All виден всем BP —
@@ -240,7 +246,8 @@ namespace MyEplanActions
         private static void ApplyEmcScheme(SymbolReference oRef, int nVariant,
             BreakPointPlacement oBp, bool bVertical, string strPointFolder,
             List<EmcSchemeInfo> lstEmc, HashSet<string> setImportLogged,
-            HashSet<string> setMissingWarned, DiagnosticLogger log,
+            HashSet<string> setMissingWarned,
+            HashSet<string> setProfileMissingLogged, DiagnosticLogger log,
             BpProfileSelections selections)
         {
             string strCable = oBp.CableName ?? "<без имени>";
@@ -255,8 +262,8 @@ namespace MyEplanActions
                 EmcSchemeInfo oSel = selections.For(oBp.Kind, oBp.Multi, bVertical);
                 if (oSel == null)
                 {
-                    log.Log("[INFO] [BP] '" + strCable +
-                        "': профиль не выбран — BP с дефолтным отображением");
+                    LogProfileMissingOnce(oBp, bVertical, strCable,
+                        setProfileMissingLogged, log);
                     return;
                 }
                 if (string.IsNullOrEmpty(strPointFolder))
@@ -346,6 +353,21 @@ namespace MyEplanActions
             if (setWarned == null || !setWarned.Add(strFile)) return;
             log.Warn("[BP] '" + strFile + "' (кабель '" + strCable + "'): " +
                 strCause + " — набор не применён (BP с дефолтным отображением)");
+        }
+
+        // rev.17 (fix review): «профиль не выбран» — INFO один раз на ключ
+        // (kind, multi, ориентация) за прогон (было: на каждый BP слота) —
+        // тот же стиль дедупа, что LogMissingOnce.
+        private static void LogProfileMissingOnce(BreakPointPlacement oBp,
+            bool bVertical, string strCable, HashSet<string> setLogged,
+            DiagnosticLogger log)
+        {
+            if (setLogged == null) return;
+            string strKey = oBp.Kind.ToString() + "|" +
+                (oBp.Multi ? "M" : "S") + "|" + (bVertical ? "V" : "H");
+            if (!setLogged.Add(strKey)) return;
+            log.Log("[INFO] [BP] '" + strCable +
+                "': профиль не выбран — BP с дефолтным отображением");
         }
 
         /// <summary>Активация набора: Selected {get;set} : PropertyPlacementsSchema

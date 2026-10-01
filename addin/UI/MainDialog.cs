@@ -83,6 +83,9 @@ namespace MyEplanActions
             _treeStrip.Height = 140;
             _treeStrip.BeforeSelect += TreeStripBeforeSelect;
             FillTree(_treeStrip, lstStripTree);
+            // rev.17 (fix review): восстановить предвыбор сохранённого
+            // клеммника — прежний SelectExact(_cboStrip, oEffective.TargetStrip).
+            SelectTreeByFullName(_treeStrip, oEffective.TargetStrip);
 
             // (2) Форма отчёта: все *.f11 без расширения, DropDownList.
             _cboForm.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -447,6 +450,32 @@ namespace MyEplanActions
                 ? null : oArgs.Node.Tag as StripTreeNode;
             if (oData == null || string.IsNullOrEmpty(oData.FullName))
                 oArgs.Cancel = true;
+        }
+
+        /// <summary>rev.17 (fix review): предвыбор клеммника в дереве по полному
+        /// ОУ (Tag листа = StripTreeNode.FullName); пусто/не найдено — без выбора.
+        /// Аналог прежнего SelectExact для ComboBox.</summary>
+        private static void SelectTreeByFullName(TreeView oTree, string strFullName)
+        {
+            if (oTree == null || string.IsNullOrEmpty(strFullName)) return;
+            TreeNode oNode = FindNodeByFullName(oTree.Nodes, strFullName);
+            if (oNode == null) return;
+            oTree.SelectedNode = oNode;
+            oNode.EnsureVisible();
+        }
+
+        private static TreeNode FindNodeByFullName(TreeNodeCollection oNodes,
+            string strFullName)
+        {
+            if (oNodes == null) return null;
+            foreach (TreeNode oNode in oNodes)
+            {
+                StripTreeNode oData = oNode.Tag as StripTreeNode;
+                if (oData != null && oData.FullName == strFullName) return oNode;
+                TreeNode oFound = FindNodeByFullName(oNode.Nodes, strFullName);
+                if (oFound != null) return oFound;
+            }
+            return null;
         }
 
         /// <summary>rev.17: заполнить 6 ComboBox профилей. Для слота — вариант
