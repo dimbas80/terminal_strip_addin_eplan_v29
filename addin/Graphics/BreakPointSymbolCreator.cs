@@ -12,8 +12,8 @@ namespace MyEplanActions
 {
     /// <summary>Вставка символа точки разрыва BP «48 / BPIN» (rev.16.2 прод-волна,
     /// решения пользователя 30.09/01.10.2026, вердикты spike S1–S4): библиотека
-    /// SPECIAL, константы AddInConfiguration (straight A(0)/H(7), multi
-    /// G(6)/F(5)). На каждый BreakPointPlacement из геометрии:
+    /// SPECIAL, константы AddInConfiguration (straight A(0)/D(3), multi
+    /// E(4)/B(1)). На каждый BreakPointPlacement из геометрии:
     /// SymbolReference.Create(SymbolVariant, Page) (Function.Create =
     /// S063085 НАВСЕГДА — спецсимвол вне категорий, FD нет; вердикт S1;
     /// результат — InterruptionPoint) → Location = Position БЕЗ компенсации

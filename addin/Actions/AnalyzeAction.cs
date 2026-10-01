@@ -673,8 +673,8 @@ namespace MyEplanActions
                 ", форм " + lstFormNames.Count + ".");
 
             // --- 2b. rev.17 (Task 7, план 2026-10-01-ui-emc-profiles): каталог
-            //        профилей .emc (point/*.emc) по варианту символа BP (A=0,
-            //        H=7, G=6, F=5) для ComboBox'ов диалога. Папка/каталог не
+            //        профилей .emc (point/*.emc) по варианту символа BPIN (A=0,
+            //        D=3, E=4, B=1) для ComboBox'ов диалога. Папка/каталог не
             //        найдены — ForVariant(null) даёт пустые списки (диалог всё
             //        равно показывается; BP без набора — штатная деградация).
             //        Скан тот же, что у BreakPointSymbolCreator (ResolvePointFolder). ---
@@ -683,15 +683,15 @@ namespace MyEplanActions
             Dictionary<int, List<EmcSchemeInfo>> dicProfilesByVariant =
                 new Dictionary<int, List<EmcSchemeInfo>>();
             dicProfilesByVariant[0] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 0);
-            dicProfilesByVariant[7] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 7);
-            dicProfilesByVariant[6] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 6);
-            dicProfilesByVariant[5] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 5);
+            dicProfilesByVariant[3] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 3);
+            dicProfilesByVariant[4] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 4);
+            dicProfilesByVariant[1] = EmcProfileCatalog.ForVariant(lstEmcProfiles, 1);
             _logger.Log("[INFO] Профили .emc: всего " +
                 (lstEmcProfiles == null ? 0 : lstEmcProfiles.Count) +
                 ", по вариантам A=" + dicProfilesByVariant[0].Count +
-                " H=" + dicProfilesByVariant[7].Count +
-                " G=" + dicProfilesByVariant[6].Count +
-                " F=" + dicProfilesByVariant[5].Count + ".");
+                " D=" + dicProfilesByVariant[3].Count +
+                " E=" + dicProfilesByVariant[4].Count +
+                " B=" + dicProfilesByVariant[1].Count + ".");
 
             // --- 3. Цикл диалога: Отмена/закрытие — выход; «Создать» — пайплайн;
             //        провал создания отчёта — сообщение и заново диалог ---

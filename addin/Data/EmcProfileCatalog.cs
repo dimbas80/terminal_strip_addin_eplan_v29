@@ -7,7 +7,7 @@ namespace MyEplanActions
     /// 2026-10-01-ui-emc-profiles Task 2): 6 комбинаций потребителя —
     /// клеммник/устройство × горизонталь/вертикаль отчёта и мульти-кабель
     /// (кабель между двумя клеммниками) × горизонталь/вертикаль. Слот
-    /// определяет вариант символа BP: A(0)/H(7)/G(6)/F(5) —
+    /// определяет вариант символа BPIN: A(0)/D(3)/E(4)/B(1) —
     /// EmcProfileCatalog.VariantFor.</summary>
     public enum BpProfileSlot
     {
@@ -48,7 +48,7 @@ namespace MyEplanActions
         }
 
         /// <summary>Вариант символа BP для слота: StripH/DeviceH → A(0),
-        /// StripV/DeviceV → H(7), LinkH → G(6), LinkV → F(5). Значения — из
+        /// StripV/DeviceV → D(3), LinkH → E(4), LinkV → B(1). Значения — из
         /// констант AddInConfiguration (числа не хардкодим). Неизвестный слот
         /// (приведение произвольного int) → -1 — сентинел «нет варианта»,
         /// как EmcSchemeInfo.Variant.</summary>

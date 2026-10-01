@@ -170,7 +170,7 @@ namespace MyEplanActions
 
         /// <summary>Перегрузка rev.16.2: lstBreakPoint/lstMulti — per-кабельные
         /// решения (BreakPointResolver, AnalyzeAction): еди­ница = BP ставить;
-        /// multi=истина → якорь на дальнем конце шины, вариант G/F; null-списки =
+        /// multi=истина → якорь на дальнем конце шины, вариант E/B; null-списки =
         /// фича не запрошена (BP не создаётся, поведение прежнее).</summary>
         public static CableGeometryResult Build(CableLayoutModel oLayout,
             ReportOrientation eOrientation, CableGeometryConfig oCfg, double dStripEndAxis,

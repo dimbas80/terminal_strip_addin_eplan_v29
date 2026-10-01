@@ -197,8 +197,9 @@ namespace MyEplanActions
         // rev.16.2 (решение пользователя 30.09.2026): точка разрыва BP «48 / BPIN»
         // на обратном конце линии-ссылки. Символы СИСТЕМНЫЕ (SPECIAL «48 / BPIN»,
         // работают во всех EPLAN) — константы, НЕ настройки; фича всегда
-        // включена (BreakPointEnabled не заводим). Варианты: прямые
-        // A(0)-горизонт / H(7)-вертик, мульти-клеммные G(6)-горизонт / F(5)-вертик.
+        // включена (BreakPointEnabled не заводим). Варианты СИМВОЛА BPIN
+        // (реш. 01.10.2026, смена BP→BPIN): прямые A(0)-горизонт / D(3)-вертик,
+        // мульти-клеммные E(4)-горизонт / B(1)-вертик.
         // Наборы отображения .emc применяются к вставленному SymbolReference
         // через SymbolReference.PropertyPlacementsSchemasList.Import (KB 2.9)
         // — файл берётся по фиксированному пути: папка point/ рядом со сборкой
@@ -208,9 +209,9 @@ namespace MyEplanActions
         public const string BreakPointSymbolLibrary = "SPECIAL";
         public const string BreakPointSymbolName = "BPIN";
         public const int BreakPointVariantStraightH = 0;   // A(0), горизонтальный отчёт
-        public const int BreakPointVariantStraightV = 7;   // H(7), вертикальный отчёт
-        public const int BreakPointVariantMultiH = 6;      // G(6), горизонтальный отчёт
-        public const int BreakPointVariantMultiV = 5;      // F(5), вертикальный отчёт
+        public const int BreakPointVariantStraightV = 3;   // D(3), вертикальный отчёт (BPIN)
+        public const int BreakPointVariantMultiH = 4;      // E(4), горизонтальный отчёт (BPIN)
+        public const int BreakPointVariantMultiV = 1;      // B(1), вертикальный отчёт (BPIN)
         public const string PointSchemeFolder = "point";
         public const string EmcStraightStripH = "ТР_Кабель(горизонт).emc";
         public const string EmcStraightStripV = "ТР_Кабель(вертик).emc";
