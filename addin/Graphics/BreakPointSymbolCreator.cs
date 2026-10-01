@@ -10,7 +10,7 @@ using Eplan.EplApi.HEServices;   // NameService (AdjustVisibleName, путь B �
 
 namespace MyEplanActions
 {
-    /// <summary>Вставка символа точки разрыва BP «8 / BP» (rev.16.2 прод-волна,
+    /// <summary>Вставка символа точки разрыва BP «48 / BPIN» (rev.16.2 прод-волна,
     /// решения пользователя 30.09/01.10.2026, вердикты spike S1–S4): библиотека
     /// SPECIAL, константы AddInConfiguration (straight A(0)/H(7), multi
     /// G(6)/F(5)). На каждый BreakPointPlacement из геометрии:
@@ -96,9 +96,14 @@ namespace MyEplanActions
         /// no-op Import — не импортируем). Каталог point/ строится при
         /// ПЕРВОЙ вставке (решение 01.10: скан на старте команды — здесь
         /// эквивалентно, скан дешевле страниц). bVertical — ориентация ОТЧЁТА
-        /// (как eOrientation).</summary>
+        /// (как eOrientation). rev.17 (Task 8): selections == null — прежний
+        /// headless-путь (kind-константы Emc* + PickScheme по A2453,
+        /// байт-идентичен); selections != null — профиль по выбору пользователя
+        /// (BpProfileSelections.For: kind/multi/ориентация → EmcSchemeInfo),
+        /// For вернул null — BP с дефолтным отображением, WARN/лог.</summary>
         public static int CreateBreakPoints(Page oPage, CableGeometryResult oGeom,
-            bool bVertical, string strPointFolder, DiagnosticLogger log)
+            bool bVertical, string strPointFolder, DiagnosticLogger log,
+            BpProfileSelections selections = null)
         {
             if (oPage == null || oGeom == null)
             {
@@ -167,7 +172,8 @@ namespace MyEplanActions
                         oBpPlacement.Position.Y);
 
                     ApplyEmcScheme(oRef, nVariant, oBpPlacement, bVertical,
-                        strPointFolder, lstEmc, setImportLogged, setMissingWarned, log);
+                        strPointFolder, lstEmc, setImportLogged, setMissingWarned, log,
+                        selections);
 
                     WriteBpDeviceTag(oRef, oBpPlacement, oPage, log);
 
@@ -218,20 +224,54 @@ namespace MyEplanActions
                 : (BreakPointResolver.ComposeBpDeviceTag(oBp.OppositeDt, oBp.CableName) ?? "<нечитаемо>");
         }
 
-        /// <summary>Набор отображения (.emc) — Import + Selected. Выбор ТОЛЬКО
-        /// по kind-константе И варианту A2453 (чужой вариант — тихий no-op,
-        /// S2): PickScheme не нашёл — WARN (Review Focus 4/5), BP с дефолтным
-        /// отображением. Import — на КАЖДЫЙ BP (идемпотентен, S2: All 22→22);
-        /// C1-ревью: кеш Imports на прогон был бы верен ТОЛЬКО если склад
-        /// All виден всем BP — вердикт S2 говорит «да» (склад на уровне
-        /// проекта/варианта), но кеш удалён — поведение не зависит от этого
-        /// допущения, цена — дешёвый идемпотентный Import.</summary>
+        /// <summary>Набор отображения (.emc) — Import + Selected. rev.17
+        /// (Task 8): selections == null — ПРЕЖНИЙ путь: выбор ТОЛЬКО по
+        /// kind-константе И варианту A2453 (чужой вариант — тихий no-op, S2):
+        /// PickScheme не нашёл — WARN (Review Focus 4/5), BP с дефолтным
+        /// отображением. selections != null — профиль из BpProfileSelections.For
+        /// (kind/multi/ориентация), каталог point/ не сканируется; For вернул
+        /// null — лог «профиль не выбран», BP с дефолтным отображением.
+        /// Применение (Import + Selected) ОБЩЕЕ — ApplyEmcSchemeInfo.
+        /// Import — на КАЖДЫЙ BP (идемпотентен, S2: All 22→22); C1-ревью: кеш
+        /// Imports на прогон был бы верен ТОЛЬКО если склад All виден всем BP —
+        /// вердикт S2 говорит «да» (склад на уровне проекта/варианта), но кеш
+        /// удалён — поведение не зависит от этого допущения, цена — дешёвый
+        /// идемпотентный Import.</summary>
         private static void ApplyEmcScheme(SymbolReference oRef, int nVariant,
             BreakPointPlacement oBp, bool bVertical, string strPointFolder,
             List<EmcSchemeInfo> lstEmc, HashSet<string> setImportLogged,
-            HashSet<string> setMissingWarned, DiagnosticLogger log)
+            HashSet<string> setMissingWarned, DiagnosticLogger log,
+            BpProfileSelections selections)
         {
             string strCable = oBp.CableName ?? "<без имени>";
+
+            // rev.17 (Task 8): выбор пользователя. Для пары (kind, multi,
+            // ориентация) For даёт профиль; null — слот не заполнен, BP
+            // остаётся с дефолтным отображением (штатно, решение прод-волны).
+            // Каталог point/ (lstEmc) в этой ветке НЕ нужен: файл и имя схемы
+            // заданы выбором пользователя напрямую.
+            if (selections != null)
+            {
+                EmcSchemeInfo oSel = selections.For(oBp.Kind, oBp.Multi, bVertical);
+                if (oSel == null)
+                {
+                    log.Log("[INFO] [BP] '" + strCable +
+                        "': профиль не выбран — BP с дефолтным отображением");
+                    return;
+                }
+                if (string.IsNullOrEmpty(strPointFolder))
+                {
+                    log.Warn("[BP] папка point/ не задана — профиль '" +
+                        oSel.File + "' не применён");
+                    return;
+                }
+                ApplyEmcSchemeInfo(oRef, oSel, nVariant, strPointFolder,
+                    setImportLogged, strCable, log);
+                return;
+            }
+
+            // Прежний путь (selections == null): файл набора — по kind-константе
+            // И варианту A2453 (чужой вариант — тихий no-op, S2).
             string strFile = GetEmcFileName(oBp, bVertical);
             if (strFile == null)
             {
@@ -257,6 +297,19 @@ namespace MyEplanActions
                     nVariant.ToString(CultureInfo.InvariantCulture) + ")", log);
                 return;
             }
+            ApplyEmcSchemeInfo(oRef, oInfo, nVariant, strPointFolder,
+                setImportLogged, strCable, log);
+        }
+
+        /// <summary>Применение конкретного набора (rev.17, Task 8): Import(path,
+        /// true) + ActivateSelectedSchema. ОБЩИЙ путь для пользовательского
+        /// выбора и прежнего kind-константного выбора — логика Import/Selected
+        /// не дублируется. Import — на КАЖДЫЙ BP (идемпотентен, S2);
+        /// [BP-EMC] — один раз на файл за прогон.</summary>
+        private static void ApplyEmcSchemeInfo(SymbolReference oRef,
+            EmcSchemeInfo oInfo, int nVariant, string strPointFolder,
+            HashSet<string> setImportLogged, string strCable, DiagnosticLogger log)
+        {
             try
             {
                 // KB ~Import.html | SymbolReference.PropertyPlacementsSchemasList:
