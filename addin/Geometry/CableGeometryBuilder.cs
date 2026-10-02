@@ -18,7 +18,8 @@ namespace MyEplanActions
     /// Straight (Multi=false) — на конце линии-ссылки (остриё, за символом), стрелка
     /// при этом Graphics-слой не создаёт (WithBreakPoint у ReferenceElement).
     /// Multi (кабель между клеммниками, Multi=true) — на обратном (НЕ символ-)
-    /// конце шины группы, противоположной ряду символа.</summary>
+    /// конце шины группы, противоположной ряду символа; rev.16.3 — для
+    /// ОДНОСТОРОННЕГО кабеля на дальнем от символа конце единственной шины.</summary>
     public sealed class BreakPointPlacement
     {
         public string CableName;         // имя кабеля или null (бинарный случай)
@@ -407,9 +408,9 @@ namespace MyEplanActions
                 List<TerminalConnectionModel> oOther = oCable.OtherConnections;
                 bool bBilateral = CountOf(oRight) > 0 && CountOf(oLeft) > 0;
 
-                // rev.16.2: старты шин групп (для multi-якоря BP); вне двусторонней
-                // ветви остаются null (Pt? — значимый Pt без «нулевого» значения) —
-                // multi-якорь для одностороннего невозможен.
+                // rev.16.2: старты шин групп (для multi-якоря BP); rev.16.3: они
+                // заполняются и в ОДНОСТОРОННЕЙ ветви — шинный BP ставится и там
+                // (Pt? — значимый Pt без «нулевого» значения: null = шины нет).
                 Pt? oBusRightStart = null, oBusLeftStart = null, oBusOtherStart = null;
 
                 if (bBilateral)
@@ -449,9 +450,9 @@ namespace MyEplanActions
                     // Односторонний (rev.10.5): ВСЕ шины сразу до оси своего
                     // символа минус зазор (габарит по оси/2), БЕЗ подхода/захода/джампа.
                     double dBusEndAxis = arrSymAxis[nCable] - sDir * dGap;
-                    AddGroup(oRes, oRight, arrBusRight[nCable], bV, dBusEndAxis);
-                    AddGroup(oRes, oLeft, arrBusLeft[nCable], bV, dBusEndAxis);
-                    AddGroup(oRes, oOther, arrBusOther[nCable], bV, dBusEndAxis);
+                    AddGroup(oRes, oRight, arrBusRight[nCable], bV, dBusEndAxis, out oBusRightStart);
+                    AddGroup(oRes, oLeft, arrBusLeft[nCable], bV, dBusEndAxis, out oBusLeftStart);
+                    AddGroup(oRes, oOther, arrBusOther[nCable], bV, dBusEndAxis, out oBusOtherStart);
                 }
 
                 oCable.SymbolPosition = PtOf(bV, arrSymAxis[nCable], arrSymRow[nCable]);
@@ -484,22 +485,63 @@ namespace MyEplanActions
                         oRes.References[oRes.References.Count - 1].CableIndex == nCable)
                         oRefStraight = oRes.References[oRes.References.Count - 1];
 
-                    // Якорь шинного BP (multi-случай).
+                    // Якорь шинного BP (multi-случай). rev.16.3: односторонний кабель
+                    // больше НЕ отказ — якорь = дальний от символа конец той шины,
+                    // чей старт непустой (его отдаёт AddGroup и в односторонней ветви).
                     Pt? oBusAnchor = null;
-                    if (bBpMultiReq && bBilateral)
+                    if (bBpMultiReq)
                     {
-                        // Обратный конец шины группы, НЕ несущей символ:
-                        // symRow == busRight → Left, иначе → Right (rev.10.10 выбор).
-                        Pt? oAnchor;
-                        if (Math.Abs(arrSymRow[nCable] - arrBusRight[nCable]) <= EpsLen)
-                            oAnchor = oBusLeftStart;
+                        if (bBilateral)
+                        {
+                            // Обратный конец шины группы, НЕ несущей символ:
+                            // symRow == busRight → Left, иначе → Right (rev.10.10 выбор).
+                            Pt? oAnchor;
+                            if (Math.Abs(arrSymRow[nCable] - arrBusRight[nCable]) <= EpsLen)
+                                oAnchor = oBusLeftStart;
+                            else
+                                oAnchor = oBusRightStart;
+                            if (oAnchor == null)
+                                oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                                    "': multi-BP не возможен (шина противоположной группы пуста) — якорь прямой");
+                            else
+                                oBusAnchor = oAnchor;
+                        }
                         else
-                            oAnchor = oBusRightStart;
-                        if (oAnchor == null)
-                            oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
-                                "': multi-BP не возможен (шина противоположной группы пуста) — якорь прямой");
-                        else
-                            oBusAnchor = oAnchor;
+                        {
+                            // Односторонний (решение пользователя 02.10.2026): дальний
+                            // от символа конец шины, к которой идут соединения от
+                            // клемника; противоположный, где вставлен символ. Несколько
+                            // непустых шин — уровень, ближайший к ряду символа
+                            // (минимальный |уровень − ряд|); равные расстояния — WARN +
+                            // выбор первой (Right→Left→Other, как rev.10.10).
+                            double[] arrLevels = new double[3];
+                            arrLevels[0] = arrBusRight[nCable];
+                            arrLevels[1] = arrBusLeft[nCable];
+                            arrLevels[2] = arrBusOther[nCable];
+                            Pt?[] arrStarts = new Pt?[] { oBusRightStart, oBusLeftStart, oBusOtherStart };
+                            int nBests = 0;
+                            double dBestDist = double.PositiveInfinity;
+                            for (int nGrp = 0; nGrp < arrStarts.Length; nGrp++)
+                            {
+                                if (!arrStarts[nGrp].HasValue) continue;
+                                double dDist = Math.Abs(arrLevels[nGrp] - arrSymRow[nCable]);
+                                if (dDist < dBestDist - EpsBoxTol)
+                                {
+                                    dBestDist = dDist; nBests = 1; oBusAnchor = arrStarts[nGrp];
+                                }
+                                else if (dDist <= dBestDist + EpsBoxTol)
+                                    nBests++;
+                            }
+                            if (nBests > 1)
+                                oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                                    "': групп шин " + nBests + " на равном расстоянии от ряда символа" +
+                                    " — шинный BP по первой (Right→Left→Other); правило не валидировано данными");
+                            if (oBusAnchor == null)
+                                oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
+                                    "': multi-BP не возможен (односторонний кабель: непустой шины нет" +
+                                    (double.IsNaN(arrSymRow[nCable]) ? ", ряд символа не вычислен" : "") +
+                                    ") — якорь прямой");
+                        }
                     }
 
                     if (oBusAnchor != null)
@@ -567,10 +609,11 @@ namespace MyEplanActions
                     else if (oRefStraight != null)
                     {
                         // Прямой якорь (немulti и multi-провал): остриё ссылки.
+                        // rev.16.3: про multi-провал WARN уже добавлен ВЫШЕ
+                        // («непустой шины нет» / «шина противоположной группы пуста»),
+                        // дубль про «кабель односторонний» удалён — односторонний
+                        // кабель шинный BP ставит.
                         oRefStraight.WithBreakPoint = true;
-                        if (bBpMultiReq)
-                            oRes.Warnings.Add("[GEOM] кабель '" + strBpName +
-                                "': multi-BP не возможен (кабель односторонний) — якорь прямой");
                         BreakPointPlacement oBp = new BreakPointPlacement();
                         oBp.CableName = oCable.Name;
                         oBp.CableIndex = nCable;
@@ -666,12 +709,32 @@ namespace MyEplanActions
         /// уголка нет), шина от крайней точки группы, ПРОТИВОПОЛОЖНОЙ направлению выноса
         /// (H: min axis; V: max axis), до dBusEndAxis (двусторонний — подход X_i,
         /// односторонний — ось своего символа минус зазор (габарит по оси/2, rev.10.11). Вертикаль-
-        /// подход/заход строит Build (rev.10.1; джампы отменены rev.10.5).</summary>
+        /// подход/заход строит Build (rev.10.1; джампы отменены rev.10.5).
+        /// rev.16.3: out oBusStart — дальний от символа конец шины (якорь шинного BP
+        /// одностороннего кабеля): точка подключения, максимально удалённая по оси от
+        /// dBusEndAxis (ось, с которой шина идёт к символу). Шины нет — null.</summary>
         private static void AddGroup(CableGeometryResult oRes, List<TerminalConnectionModel> lstGroup,
-            double dBusPerp, bool bV, double dBusEndAxis)
+            double dBusPerp, bool bV, double dBusEndAxis, out Pt? oBusStart)
         {
             Pt? oStart;
             AddGroupCore(oRes, lstGroup, dBusPerp, bV, dBusEndAxis, out oStart);
+            // rev.16.3: якорь шинного BP считаем СВОИМ проходом, а не выводом
+            // AddGroupCore: тот отдаёт конец «со стороны ветвей» по ОРИЕНТАЦИИ
+            // (H — min, V — max), а правило привязано к СТОРОНЕ символа — дальний
+            // от dBusEndAxis. При штатной раскладке (символ всегда за dBusEndAxis по
+            // sDir) значения совпадают; NaN-ось символа — якорь не вычисляем (null).
+            oBusStart = null;
+            if (!oStart.HasValue || double.IsNaN(dBusEndAxis)) return;
+            double dBestDist = -1.0;   // < 0 — чтобы первый кандидат всегда стал лучшим
+            foreach (TerminalConnectionModel oM in lstGroup)
+            {
+                if (oM == null) continue;
+                double dAxis = AxisOf(oM.ConnectionPoint, bV);
+                double dDist = Math.Abs(dAxis - dBusEndAxis);
+                if (dDist <= dBestDist) continue;   // ничья — берём первый по порядку группы
+                dBestDist = dDist;
+                oBusStart = PtOf(bV, dAxis, dBusPerp);
+            }
         }
 
         /// <summary>rev.16.2: перегрузка с выходом «начало шины» (конец сегмента
