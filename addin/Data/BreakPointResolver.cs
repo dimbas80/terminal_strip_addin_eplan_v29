@@ -249,12 +249,15 @@ namespace MyEplanActions
                 return MkOpp(true,
                     strFirstForeign == null ? "multi-strip" : "multi-strip same-cabinet",
                     BpEndKind.TerminalStrip, strFirstForeign);
-            // 4) противоположный конец из другого шкафа.
+            // 4) противоположный конец из другого шкафа: он же OppositeDt.
             if (strFirstForeign != null)
-                return MkOpp(IsStripCodeLetter(DeviceNameOf(strFirstForeign))
-                        ? Mk(true, "multi-strip", BpEndKind.TerminalStrip)
-                        : Mk(false, "opposite-device", BpEndKind.Device),
+            {
+                bool bOppStrip = IsStripCodeLetter(DeviceNameOf(strFirstForeign));
+                return MkOpp(bOppStrip,
+                    bOppStrip ? "multi-strip" : "opposite-device",
+                    bOppStrip ? BpEndKind.TerminalStrip : BpEndKind.Device,
                     strFirstForeign);
+            }
             // 5) известен только свой конец.
             return MkOpp(false, "own-end-only", BpEndKind.Unreadable, null);
         }
