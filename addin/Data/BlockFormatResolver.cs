@@ -12,14 +12,15 @@ namespace MyEplanActions
     /// двойниках меняет их — last-write-wins нестабилен, стенд p1/p2 30.09).
     /// rev.16.2 (решение 01.10): Resolve-запись 20202[x] УДАЛЕНА (фича
     /// «Формат блока» снята целиком); остался ResolveCableEnds —
-    /// потребитель BreakPointResolver.Decide (BP-классификация).
+    /// потребитель BreakPointResolver.DecideLegacy (BP-классификация; rev16.3 —
+    /// fallback, новая ветка multi читает 31019/31020).
     ///</summary>
     public static class BlockFormatResolver
     {
 
         /// <summary>rev.16.2: чтение полных структур концов (№20376/№20377)
         /// КАЖДОГО уникального кабеля проекта — БЕЗ фильтров №1429 (сверку и
-        /// решение делает чистый BreakPointResolver.Decide у потребителя).
+        /// решение делает чистый BreakPointResolver.DecideLegacy у потребителя).
         /// Группировка и выбор главного определения — ТОЧНАЯ копия Фаз A/B
         /// rev.16.1 (FunctionsFilter Category=Cable возвращает КАЖДОЕ
         /// определение; чтение ТОЛЬКО с главного #20122=TRUE, иначе первое

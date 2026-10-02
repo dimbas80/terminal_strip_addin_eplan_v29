@@ -439,7 +439,7 @@ namespace MyEplanActions
             oGeomCfg.ReferenceArrowHalfWidthMm = AddInConfiguration.CableReferenceArrowHalfWidthMm;
             oGeomCfg.ReferenceArrowNotchDepthMm = AddInConfiguration.CableReferenceArrowNotchDepthMm;
             // rev.16.2 (Task 4): BP-решения — чтение 20376/20377 уникальных
-            // кабелей (главное определение rev.16.1) → BreakPointResolver.Decide
+            // кабелей (главное определение rev.16.1) → BreakPointResolver.DecideLegacy
             // (своя сторона = полное ОУ клеммника = AddInConfiguration.TargetStripName).
             List<bool> lstBpFlags;
             List<bool> lstBpMulti;
@@ -2010,7 +2010,7 @@ namespace MyEplanActions
             oGeomCfg.ReferenceArrowHalfWidthMm = AddInConfiguration.CableReferenceArrowHalfWidthMm;
             oGeomCfg.ReferenceArrowNotchDepthMm = AddInConfiguration.CableReferenceArrowNotchDepthMm;
             // rev.16.2 (Task 4): BP-решения — чтение 20376/20377 уникальных
-            // кабелей (главное определение rev.16.1) → BreakPointResolver.Decide
+            // кабелей (главное определение rev.16.1) → BreakPointResolver.DecideLegacy
             // (своя сторона = полное ОУ клеммника = strTargetStripName).
             List<bool> lstBpFlags;
             List<bool> lstBpMulti;
@@ -2174,7 +2174,7 @@ namespace MyEplanActions
 
         /// <summary>rev.16.2 (Task 4): BP-решения по уникальным кабелям.
         /// Перечисление 20376/20377 (BlockFormatResolver.ResolveCableEnds —
-        /// от главного определения rev.16.1) → BreakPointResolver.Decide на
+        /// от главного определения rev.16.1) → BreakPointResolver.DecideLegacy на
         /// КАЖДЫЙ кабель oLayout (своя сторона = полное ОУ клеммника =
         /// strStripOwnDt; значение равно oStrip.Name = №20006, rev.12.2).
         /// Выходы: per-кабельные списки (BP-ставить, multi) для
@@ -2214,7 +2214,7 @@ namespace MyEplanActions
                 }
                 else
                 {
-                    oDec = BreakPointResolver.Decide(strStripOwnDt, arrEnds[0], arrEnds[1]);
+                    oDec = BreakPointResolver.DecideLegacy(strStripOwnDt, arrEnds[0], arrEnds[1]);
                     if (oDec.Kind == BpEndKind.Unreadable)
                         oLogger.Warn("[BP] кабель '" + strName +
                             "': обратный конец не определён (" + oDec.Reason +
