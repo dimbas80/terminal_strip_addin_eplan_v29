@@ -2176,12 +2176,19 @@ namespace MyEplanActions
         /// (oDmForBp.CableCoreEnds, задача 2; ключ = полное DT кабеля) →
         /// BreakPointResolver.Decide(строка DT жил) — признак multi переносится
         /// с кабельных свойств на соединения жил (план 2026-10-02, Task 1).
-        /// Жил нет (отчёт не передан / ключа нет / все значения пустые) → FALLBACK
-        /// на свойства КАБЕЛЯ 20376/20377: BlockFormatResolver.ResolveCableEnds
-        /// (главное определение rev.16.1) + BreakPointResolver.DecideLegacy. Вызов
-        /// ResolveCableEnds ЛЕНИВЫЙ и ОДИН: он перечисляет функции по ВСЕМУ проекту
-        /// (дорого + ~21 строка [CABENDS] в логе), поэтому при живых 31019/31020
-        /// не выполняется вовсе, а при fallback — один раз на весь прогон.
+        /// Жилы не дали решения → FALLBACK на свойства КАБЕЛЯ 20376/20377:
+        /// BlockFormatResolver.ResolveCableEnds (главное определение rev.16.1) +
+        /// BreakPointResolver.DecideLegacy. Откат срабатывает в ДВУХ случаях
+        /// (фикс-раунд 1): (1) читаемых DT жил нет вовсе; (2) DT есть, но Decide
+        /// вернул 'own-end-missing'/'no-core-ends' — т.е. среди них нет ОУ нашего
+        /// клеммника (гейт задачи 0 открыт: 31019/31020 могут отдавать не ОУ
+        /// клеммника, и без отката все точки разрыва пропали бы разом). Проверка
+        /// по Reason, не по Kind. Вызов ResolveCableEnds ЛЕНИВЫЙ и ОДИН: он
+        /// перечисляет функции по ВСЕМУ проекту (дорого + ~21 строка [CABENDS] в
+        /// логе), поэтому при годных 31019/31020 не выполняется вовсе, а при
+        /// откате — один раз на весь прогон.
+        /// В конце — одна сводка [BP-SUM-REASON] (LogBpReasonSummary): что
+        /// наклассифицировалось и сколько кабелей ушло в откат.
         /// Своя сторона в обоих путях = полное ОУ клеммника (strStripOwnDt, равно
         /// oStrip.Name = №20006, rev.12.2); сравнение — только Ordinal (в Decide).
         /// Выходы: per-кабельные списки (BP-ставить, multi) для
@@ -2201,54 +2208,73 @@ namespace MyEplanActions
             lstBpFlags = new List<bool>();
             lstBpMulti = new List<bool>();
             lstDecisions = new List<BreakPointDecision>();
-            // rev.16.3: legacy-концы 20376/20377 — по требованию, только если
-            // встретился кабель без жил. null = ещё НЕ запрашивались (важно:
-            // ResolveCableEnds может вернуть ПУСТЫЙ словарь — это не «не
-            // запрашивались», повторный вызов был бы лишним перечислением).
+            // Фикс-раунд 1 (ревью, Minor 4): WARN «проект недоступен» — ДО раннего
+            // return'а, как было в rev.16.2: иначе комбинация «layout пуст + проект
+            // недоступен» молчала. Текст уточнён под rev16.3 — без проекта нечитаем
+            // только fallback по 20376/20377.
+            if (oProjectForBp == null)
+                oLogger.Warn("[BP] проект недоступен — 20376/20377 не читаются, " +
+                    "fallback по жилым недоступен");
+            // rev.16.3: legacy-концы 20376/20377 — по требованию, только если жилы
+            // не разобрали кабель (нет читаемых DT ИЛИ «своего конца нет среди
+            // них»). null = ещё НЕ запрашивались (важно: ResolveCableEnds может
+            // вернуть ПУСТЫЙ словарь — это не «не запрашивались», повторный вызов
+            // был бы лишним перечислением по всему проекту).
             Dictionary<string, string[]> dicLegacyEnds = null;
-            if (oLayout == null || oLayout.Cables == null) return;
+            int nFallback = 0;   // кабелей, где жилы не помогли → решение по 20376/20377
+            if (oLayout == null || oLayout.Cables == null)
+            {
+                // Свод печатается и на пустом layout (нули) — иначе на стенде
+                // строка [BP-SUM-REASON] просто отсутствовала бы.
+                LogBpReasonSummary(lstDecisions, nFallback, oLogger);
+                return;
+            }
             for (int i = 0; i < oLayout.Cables.Count; i++)
             {
                 CableModel oCable = oLayout.Cables[i];
                 string strName = oCable != null ? oCable.Name : null;
-                // Шаг 2.1: концы жил по кабелю. oDmForBp == null (отчёт в ветке
-                // вызова недоступен) = всегда fallback, НЕ заглушка.
+                // Шаг 2.1: концы жил по кабелю. oDmForBp == null — ЗАЩИТНЫЙ guard:
+                // обе ветки вызова (UI — Run(), headless — RunPipeline) передают
+                // гарантированно не-null отчёт. На этот случай поведение одно:
+                // всегда fallback, без заглушки, молчащей о проблеме.
                 List<string> lstCore = null;
                 if (oDmForBp != null && !string.IsNullOrEmpty(strName))
                     oDmForBp.CableCoreEnds.TryGetValue(strName, out lstCore);
                 string[] arrCore = (lstCore != null && lstCore.Count > 0)
                     ? lstCore.ToArray()
                     : null;
-                BreakPointDecision oDec;
+                // Инициализатор null обязателен: ниже две точки присваивания
+                // (новая попытка / fallback), иначе компилятор даёт CS0165
+                // «use of unassigned local variable» на третьей ветке.
+                BreakPointDecision oDec = null;
+                // null = fallback не требуется; иначе — причина в строку [BP-FALLBACK].
+                string strFallBackWhy = null;
                 if (arrCore != null)
                 {
                     // Шаг 2.2: новая ветка — признак multi по списку DT жил.
                     oDec = BreakPointResolver.Decide(strStripOwnDt, arrCore);
-                    if (oDec.Kind == BpEndKind.Unreadable)
-                        oLogger.Warn("[BP] кабель '" + strName +
-                            "': обратный конец не определён (" + oDec.Reason +
-                            ") — BP не ставится");
-                    else
-                        oLogger.Log("[INFO] [BP-DECIDE] '" + strName + "': " +
-                            oDec.Reason + (oDec.MultiStrip ? " (multi)" : ""));
+                    // Фикс-раунд 1 (ревью, Important 1): откат нужен не только при
+                    // отсутствии DT жил, но и когда новая логика НЕ НАШЛА свой
+                    // конец: в гейте задачи 0 не исключено, что 31019/31020
+                    // отдают не ОУ клеммника (например ОУ клеммы «…+#1-X3:1.2» или
+                    // DT кабеля) — тогда каждый кабель получил бы 'own-end-missing'
+                    // и точки разрыва пропали бы совсем. Проверка СТРОГО по
+                    // Reason (только он различает эти случаи), не по Kind.
+                    if (oDec.Reason == "own-end-missing" || oDec.Reason == "no-core-ends")
+                        strFallBackWhy = "31019/31020 → " + oDec.Reason;
                 }
                 else
+                    strFallBackWhy = "31019/31020 пусты";
+                if (strFallBackWhy != null)
                 {
-                    // Шаг 2.3: жил нет → решение по 20376/20377 (старая логика).
+                    // Шаг 2.3: жилы кабель не разобрали → решение по 20376/20377.
+                    nFallback++;
                     oLogger.Log("[BP-FALLBACK] '" + (strName ?? "<без имени>") +
-                        "': 31019/31020 пусты — решение по 20376/20377");
+                        "': " + strFallBackWhy + " — решение по 20376/20377");
                     if (dicLegacyEnds == null)
-                    {
-                        // WARN здесь, а не на входе: без проекта fallback не
-                        // читаем, но при живых 31019/31020 он и не нужен — входной
-                        // WARN кричал бы «BP не ставится» там, где BP ставится.
-                        if (oProjectForBp == null)
-                            oLogger.Warn("[BP] проект недоступен — 20376/20377 " +
-                                "не читаются, fallback по жилым недоступен");
                         dicLegacyEnds = oProjectForBp != null
                             ? BlockFormatResolver.ResolveCableEnds(oProjectForBp, oLogger, "[BP]")
                             : new Dictionary<string, string[]>();
-                    }
                     string[] arrEnds;
                     if (string.IsNullOrEmpty(strName) ||
                         !dicLegacyEnds.TryGetValue(strName, out arrEnds) || arrEnds == null)
@@ -2274,11 +2300,72 @@ namespace MyEplanActions
                                 oDec.Reason + (oDec.MultiStrip ? " (multi)" : ""));
                     }
                 }
+                else
+                {
+                    // Новая ветка сработала — логи решения (как в rev.16.2).
+                    if (oDec.Kind == BpEndKind.Unreadable)
+                        oLogger.Warn("[BP] кабель '" + strName +
+                            "': обратный конец не определён (" + oDec.Reason +
+                            ") — BP не ставится");
+                    else
+                        oLogger.Log("[INFO] [BP-DECIDE] '" + strName + "': " +
+                            oDec.Reason + (oDec.MultiStrip ? " (multi)" : ""));
+                }
                 lstDecisions.Add(oDec);
                 lstBpFlags.Add(oDec != null && oDec.Kind != BpEndKind.Unreadable);
                 lstBpMulti.Add(oDec != null && oDec.MultiStrip &&
                     oDec.Kind == BpEndKind.TerminalStrip);
             }
+            LogBpReasonSummary(lstDecisions, nFallback, oLogger);
+        }
+
+        /// <summary>rev16.3 (фикс-раунд 1, ревью Important 1 ч.2): ОДНА сводная
+        /// строка [BP-SUM-REASON] по фактическим Reason-строкам BreakPointResolver
+        /// (+ «no-ends-read» от самого потребителя) — вместо того чтобы собирать
+        /// картину по N WARN'ов. Причина, которой резолвер не знает (если он
+        /// пополнится), уходит в «прочее», а не теряется.
+        /// nFallback — сколько кабелей жилы НЕ разобрали и увели в 20376/20377.
+        /// Поле добавлено сверх запрошенного формата намеренно: после отката
+        /// решения подменяются, и 'own-end-missing' в сводке НЕ виден — а именно
+        /// он показывает, что 31019/31020 вернули не ОУ клеммника (развилка
+        /// задачи 0). Без этого счётчика главный симптом деградации в сводке бы
+        /// пропал. Печатается и на пустом layout (нули), и всегда — одна строка,
+        /// форма фиксированная (удобно диффать прогоны).</summary>
+        private static void LogBpReasonSummary(List<BreakPointDecision> lstDecisions,
+            int nFallback, DiagnosticLogger oLogger)
+        {
+            string[] arrKnown = new string[] {
+                "multi-strip", "opposite-strip", "opposite-device", "own-end-missing",
+                "no-core-ends", "both-ends-unreadable", "own-end-only",
+                "multi-strip same-cabinet", "side-not-found", "opposite-unreadable",
+                "no-ends-read" };
+            string strLine = "[BP-SUM-REASON] ";
+            for (int r = 0; r < arrKnown.Length; r++)
+                strLine += (r == 0 ? "" : "; ") + arrKnown[r] + "=" +
+                    CountReason(lstDecisions, arrKnown[r]).ToString(CultureInfo.InvariantCulture);
+            int nOther = 0;
+            for (int i = 0; i < lstDecisions.Count; i++)
+            {
+                bool bKnown = false;
+                if (lstDecisions[i] != null)
+                    for (int r = 0; r < arrKnown.Length; r++)
+                        if (lstDecisions[i].Reason == arrKnown[r]) { bKnown = true; break; }
+                if (!bKnown) nOther++;
+            }
+            strLine += "; прочее=" + nOther.ToString(CultureInfo.InvariantCulture) +
+                "; fallback=" + nFallback.ToString(CultureInfo.InvariantCulture);
+            oLogger.Log(strLine);
+        }
+
+        /// <summary>Сколько решений имеют ровно эту Reason-строку (Ordinal, как
+        /// весь rev.16.3). null-решение не считается.</summary>
+        private static int CountReason(List<BreakPointDecision> lstDecisions,
+            string strReason)
+        {
+            int n = 0;
+            for (int i = 0; i < lstDecisions.Count; i++)
+                if (lstDecisions[i] != null && lstDecisions[i].Reason == strReason) n++;
+            return n;
         }
 
         /// <summary>H-3 (rev.12.2): суммарный габарит дерева отчёта для bbox-fallback
