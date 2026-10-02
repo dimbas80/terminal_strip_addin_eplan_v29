@@ -18,7 +18,15 @@ namespace MyEplanActions
     /// 31019/31020 → новая Decide(strStripOwnDt, string[] arrEnds) по списку
     /// DT (резолвер шкафной сигнатуры CabinetKeyOf); прежняя 3-аргументная
     /// Decide сохранена под именем DecideLegacy — fallback на 20376/20377
-    /// (вызов AnalyzeAction.PrepareBreakPointDecisions).</summary>
+    /// (вызов AnalyzeAction.PrepareBreakPointDecisions).
+    /// Фикс-волна 02.10.2026 (задача Ф-2): устранены три дефекта стенда —
+    /// A1 (сбор пуст: ключ DmReport.CableCoreEnds был по oRow.CableName, который
+    /// на стенде всегда null — EplanTerminalStripReader.FillCable), A3 (ключ шкафа
+    /// склеивал ВСЕ '+'-сегменты, а в формате жил сегмент один ⇒ ЯЧ67/X3 и
+    /// ЯЧ67/X2 давали РАЗНЫЕ ключи), A2 («свой конец» искался Ordinal-равенством
+    /// СЫРОГО DT ⇒ не сходилось из-за «#1» и «:пин»). Теперь шкаф = пара
+    /// (Место сборки, Место установки) [CabinetKeyOf], «свой конец» = пара
+    /// (ключ шкафа, обозначение без «:пин») [DesignationOf].</summary>
     public enum BpEndKind
     {
         TerminalStrip,
@@ -56,7 +64,8 @@ namespace MyEplanActions
         }
 
         /// <summary>Имя устройства в полном DT — хвост после ПОСЛЕДНЕГО дефиса
-        /// (примеры стенда: '=HII-1.1++ЯЧ67+#1-X2' → 'X2'). null/пустой → "".
+        /// (примеры стенда: '=HII-1.1++ЯЧ67+#1-X2' → 'X2', '=HII-1.1++ЯЧ67-X3:1'
+        /// → 'X3:1'). null/пустой → "".
         /// Паттерн ParseDeviceTag (CableSymbolCreator) — тут нужен только блок
         /// имени, остальные блоки не разбираются (не используются правилами).
         /// rev16.3: public — переиспользуется Decide-списком, второй разбор
@@ -68,38 +77,90 @@ namespace MyEplanActions
             return nDash >= 0 && nDash + 1 < strDt.Length ? strDt.Substring(nDash + 1) : "";
         }
 
-        /// <summary>«Шкафная» сигнатура DT (rev16.3, решение пользователя
-        /// 02.10.2026) — ТОЛЬКО сегменты между '+' строки DT: без '=…'-префикса
-        /// станции (первый '+' включительно отрезается) и без '#…'-суффикса
-        /// установки (хвост от первого '#' включительно отрезается). Остаток
-        /// делится по '+', пустые сегменты выбрасываются, непустые склеиваются
-        /// разделителем U+0001. Примеры стенда:
-        ///   '=HII-1.1++ЯЧ67+#1-X3' → 'ЯЧ67'  (тот же шкаф, другое имя)
-        ///   '=HII-1.1++ЯЧ67+#1-X2' → 'ЯЧ67'
-        ///   '=ТСН-1++ЯЧ17+#1-X2'   → 'ЯЧ17'  (другой шкаф)
-        ///   '=HII-1.1++М+#1-SB1'   → 'М'     (устройство)
-        ///   '=КНТ-3А++ГрЩУ-2+#1-X01' → 'ГрЩУ-2' (вложенный шкаф)
-        /// '+' нет вовсе → остаток без ведущего '=' ('=X3' → 'X3');
+        /// <summary>ОБОЗНАЧЕНИЕ устройства = DeviceNameOf БЕЗ хвоста «:пин»
+        /// (фикс-волна 02.10.2026, формат значений №31019/31020). Именно
+        /// обозначение, а не сырой хвост, УЧАСТВУЕТ в сравнении концов: стенд даёт
+        /// 'X3:1' и 'X3:2' у ПИН ОДНОГО клеммника — это ОДИН конец, тогда как
+        /// 'X3' против 'X2' — разные. Хвост отбрасывается, только если он ЦЕЛИКОМ
+        /// цифровой (пин): 'K2:X4:3' остаётся целиком (иначе имя вида
+        /// '=HII-1.1-A1-K2:X4:3' потеряло бы значимую часть). null/"" → "".
+        /// Порядок вызовов: только СВЕРХ DeviceNameOf, второй разбор имени
+        /// заводить нельзя (расхождение разборов = ложный multi).</summary>
+        public static string DesignationOf(string strDt)
+        {
+            string strName = DeviceNameOf(strDt);
+            if (strName.Length == 0) return strName;
+            int nColon = strName.LastIndexOf(':');
+            if (nColon < 0) return strName;
+            for (int i = nColon + 1; i < strName.Length; i++)
+                if (!char.IsDigit(strName[i])) return strName;
+            return strName.Substring(0, nColon);
+        }
+
+        /// <summary>«Шкафная» сигнатура DT (фикс-волна 02.10.2026, ПРАВИЛО
+        /// ЗАКАЗЧИКА) — ПАРА (Место сборки, Место установки), U+0001-разделитель:
+        ///   '++' → Место сборки, одиночный '+' → Место установки,
+        ///   '#' и '-' останавливают разбор (структура и обозначение — не берём),
+        ///   '=Установка' отбрасывается до первого '+', поле без маркера = "".
+        /// Смысл: у клеммников ОДНОГО шкафа ОБА поля равны, одно может быть пустым
+        /// (в этом проекте «+ Место установки» пуст, шкаф = «++»).
+        /// Разбор строго СЛЕВА НАПРАВО, первый маркер каждого вида побеждает,
+        /// вложенность не теряется ('=Уст+МестоУстановки++МестоСборки-…' → оба
+        /// поля). Примеры (стенд 02.10 + фикстуры):
+        ///   '=HII-1.1++ЯЧ67+#1-X3'    → 'ЯЧ67' + U+0001   (наш ОУ, формат 20006)
+        ///   '=HII-1.1++ЯЧ67-X3:1'     → 'ЯЧ67' + U+0001   (ТОТ ЖЕ ключ! формат жилы)
+        ///   '=HII-1.1++ЯЧ67-X2:1'     → 'ЯЧ67' + U+0001   (тот же шкаф, другое имя)
+        ///   '=HII-1.1++ПУ-XT1:1'      → 'ПУ'   + U+0001   (другой шкаф)
+        ///   '=ТСН-1++ЯЧ17+#1-X2:8'    → 'ЯЧ17' + U+0001   (другой шкаф, оба формата)
+        ///   '=КНТ-3А++ГрЩУ-2+#1-X01'  → 'ГрЩУ' + U+0001   (вложенный шкаф; дефис
+        ///        ВНУТРИ имени обрывает поле — одинаково для обоих форматов, ключи
+        ///        '=…++ГрЩУ-2+#1-X01' и '=…++ГрЩУ-2-X01:1' совпадают)
+        ///   '=HII-1.1++М+#1-SB1'      → 'М'    + U+0001   (устройство)
+        /// '+' нет вовсе → маркеров полей нет: отдаём хвост без ведущего '='
+        /// ('=X3' → 'X3', '=HII-1.1-SB1:1' → как есть). ОДНОЙ общей пустой пары
+        /// здесь быть НЕ должно: все DT без '+' тогда сочлись бы одним шкафом.
         /// null/"" → "". Пробелы НЕ триммируются (в DT их не бывает).
-        /// Сравнение ключей — только Ordinal (регистр/алфавит значимы).</summary>
+        /// Сравнение ключей — только Ordinal (регистр/алфавит значимы).
+        /// ПРЕЖНЯЯ реализация (Task 1) склеивала ВСЕ непустые '+'-сегменты: в
+        /// формате жил сегмент один ('=HII-1.1++ЯЧ67-X3:1' → 'ЯЧ67-X3:1'), и
+        /// ЯЧ67/X3 против ЯЧ67/X2 давали РАЗНЫЕ ключи — «тот же шкаф» не
+        /// срабатывал никогда (дефект A3).</summary>
         public static string CabinetKeyOf(string strDt)
         {
             if (string.IsNullOrEmpty(strDt)) return "";
-            string strRest = strDt;
-            int nHash = strRest.IndexOf('#');
-            if (nHash >= 0) strRest = strRest.Substring(0, nHash);
-            int nPlus = strRest.IndexOf('+');
-            if (nPlus >= 0) strRest = strRest.Substring(nPlus + 1);
-            else if (strRest.StartsWith("=", StringComparison.Ordinal))
-                strRest = strRest.Substring(1);
-            string strKey = "";
-            string[] arrSeg = strRest.Split('+');
-            for (int i = 0; i < arrSeg.Length; i++)
+            int nPlus = strDt.IndexOf('+');
+            if (nPlus < 0)
             {
-                if (arrSeg[i].Length == 0) continue;
-                strKey = strKey.Length == 0 ? arrSeg[i] : strKey + "\u0001" + arrSeg[i];
+                // '+' нет — полей нет; прежнее поведение для таких DT.
+                string strNoPlus = strDt;
+                int nHash = strNoPlus.IndexOf('#');
+                if (nHash >= 0) strNoPlus = strNoPlus.Substring(0, nHash);
+                return strNoPlus.StartsWith("=", StringComparison.Ordinal)
+                    ? strNoPlus.Substring(1) : strNoPlus;
             }
-            return strKey;
+            string strAssembly = "", strInstall = "";
+            int nPos = nPlus;
+            while (nPos < strDt.Length)
+            {
+                char ch = strDt[nPos];
+                if (ch == '#' || ch == '-') break;          // структура/обозначение
+                if (ch != '+') { nPos++; continue; }         // страховка (недостижимо)
+                bool bDouble = nPos + 1 < strDt.Length && strDt[nPos + 1] == '+';
+                int nStart = bDouble ? nPos + 2 : nPos + 1;
+                int nEnd = nStart;
+                while (nEnd < strDt.Length && strDt[nEnd] != '+' &&
+                       strDt[nEnd] != '#' && strDt[nEnd] != '-') nEnd++;
+                // Первый маркер каждого вида побеждает — дальше только разбираемся
+                // с ДРУГИМ полем (значение повторного поля отбрасываем).
+                if (bDouble)
+                {
+                    if (strAssembly.Length == 0) strAssembly = strDt.Substring(nStart, nEnd - nStart);
+                }
+                else if (strInstall.Length == 0)
+                    strInstall = strDt.Substring(nStart, nEnd - nStart);
+                nPos = nEnd;   // стоим на разделителе — цикл обработает '+' или выйдет
+            }
+            return strAssembly + "\u0001" + strInstall;
         }
 
         /// <summary>Буквенный код / счётчик имени устройства: ведущие нецифровые
@@ -203,33 +264,47 @@ namespace MyEplanActions
         /// <summary>Классификация по СПИСКУ DT концов жил (№31019/31020,
         /// rev16.3, решение пользователя 02.10.2026). arrEnds — все прочитанные
         /// DT соединений жил кабеля; strStripOwnDt — полное ОУ нашего клеммника.
-        /// Шкаф = CabinetKeyOf (сегменты между '+'); сигнал multi = ТОТ ЖЕ шкаф
-        /// И клеммник И отличное буквенное обозначение после последнего дефиса
-        /// (X3 против X2) — по ПРАВИЛУ ЗАКАЗЧИКА 02.10.2026. Всё прочее, что не
-        /// равно нашему DT, — противоположный конец (в т.ч. клеммник ДРУГОГО
-        /// шкафа и устройство своего шкафа: multi там НЕ присваивается).
+        /// Шкаф = CabinetKeyOf = пара (Место сборки, Место установки); «свой конец» =
+        /// пара (ключ шкафа, обозначение БЕЗ «:пин») — по ПРАВИЛУ ЗАКАЗЧИКА
+        /// 02.10.2026 дословно: «если свойство совпадает с полным ОУ клеммника —
+        /// это свой конец; если совпадает по шкафу, но буквенное обозначение
+        /// отличается — multi; если не совпадает — противоположный конец».
+        /// Сигнал multi = ТОТ ЖЕ шкаф И клеммник И отличное обозначение
+        /// (X3 против X2). Всё прочее, что не равно нашей паре, —
+        /// противоположный конец (в т.ч. клеммник ДРУГОГО шкафа и устройство
+        /// своего шкафа: multi там НЕ присваивается).
         /// Правила (первое совпавшее), все сравнения строк Ordinal, элементы
         /// null/"" игнорируются:
+        ///   0) разбор каждого элемента: пара (CabinetKeyOf, DesignationOf);
+        ///      пара == наша → «свой конец» (пины 'X3:1'/'X3:2' — один конец);
         ///   1) нет ни одного непустого элемента → 'no-core-ends';
-        ///   2) своего DT среди значений нет → 'own-end-missing' (проверяется
+        ///   2) своего конца среди значений нет → 'own-end-missing' (проверяется
         ///      ДО multi, иначе «нет своего конца» выдавалось бы за multi);
         ///   3) есть «свой шкаф + клеммник + другое имя» → multi: при наличии
         ///      чужого шкафа Reason = 'multi-strip same-cabinet', иначе
         ///      'multi-strip';
         ///   4) иначе противоположный конец (чужой шкаф ИЛИ устройство своего
-        ///      шкафа) → он же OppositeDt; его имя начинается с X/Х ⇒
+        ///      шкафа) → он же OppositeDt; его обозначение начинается с X/Х ⇒
         ///      'opposite-strip' при MultiStrip = false (клеммник чужого шкафа
         ///      multi НЕ даёт — ревью, I1), иначе 'opposite-device';
-        ///   5) иначе (только свой DT) → 'own-end-only' (BP ставить не на что).
+        ///   5) иначе (только свой конец) → 'own-end-only' (BP ставить не на что).
         /// OppositeDt — детерминированный (StringComparer.Ordinal, независимо от
         /// порядка чтения жил): правило 3 — первый чужой шкаф, иначе первый
         /// «свой шкаф + клеммник + другое имя» (иначе ОУ точки разрыва пусто —
-        /// ревью, C2); правила 2 и 4 — первый «прочий».</summary>
+        /// ревью, C2); правила 2 и 4 — первый «прочий». Хвост «:пин» в
+        /// OppositeDt СОХРАНЯЕТСЯ (значение жилы как есть — правило не требует
+        /// его чистить; ComposeBpDeviceTag разбирает имя через DeviceNameOf).</summary>
         public static BreakPointDecision Decide(string strStripOwnDt, string[] arrEnds)
         {
             // Разбор списка одним проходом: свой / «свой шкаф + клеммник + другое
             // имя» (сигнал multi) / всё остальное (кандидат в OppositeDt).
+            // «Свой конец» = ПАРА (ключ шкафа, обозначение) равна нашей, а не
+            // Ordinal-равенство сырых DT: на стенде свой ОУ приходит как
+            // '=HII-1.1++ЯЧ67+#1-X3' (есть «#1»), а у жил — '=HII-1.1++ЯЧ67-X3:1'
+            // (нет «#», есть «:пин»), поэтому точное равенство не сходилось
+            // НИКОГДА, и каждый кабель уходил в 'own-end-missing' (дефект A2).
             string strOwnKey = CabinetKeyOf(strStripOwnDt);
+            string strOwnDes = DesignationOf(strStripOwnDt);
             bool bOwn = false, bSameCabStrip = false;
             string strFirstSameCab = null;
             string strFirstForeign = null;
@@ -239,19 +314,24 @@ namespace MyEplanActions
                 {
                     string strDt = arrEnds[i];
                     if (string.IsNullOrEmpty(strDt)) continue;
-                    if (string.Equals(strDt, strStripOwnDt, StringComparison.Ordinal))
+                    string strKey = CabinetKeyOf(strDt);
+                    string strDes = DesignationOf(strDt);
+                    // 1) СВОЙ конец: тот же шкаф И то же обозначение. Пин отброшен
+                    // DesignationOf, поэтому 'X3:1' и 'X3:2' — один конец, а
+                    // 'X3' против 'X2' — разные.
+                    if (string.Equals(strKey, strOwnKey, StringComparison.Ordinal) &&
+                        string.Equals(strDes, strOwnDes, StringComparison.Ordinal))
                     {
                         bOwn = true;
                         continue;
                     }
-                    // ИДЕНТИЧНОСТЬ сигнала multi: тот же шкаф И клеммник И имя
-                    // отличается (свой DT уже отсеян выше). Проверка
-                    // IsStripCodeLetter ОБЯЗАТЕЛЬНА: без неё любое устройство /
-                    // предохранитель / реле своего шкафа даёт ложный multi
-                    // ('=…++ЯЧ67+#1-SB1' — тот же шкаф, но НЕ клеммник) → две
-                    // точки разрыва вместо одной (ревью, находка C1).
-                    if (IsStripCodeLetter(DeviceNameOf(strDt)) &&
-                        string.Equals(CabinetKeyOf(strDt), strOwnKey, StringComparison.Ordinal))
+                    // 2) ТОТ ЖЕ ШКАФ + клеммник + ДРУГОЕ обозначение — сигнал multi.
+                    // Проверка IsStripCodeLetter ОБЯЗАТЕЛЬНА: без неё любое
+                    // устройство / предохранитель / реле своего шкафа даёт ложный
+                    // multi ('=…++ЯЧ67+#1-SB1' — тот же шкаф, но НЕ клеммник) →
+                    // две точки разрыва вместо одной (ревью, находка C1).
+                    if (string.Equals(strKey, strOwnKey, StringComparison.Ordinal) &&
+                        IsStripCodeLetter(strDes))
                     {
                         bSameCabStrip = true;
                         if (strFirstSameCab == null ||
@@ -284,7 +364,7 @@ namespace MyEplanActions
             // (ревью, находка I1).
             if (strFirstForeign != null)
             {
-                bool bOppStrip = IsStripCodeLetter(DeviceNameOf(strFirstForeign));
+                bool bOppStrip = IsStripCodeLetter(DesignationOf(strFirstForeign));
                 return MkOpp(false,
                     bOppStrip ? "opposite-strip" : "opposite-device",
                     bOppStrip ? BpEndKind.TerminalStrip : BpEndKind.Device,

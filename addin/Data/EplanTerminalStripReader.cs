@@ -368,15 +368,27 @@ namespace MyEplanActions
             oRow.CableDest = oInfo.CableDest;
             // rev.16.3 (задача 2): сбор DT жил по кабелю в DmReport.CableCoreEnds.
             // Стоит ПОСЛЕ присваивания oRow.CableName/31019/31020 (нужен готовый
-            // oRow.CableName как ключ) и ВНЕ ветки первого чтения — иначе повторный
-            // вызов на тот же уникальный Connection (каждый вывод/пин) ничего бы не
-            // добавлял, а кабель без первого попадания не получил бы ключ вовсе.
-            // Ключ — только oRow.CableName: у Bridge ConnectionName не заполняется
-            // никогда, PeerName — другое поле.
-            if (!string.IsNullOrEmpty(oRow.CableName))
+            // DT жилы) и ВНЕ ветки первого чтения — иначе повторный вызов на тот
+            // же уникальный Connection (каждый вывод/пин) ничего бы не добавлял, а
+            // кабель без первого попадания не получил бы ключ вовсе.
+            // Фикс-волна 02.10.2026 (задача Ф-2, дефект A1). КЛЮЧ — СНАЧАЛА
+            // oRow.ConnectionName, при пустом — oRow.CableName: полное DT кабеля
+            // живёт в ConnectionName (проба rev.9.5, так же в CableLayoutBuilder:34),
+            // а CableName — CDP-путь, который на стенде ВСЕГДА null ('cable=<провод>')
+            // ⇒ оттуда и был '[CBP-SUM] кабелей с DT жил: 0' и 100%-откат на
+            // 20376/20377. Порядок полей ДОЛЖЕН совпадать с CableLayoutBuilder:
+            // потребитель (AnalyzeAction.PrepareBreakPointDecisions) ищет
+            // oDm.CableCoreEnds[strCable] по oCable.Name = ConnectionName ?? CableName.
+            // Фильтр — MatchBuilder.IsCableRow(oRow) (тот же предикат, по которому
+            // TerminalConnectionModelBuilder помечает строку кабельной): без него в
+            // словарь попали бы не-кабельные ConnectionName ('=++ЯЧ67+#4' у Int) и
+            // 'peer=…' у мостов (у Bridge ConnectionName не заполняется вовсе).
+            string strCableKey = oRow.ConnectionName;
+            if (string.IsNullOrEmpty(strCableKey)) strCableKey = oRow.CableName;
+            if (MatchBuilder.IsCableRow(oRow) && !string.IsNullOrEmpty(strCableKey))
             {
-                AddCoreEnd(oReport, oRow.CableName, oRow.CableSource);
-                AddCoreEnd(oReport, oRow.CableName, oRow.CableDest);
+                AddCoreEnd(oReport, strCableKey, oRow.CableSource);
+                AddCoreEnd(oReport, strCableKey, oRow.CableDest);
             }
         }
 
