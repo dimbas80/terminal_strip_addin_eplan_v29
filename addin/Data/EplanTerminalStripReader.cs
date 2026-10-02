@@ -147,6 +147,10 @@ namespace MyEplanActions
             _log.Log("[CBLPROP-SUM] соединений: " + _nCblPropConns + ", свойств: " + _nCblPropValues);
             _log.Log("[PROBE5-SUM] соединений: " + _nProbe5Conns + ", direct-ok: " + _nProbe5DirectOk +
                 ", cdp-ok: " + _nProbe5CdpOk + ", connprop: " + _nProbe5ConnProps);
+            // rev.16.3 (задача 2): сколько кабелей получили хотя бы один непустой
+            // DT жилы (#31019/#31020) — сходится с числом ключей CableCoreEnds и с
+            // числом строк "[CBP] '<кабель>': <dt>" (одна на уникальный DT кабеля).
+            _log.Log("[CBP-SUM] кабелей с DT жил: " + oReport.CableCoreEnds.Count);
             return oReport;
         }
 
@@ -356,6 +360,51 @@ namespace MyEplanActions
             oRow.IsCableCdp = oInfo.IsCableCdp;
             oRow.CableSource = oInfo.CableSource;
             oRow.CableDest = oInfo.CableDest;
+            // rev.16.3 (задача 2): сбор DT жил по кабелю в DmReport.CableCoreEnds.
+            // Стоит ПОСЛЕ присваивания oRow.CableName/31019/31020 (нужен готовый
+            // oRow.CableName как ключ) и ВНЕ ветки первого чтения — иначе повторный
+            // вызов на тот же уникальный Connection (каждый вывод/пин) ничего бы не
+            // добавлял, а кабель без первого попадания не получил бы ключ вовсе.
+            // Ключ — только oRow.CableName: у Bridge ConnectionName не заполняется
+            // никогда, PeerName — другое поле.
+            if (!string.IsNullOrEmpty(oRow.CableName))
+            {
+                AddCoreEnd(oReport, oRow.CableName, oRow.CableSource);
+                AddCoreEnd(oReport, oRow.CableName, oRow.CableDest);
+            }
+        }
+
+        /// <summary>rev.16.3 (задача 2): один конец жилы (#31019/#31020) в
+        /// DmReport.CableCoreEnds по ключу-кабелю. Пустое имя кабеля (провод, не
+        /// кабель) и пустое/нечитаемое значение свойства (null от SafeConnPropText)
+        /// пропускаются. Дубль по Ordinal не добавляется, поэтому строка [CBP]
+        /// печатается РОВНО один раз на пару «кабель+DT», сколько бы выводов/пинов
+        /// у этого соединения ни было.
+        /// Формат строки [CBP] ОТЛИЧАЕТСЯ от [CBP] первого чтения соединения
+        /// (задача 0) позицией двоеточия: там после имени идёт «conn=», здесь —
+        /// «: » сразу, поэтому фильтр стенда '\\[CBP\\] '[^']*': ' разводит их.
+        /// Дополнение к букве брифа: бриф просил лог по условию Count == 1, но это
+        /// условие срабатывает лишь на ПЕРВЫЙ уникальный DT кабеля (второй DT того
+        /// же соединения даёт Count == 2) — полный перечень DT, требуемый гейтом
+        /// шага 4 («со всеми DT этого кабеля»), не выполнился бы. Печатаем поэтому
+        /// на КАЖДЫЙ новый уникальный DT; детерминизм «первый по Ordinal»
+        /// (которого ждёт Task 3) задаёт потребитель, не ридер.</summary>
+        private void AddCoreEnd(DmReport oReport, string strCable, string strDt)
+        {
+            if (string.IsNullOrEmpty(strCable) || string.IsNullOrEmpty(strDt)) return;
+            List<string> lstEnds;
+            if (!oReport.CableCoreEnds.TryGetValue(strCable, out lstEnds))
+            {
+                lstEnds = new List<string>();
+                oReport.CableCoreEnds[strCable] = lstEnds;
+            }
+            // Явный Ordinal-обход, а не List.Contains: сравнение обязано быть
+            // Ordinal (как Decide в BreakPointResolver), а Contains для List<string>
+            // даёт то же, но это знание приходилось бы держать в голове.
+            for (int i = 0; i < lstEnds.Count; i++)
+                if (string.Equals(lstEnds[i], strDt, StringComparison.Ordinal)) return;
+            lstEnds.Add(strDt);
+            _log.Log("[CBP] '" + strCable + "': " + strDt);
         }
 
         /// <summary>№31058 «Соединение: Принадлежность=Кабель» (bool, read-only).

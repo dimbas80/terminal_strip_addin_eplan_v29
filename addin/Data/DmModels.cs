@@ -75,6 +75,15 @@ namespace MyEplanActions
         // Кабель -> число жил, встреченных в подключениях клемм (первое обнаружение
         // логируется как [DMCABLE]).
         public readonly Dictionary<string, int> CableWireCounts = new Dictionary<string, int>();
+        // rev.16.3 (задача 2): полное DT кабеля -> ВСЕ непустые значения №31019/№31020,
+        // собранные по строкам этого кабеля (Ext/Int/Bridge). Порядок — первого
+        // появления, без дублей, сравнение Ordinal; сортировки нет — детерминизм
+        // «первый по Ordinal» задаёт потребитель BreakPointResolver.Decide(список DT).
+        // Ключ — oRow.CableName: у Bridge ConnectionName не заполняется никогда,
+        // PeerName лежит в другом поле, так что ориентир только на имя кабеля.
+        // Кабель без непустых значений 31019/31020 ключом НЕ появляется.
+        public readonly Dictionary<string, List<string>> CableCoreEnds =
+            new Dictionary<string, List<string>>();
         // rev.5.0: статистика пробы CDP/№31058 по УНИКАЛЬНЫМ соединениям (кэш CableInfo).
         public int ConnCdpZero;
         public int ConnCdpOne;
