@@ -30,8 +30,14 @@ namespace MyEplanActions
         // выбора набора — заполняет AnalyzeAction по BreakPointDecision
         // ДО CreateBreakPoints (план умолчал, creator'у эти данные нужны:
         // OppositeDt — полное ОУ обратного конца, Kind — его тип).
-        public string OppositeDt;        // полное ОУ обратного конца: DT из 31019/31020
-                                      // (жур. 2 → жилы; 20376/20377 — fallback)
+        public string OppositeDt;        // ПОЛНОЕ ОУ обратного конца. Источник —
+                                      // 20376/20377 (фикс-раунд 1 02.10.2026):
+                                      // значения жил 31019/31020 НЕ полные (нет
+                                      // '#', у устройств нет '++МестоСборки'),
+                                      // на них терялась структура ОУ, поэтому
+                                      // для ИМЕНИ точки используется только
+                                      // 20376/20377 (в поток идёт то, что
+                                      // подставил AnalyzeAction).
         public BpEndKind Kind;           // TerminalStrip / Device / Unreadable
     }
 

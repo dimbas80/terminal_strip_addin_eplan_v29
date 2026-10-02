@@ -476,9 +476,14 @@ namespace MyEplanActions
                 lstBpFlags, lstBpMulti);   // rev.16.2: BP-списки (фича в двух режимах)
 
             // rev.16.3 (Task 3): начинка BreakPointPlacement (OppositeDt/Kind) —
-            // ИСТОЧНИК DT — САМО РЕШЕНИЕ (OppositeDt): его заполняет Decide по
-            // списку DT жил 31019/31020 либо DecideLegacy + вызывающий (fallback
-            // 20376/20377). Потребляет BreakPointSymbolCreator.
+            // ИСТОЧНИК DT — САМО РЕШЕНИЕ (OppositeDt). ФИКС-РАУНД 1 (02.10.2026):
+            // в oDec.OppositeDt к этому моменту лежит ПОЛНЫЙ DT из 20376/20377
+            // (подмена сделана в PrepareBreakPointDecisions, PickOppositeNameDt) —
+            // НЕ значение из жил 31019/31020: те не полные (нет '#', у значений
+            // для устройств нет '++МестоСборки'), и ComposeBpDeviceTag на них
+            // терял структуру ОУ. Решение (Kind) при этом остаётся из жил.
+            // Потребляет BreakPointSymbolCreator. Обе точки начинки (Run и
+            // RunPipeline) симметричны — сверить при правках.
             for (int i = 0; i < oGeom.BreakPoints.Count; i++)
             {
                 if (oGeom.BreakPoints[i] == null) continue;
@@ -2047,9 +2052,14 @@ namespace MyEplanActions
                 lstBpFlags, lstBpMulti);   // rev.16.2: BP-списки (фича в двух режимах)
 
             // rev.16.3 (Task 3): начинка BreakPointPlacement (OppositeDt/Kind) —
-            // ИСТОЧНИК DT — САМО РЕШЕНИЕ (OppositeDt): его заполняет Decide по
-            // списку DT жил 31019/31020 либо DecideLegacy + вызывающий (fallback
-            // 20376/20377). Потребляет BreakPointSymbolCreator.
+            // ИСТОЧНИК DT — САМО РЕШЕНИЕ (OppositeDt). ФИКС-РАУНД 1 (02.10.2026):
+            // в oDec.OppositeDt к этому моменту лежит ПОЛНЫЙ DT из 20376/20377
+            // (подмена сделана в PrepareBreakPointDecisions, PickOppositeNameDt) —
+            // НЕ значение из жил 31019/31020: те не полные (нет '#', у значений
+            // для устройств нет '++МестоСборки'), и ComposeBpDeviceTag на них
+            // терял структуру ОУ. Решение (Kind) при этом остаётся из жил.
+            // Потребляет BreakPointSymbolCreator. Обе точки начинки (Run и
+            // RunPipeline) симметричны — сверить при правках.
             for (int i = 0; i < oGeom.BreakPoints.Count; i++)
             {
                 if (oGeom.BreakPoints[i] == null) continue;
@@ -2183,10 +2193,34 @@ namespace MyEplanActions
         /// вернул 'own-end-missing'/'no-core-ends' — т.е. среди них нет ОУ нашего
         /// клеммника (гейт задачи 0 открыт: 31019/31020 могут отдавать не ОУ
         /// клеммника, и без отката все точки разрыва пропали бы разом). Проверка
-        /// по Reason, не по Kind. Вызов ResolveCableEnds ЛЕНИВЫЙ и ОДИН: он
-        /// перечисляет функции по ВСЕМУ проекту (дорого + ~21 строка [CABENDS] в
-        /// логе), поэтому при годных 31019/31020 не выполняется вовсе, а при
-        /// откате — один раз на весь прогон.
+        /// по Reason, не по Kind.
+        /// РАЗДЕЛЕНИЕ ОТВЕТСТВЕННОСТИ (фикс-раунд 1, 02.10.2026, решение
+        /// контроллера): жилы 31019/31020 дают ТОЛЬКО РЕШЕНИЕ (Kind /
+        /// MultiStrip / Reason), а DT для ИМЕНИ точки разрыва берётся из
+        /// 20376/20377 — там полная структура ('++МестоСборки#структура-имя').
+        /// Причина: значения жил НЕ полные (ни одного '#' из 12 424 на стенде,
+        /// у значений для УСТРОЙСТВ нет даже '++МестоСборки', хвост ':пин' не
+        /// часть имени) ⇒ ComposeBpDeviceTag на них терял структуру ОУ
+        /// (1400='ПУ-K140(EXT)' вместо 'ПУ' + пустые 1600/20013/20014), а
+        /// ParseDeviceTag отдавал весь хвост как место сборки. Поэтому OppositeDt,
+        /// полученный из жил, НИКОГДА не идёт в поток: остаётся для диагностики
+        /// в [BP-DECIDE], а в BreakPointPlacement.OppositeDt (начинка в двух
+        /// точках вызова) уходит ПОЛНЫЙ DT из 20376/20377 (PickOppositeNameDt —
+        /// тот же выбор «конец, не равный нашему, иначе первый», что и в
+        /// fallback-ветке).
+        /// ЕСЛИ 20376/20377 НЕ ЧИТАЮТСЯ (нет записи для кабеля / оба конца
+        /// пустые) — решение из жил ПРИМЕНЯТЬ НЕЛЬЗЯ: принудительно Unreadable
+        /// + Reason 'no-ends-read' + WARN, BP не ставится. Это ровно поведение
+        /// rev16.2 (там имя и решение всегда брались из 20376/20377), и это
+        /// осознанный размен: «нет полного DT» лучше, чем «точка разрыва с
+        /// битым ОУ».
+        /// ВЫЗОВ ResolveCableEnds БОЛЬШЕ НЕ ЛЕНИВЫЙ: он нужен почти для каждого
+        /// кабеля (имя точки), поэтому вызывается ОДИН РАЗ ДО цикла, как в
+        /// начале волны. Ленивость экономила перечисление функций по ВСЕМУ
+        /// проекту (дорого, ~21 строка [CABENDS] в логе) — но лишь когда ВСЕ
+        /// кабели давали годное решение из жил; после разделения
+        /// ответственности такого случая практически не остаётся, и ленивость
+        /// лишь ПРЯТАЛА бы второй вызов внутри цикла.
         /// В конце — одна сводка [BP-SUM-REASON] (LogBpReasonSummary): что
         /// наклассифицировалось и сколько кабелей ушло в откат.
         /// Своя сторона в обоих путях = полное ОУ клеммника (strStripOwnDt, равно
@@ -2194,9 +2228,10 @@ namespace MyEplanActions
         /// Выходы: per-кабельные списки (BP-ставить, multi) для
         /// CableGeometryBuilder.Build + parallel-список решений. DT точки разрыва
         /// берётся ИЗ РЕШЕНИЯ (BreakPointDecision.OppositeDt) — отдельного
-        /// out-параметра с концами кабеля больше нет; OppositeDt заполняют оба
-        /// пути (Decide — сам; DecideLegacy — вызывающий, по старому правилу
-        /// «противоположный = конец, не равный нашему»).
+        /// out-параметра с концами кабеля больше нет; в обоих путях OppositeDt
+        /// = ПОЛНЫЙ DT из 20376/20377 (решение — из жил, имя — из 20376/20377;
+        /// в fallback-ветке имя по старому правилу «противоположный = конец,
+        /// не равный нашему»).
         /// Без EPLAN-объектов устойчиво: перечисление не удалось → все false
         /// (BP нет, поведение прежнее) + WARN.</summary>
         private static void PrepareBreakPointDecisions(CableLayoutModel oLayout,
@@ -2215,12 +2250,16 @@ namespace MyEplanActions
             if (oProjectForBp == null)
                 oLogger.Warn("[BP] проект недоступен — 20376/20377 не читаются, " +
                     "fallback по жилым недоступен");
-            // rev.16.3: legacy-концы 20376/20377 — по требованию, только если жилы
-            // не разобрали кабель (нет читаемых DT ИЛИ «своего конца нет среди
-            // них»). null = ещё НЕ запрашивались (важно: ResolveCableEnds может
-            // вернуть ПУСТЫЙ словарь — это не «не запрашивались», повторный вызов
-            // был бы лишним перечислением по всему проекту).
-            Dictionary<string, string[]> dicLegacyEnds = null;
+            // rev.16.3: legacy-концы 20376/20377 — не лениво по требованию, а
+            // ОБЯЗАТЕЛЬНОЕ чтение один раз (фикс-раунд 1 02.10.2026): из них
+            // берётся не только решение отката, но и ИМЯ точки разрыва для
+            // КАЖДОГО кабеля (доктрина выше). Один вызов на прогон, как в начале
+            // волны; ленивость (вызов внутри цикла) прятала бы второй вызов и
+            // экономила перечисление функций по ВСЕМУ проекту лишь в случае,
+            // когда ВСЕ кабели давали годное решение из жил, — после разделения
+            // ответственности такого случая практически не остаётся. Пустой
+            // словарь (перечисление не удалось / проект недоступен) → по всем
+            // кабелям no-ends-read + WARN.
             int nFallback = 0;   // кабелей, где жилы не помогли → решение по 20376/20377
             // rev16.3 (фикс-волна, I2): сколько из них откатилось ИМЕННО потому,
             // что новая ветка ответила отвергающим Reason (own-end-missing /
@@ -2232,10 +2271,17 @@ namespace MyEplanActions
             if (oLayout == null || oLayout.Cables == null)
             {
                 // Свод печатается и на пустом layout (нули) — иначе на стенде
-                // строка [BP-SUM-REASON] просто отсутствовала бы.
+                // строка [BP-SUM-REASON] просто отсутствовала бы. ВЫХОД ДО
+                // ResolveCableEnds (фикс-раунд 1): перечислять все кабели проекта
+                // ради пустого layout незачем — то же, что было до ленивости.
                 LogBpReasonSummary(lstDecisions, nFallback, nDegraded, oLogger);
                 return;
             }
+            // ФИКС-РАУНД 1: ОДИН вызов ResolveCableEnds на прогон, ДО цикла.
+            Dictionary<string, string[]> dicLegacyEnds =
+                oProjectForBp != null
+                    ? BlockFormatResolver.ResolveCableEnds(oProjectForBp, oLogger, "[BP]")
+                    : new Dictionary<string, string[]>();
             for (int i = 0; i < oLayout.Cables.Count; i++)
             {
                 CableModel oCable = oLayout.Cables[i];
@@ -2296,10 +2342,8 @@ namespace MyEplanActions
                         "': " + strFallBackWhy + " — решение по 20376/20377" +
                         " (own='" + (strStripOwnDt ?? "<null>") +
                         "', core[0]='" + strCore0 + "')");
-                    if (dicLegacyEnds == null)
-                        dicLegacyEnds = oProjectForBp != null
-                            ? BlockFormatResolver.ResolveCableEnds(oProjectForBp, oLogger, "[BP]")
-                            : new Dictionary<string, string[]>();
+                    // ФИКС-РАУНД 1: dicLegacyEnds уже прочитан ОДИН раз ДО цикла —
+                    // ленивого вызова внутри цикла больше нет (см. выше).
                     string[] arrEnds;
                     if (string.IsNullOrEmpty(strName) ||
                         !dicLegacyEnds.TryGetValue(strName, out arrEnds) || arrEnds == null)
@@ -2315,7 +2359,9 @@ namespace MyEplanActions
                         oDec = BreakPointResolver.DecideLegacy(strStripOwnDt, arrEnds[0], arrEnds[1]);
                         // Старое правило начинки BreakPointPlacement перенесено в
                         // решение: противоположный DT = конец, НЕ равный нашему.
-                        oDec.OppositeDt = (strStripOwnDt == arrEnds[0]) ? arrEnds[1] : arrEnds[0];
+                        // ФИКС-РАУНД 1: тем же помощником, что и новая ветка
+                        // (PickOppositeNameDt) — один выбор для обоих путей.
+                        oDec.OppositeDt = PickOppositeNameDt(strStripOwnDt, arrEnds);
                         if (oDec.Kind == BpEndKind.Unreadable)
                             oLogger.Warn("[BP] кабель '" + strName +
                                 "': обратный конец не определён (" + oDec.Reason +
@@ -2327,14 +2373,59 @@ namespace MyEplanActions
                 }
                 else
                 {
-                    // Новая ветка сработала — логи решения (как в rev.16.2).
+                    // ФИКС-РАУНД 1 (02.10.2026): НОВАЯ ВЕТКА СРАБОТАЛА — решение из
+                    // жил годное, но имя точки разрыва берём из 20376/20377 (там
+                    // полная структура). Значение OppositeDt, выданное Decide по
+                    // СПИСКУ ЖИЛ, остаётся только для диагностики (печатаем его в
+                    // [BP-DECIDE] как core[]) и в поток НЕ идёт: без '#' и без
+                    // '++МестоСборки' у значений жил ComposeBpDeviceTag/ParseDeviceTag
+                    // теряют структуру ОУ (1400='ПУ-K140(EXT)', пустые 1600/20013/20014).
+                    // Имя ищем сразу (словарный lookup, дешёво), а решаем по Kind —
+                    // чтобы ветки читались как «сначала видно, есть ли смысл».
+                    string[] arrNameEnds = null;
+                    string strNameDt = null;
+                    if (!string.IsNullOrEmpty(strName) &&
+                        dicLegacyEnds.TryGetValue(strName, out arrNameEnds))
+                        strNameDt = PickOppositeNameDt(strStripOwnDt, arrNameEnds);
                     if (oDec.Kind == BpEndKind.Unreadable)
+                    {
+                        // Решение из жил само нечитаемо ('own-end-only': в списке
+                        // только наш клеммник) — имени строить не из чего, ничего
+                        // не подменяем, поведение прежнее (как в rev.16.2).
                         oLogger.Warn("[BP] кабель '" + strName +
                             "': обратный конец не определён (" + oDec.Reason +
                             ") — BP не ставится");
-                    else
+                    }
+                    else if (!string.IsNullOrEmpty(strNameDt) && strNameDt != strStripOwnDt)
+                    {
+                        // Имя, равное собственному ОУ, отсекается УСЛОВИЕМ выше
+                        // (кабель «сам в себя» — случай патологический, но имя
+                        // вышло бы наш собственный клеммник; в fallback-ветке
+                        // такое поведение унаследовано от rev16.2 и НЕ менялось).
+                        // Диагностика: что показали жилы (core=) vs что пойдёт
+                        // в имя точки разрыва (name=, всегда из 20376/20377).
                         oLogger.Log("[INFO] [BP-DECIDE] '" + strName + "': " +
-                            oDec.Reason + (oDec.MultiStrip ? " (multi)" : ""));
+                            oDec.Reason + (oDec.MultiStrip ? " (multi)" : "") +
+                            " core='" + (oDec.OppositeDt ?? "—") +
+                            "' name='" + strNameDt + "' (20376/20377)");
+                        // Имя — полный DT из 20376/20377; решение (Kind/Multi/
+                        // Reason) остаётся из жил.
+                        oDec.OppositeDt = strNameDt;
+                    }
+                    else
+                    {
+                        // 20376/20377 не читаются → решение из жил ПРИМЕНЯТЬ
+                        // НЕЛЬЗЯ (иначе точка разрыва получит битое ОУ). Ровно
+                        // как в rev16.2: BP не ставится, MultiStrip = false.
+                        oLogger.Warn("[BP] кабель '" + (strName ?? "<без имени>") +
+                            "': концы 20376/20377 не читаются, а жилы дали только " +
+                            "'" + (oDec.Reason ?? "?") + "' — имя точки разрыва без полной " +
+                            "структуры не строим, BP не ставится (решение из жил отменено)");
+                        oDec.Kind = BpEndKind.Unreadable;
+                        oDec.MultiStrip = false;
+                        oDec.Reason = "no-ends-read";
+                        oDec.OppositeDt = null;
+                    }
                 }
                 lstDecisions.Add(oDec);
                 lstBpFlags.Add(oDec != null && oDec.Kind != BpEndKind.Unreadable);
@@ -2342,6 +2433,34 @@ namespace MyEplanActions
                     oDec.Kind == BpEndKind.TerminalStrip);
             }
             LogBpReasonSummary(lstDecisions, nFallback, nDegraded, oLogger);
+        }
+
+        /// <summary>Фикс-раунд 1 (02.10.2026): выбор ПОЛНОГО DT противоположного
+        /// конца для ИМЕНИ точки разрыва из 20376/20377 — правило ровно то же,
+        /// что применяла fallback-ветка до разделения ответственности: первый
+        /// непустой конец, НЕ равный полному ОУ нашего клеммника; если оба равны
+        /// нашему (или единственный непустой равен) — первый непустой.
+        /// arrEnds — [0] = №20376, [1] = №20377 (BlockFormatResolver
+        /// ResolveCableEnds кладёт ровно 2 элемента, элемент может быть null).
+        /// Возвращает null, если пригодного DT нет (оба пустые / массив короче
+        /// 2 / null) — вызывающий обязан тогда НЕ применять решение из жил
+        /// (BP не ставится, см. PrepareBreakPointDecisions). Сравнение — только
+        /// Ordinal (как везде в BP-логике). Общий помощник для обеих веток —
+        /// иначе имя в новой ветке и в откате разъехалось бы на краях.</summary>
+        private static string PickOppositeNameDt(string strStripOwnDt, string[] arrEnds)
+        {
+            if (arrEnds == null || arrEnds.Length == 0) return null;
+            int nCount = arrEnds.Length < 2 ? arrEnds.Length : 2;
+            string strFirstNonEmpty = null;
+            for (int i = 0; i < nCount; i++)
+            {
+                string strEnd = arrEnds[i];
+                if (string.IsNullOrEmpty(strEnd)) continue;
+                if (strFirstNonEmpty == null) strFirstNonEmpty = strEnd;
+                if (strStripOwnDt == null || !strEnd.Equals(strStripOwnDt,
+                    StringComparison.Ordinal)) return strEnd;
+            }
+            return strFirstNonEmpty;
         }
 
         /// <summary>rev16.3 (фикс-раунд 1, ревью Important 1 ч.2): ОДНА сводная
