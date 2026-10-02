@@ -68,7 +68,7 @@ namespace MyEplanActions
         // rev.13.10 (SPIKE-8, прогоны п.84): модель О confirm; найден диалог свойств после
         // размещения (base.OnSuccess) — лишний UX. rev.13.11 (SPIKE-9): skip-base в
         // CaptureActive + PromptForStatusLine.
-        private const string BUILD_STAMP = "2026-10-02 Этап 8 rev16.3 (BP-классификация multi/противоположный конец переведена с кабельных 20376/20377 на свойства соединений жил №31019 CONNECTION_SOURCE / №31020 CONNECTION_DESTINATION; шкафная сигнатура DT — сегменты между «+» (CabinetKeyOf, без «=»-префикса и «#»-суффикса); 20376/20377 остались только fallback'ом: при Reason=own-end-missing / no-core-ends, лог [BP-FALLBACK], сводка [BP-SUM-REASON]; шинный BP и для одностороннего кабеля — якорь = дальний от символа конец шины, барьер bBilateral снят; НЕ ПРОВЕРЕНО на стенде — сборка ни разу не запускалась, содержимое 31019/31020 неизвестно); 2026-10-01 Этап 8 rev.16.2 прод-волна (BP точка разрыва «8/BP» SPECIAL: вставка SymbolReference.Create→InterruptionPoint (Function.Create=S063085 навсегда, спайк S1); наборы .emc point/ — скан + парс A2453(вариант)/A2454(имя), выбор по kind-константе И варианту, Import из чужого варианта — тихий no-op (S2), Import идемпотентен на каждый BP + Selected по A2454 (S1); ОУ полное — путь B Sepla (S4): LockObject + NameParts (структура 1100/1400/1200/1600 + код 20013 + счётчик 20014) + AdjustVisibleName; папка point/ — bin → CodeBase (shadow-copy, S1) → каталоги лога; multi — ДВА BP (G/F на дальнем конце шины + A/H на острие линии, стрелка у BP-линий не строится — стенд 01.10); Формат блока 20202[x] УДАЛЁН целиком (реш. 01.10: запись BlockFormat*, слот, сверка 1429, тесты) — чтение 20376/20377 ОСТАЛОСЬ (BP-классификация); rev.16.1: чтение 20376/20377 только с главного определения (#20122 TRUE; 20064-двойники меняли значения — стенд p1/p2); rev.16.0–15.x: см. логи/коммиты) ";
+        private const string BUILD_STAMP = "2026-10-02 Этап 8 rev16.3 (BP-классификация multi/противоположный конец переведена с кабельных 20376/20377 на свойства соединений жил №31019 CONNECTION_SOURCE / №31020 CONNECTION_DESTINATION; шкафная сигнатура DT — сегменты между «+» (CabinetKeyOf, без «=»-префикса и «#»-суффикса); 20376/20377 остались только fallback'ом: при Reason=own-end-missing / no-core-ends, лог [BP-FALLBACK], сводка [BP-SUM-REASON]; шинный BP и для одностороннего кабеля — якорь = дальний от символа конец шины, барьер bBilateral снят; НЕ ПРОВЕРЕНО на стенде — сборка ни разу не запускалась, содержимое 31019/31020 неизвестно); 2026-10-01 Этап 8 rev.16.2 прод-волна (BP точка разрыва «8/BP» SPECIAL: вставка SymbolReference.Create→InterruptionPoint (Function.Create=S063085 навсегда, спайк S1); наборы .emc point/ — скан + парс A2453(вариант)/A2454(имя), выбор по kind-константе И варианту, Import из чужого варианта — тихий no-op (S2), Import идемпотентен на каждый BP + Selected по A2454 (S1); ОУ полное — путь B Sepla (S4): LockObject + NameParts (структура 1100/1400/1200/1600 + код 20013 + счётчик 20014) + AdjustVisibleName; папка point/ — bin → CodeBase (shadow-copy, S1) → каталоги лога; multi — ДВА BP (G/F на дальнем конце шины + A/H на острие линии, стрелка у BP-линий не строится — стенд 01.10); Формат блока 20202[x] УДАЛЁН целиком (реш. 01.10: запись BlockFormat*, слот, сверка 1429, тесты) — на тот момент чтение 20376/20377 оставалось в BP-классификации; с rev16.3 (см. выше) оно только fallback; rev.16.1: чтение 20376/20377 только с главного определения (#20122 TRUE; 20064-двойники меняли значения — стенд p1/p2); rev.16.0–15.x: см. логи/коммиты) ";
 
         // rev.14.14: однократная установка хуков исключений + статическая ссылка
         // на логгер текущего прогона (хуки статические — экземпляра в них нет).
@@ -113,7 +113,7 @@ namespace MyEplanActions
             // размещении — PromptForStatusLine в OnStart; флаг ставит хук перед
             // запуском, снимает сразу после цикла ожидания. Вне флага — обычная
             // вставка штатно (диалог на месте).
-            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev.16.2 прод-волна (см. BUILD_STAMP)", BUILD_STAMP);
+            _logger.BeginRun("TERMINAL_STRIP_ANALYZE — Этап 8 rev16.3 (см. BUILD_STAMP)", BUILD_STAMP);
 
             // H-1: загрузка персистентных настроек (файл в каталоге лога —
             // ruling R1). Файла/каталога нет — дефолты из AddInConfiguration,
@@ -2222,11 +2222,18 @@ namespace MyEplanActions
             // был бы лишним перечислением по всему проекту).
             Dictionary<string, string[]> dicLegacyEnds = null;
             int nFallback = 0;   // кабелей, где жилы не помогли → решение по 20376/20377
+            // rev16.3 (фикс-волна, I2): сколько из них откатилось ИМЕННО потому,
+            // что новая ветка ответила отвергающим Reason (own-end-missing /
+            // no-core-ends), т.е. 31019/31020 вернули не ОУ нашего клеммника —
+            // главный симптом деградации. Считается ДО подмены решения на
+            // DecideLegacy (после подмены он в списке решений не виден).
+            // Разница fallback − degraded = кабели без DT жил вовсе (не спросили).
+            int nDegraded = 0;
             if (oLayout == null || oLayout.Cables == null)
             {
                 // Свод печатается и на пустом layout (нули) — иначе на стенде
                 // строка [BP-SUM-REASON] просто отсутствовала бы.
-                LogBpReasonSummary(lstDecisions, nFallback, oLogger);
+                LogBpReasonSummary(lstDecisions, nFallback, nDegraded, oLogger);
                 return;
             }
             for (int i = 0; i < oLayout.Cables.Count; i++)
@@ -2261,7 +2268,10 @@ namespace MyEplanActions
                     // и точки разрыва пропали бы совсем. Проверка СТРОГО по
                     // Reason (только он различает эти случаи), не по Kind.
                     if (oDec.Reason == "own-end-missing" || oDec.Reason == "no-core-ends")
+                    {
                         strFallBackWhy = "31019/31020 → " + oDec.Reason;
+                        nDegraded++;   // (I2) считаем ДО подмены решения
+                    }
                 }
                 else
                     strFallBackWhy = "31019/31020 пусты";
@@ -2269,8 +2279,23 @@ namespace MyEplanActions
                 {
                     // Шаг 2.3: жилы кабель не разобрали → решение по 20376/20377.
                     nFallback++;
+                    // rev16.3 (фикс-волна, I3): показываем, С ЧЕМ сравнивали
+                    // (own = полное ОУ нашего клеммника) и ЧТО реально прочитали
+                    // из 31019/31020 (первый непустой элемент) — без этого
+                    // строка отката неразбираема: 'own-end-missing' и
+                    // 'no-core-ends' по стенду неотличимы.
+                    string strCore0 = arrCore != null ? "<пусто>" : "<не читали>";
+                    if (arrCore != null)
+                        for (int j = 0; j < arrCore.Length; j++)
+                            if (!string.IsNullOrEmpty(arrCore[j]))
+                            {
+                                strCore0 = arrCore[j];
+                                break;
+                            }
                     oLogger.Log("[BP-FALLBACK] '" + (strName ?? "<без имени>") +
-                        "': " + strFallBackWhy + " — решение по 20376/20377");
+                        "': " + strFallBackWhy + " — решение по 20376/20377" +
+                        " (own='" + (strStripOwnDt ?? "<null>") +
+                        "', core[0]='" + strCore0 + "')");
                     if (dicLegacyEnds == null)
                         dicLegacyEnds = oProjectForBp != null
                             ? BlockFormatResolver.ResolveCableEnds(oProjectForBp, oLogger, "[BP]")
@@ -2316,7 +2341,7 @@ namespace MyEplanActions
                 lstBpMulti.Add(oDec != null && oDec.MultiStrip &&
                     oDec.Kind == BpEndKind.TerminalStrip);
             }
-            LogBpReasonSummary(lstDecisions, nFallback, oLogger);
+            LogBpReasonSummary(lstDecisions, nFallback, nDegraded, oLogger);
         }
 
         /// <summary>rev16.3 (фикс-раунд 1, ревью Important 1 ч.2): ОДНА сводная
@@ -2325,14 +2350,19 @@ namespace MyEplanActions
         /// картину по N WARN'ов. Причина, которой резолвер не знает (если он
         /// пополнится), уходит в «прочее», а не теряется.
         /// nFallback — сколько кабелей жилы НЕ разобрали и увели в 20376/20377.
-        /// Поле добавлено сверх запрошенного формата намеренно: после отката
-        /// решения подменяются, и 'own-end-missing' в сводке НЕ виден — а именно
-        /// он показывает, что 31019/31020 вернули не ОУ клеммника (развилка
+        /// nDegraded (фикс-волна, I2) — сколько ИЗ НИХ откатились по отвергающему
+        /// Reason новой ветки (own-end-missing / no-core-ends), т.е. данные
+        /// 31019/31020 читаются, но не содержат ОУ нашего клеммника; кабелей
+        /// всего = lstDecisions.Count (ЗНАМЕНАТЕЛЬ сводки). Поле добавлено
+        /// сверх запрошенного формата намеренно: после отката решения
+        /// подменяются, и 'own-end-missing' в сводке НЕ виден — а именно он
+        /// показывает, что 31019/31020 вернули не ОУ клеммника (развилка
         /// задачи 0). Без этого счётчика главный симптом деградации в сводке бы
-        /// пропал. Печатается и на пустом layout (нули), и всегда — одна строка,
-        /// форма фиксированная (удобно диффать прогоны).</summary>
+        /// пропал, а «откатился весь проект» и «2 кабеля из 40» выглядели бы
+        /// одинаково. Печатается и на пустом layout (нули), и всегда — одна
+        /// строка, форма фиксированная (удобно диффать прогоны).</summary>
         private static void LogBpReasonSummary(List<BreakPointDecision> lstDecisions,
-            int nFallback, DiagnosticLogger oLogger)
+            int nFallback, int nDegraded, DiagnosticLogger oLogger)
         {
             string[] arrKnown = new string[] {
                 "multi-strip", "opposite-strip", "opposite-device", "own-end-missing",
@@ -2353,7 +2383,9 @@ namespace MyEplanActions
                 if (!bKnown) nOther++;
             }
             strLine += "; прочее=" + nOther.ToString(CultureInfo.InvariantCulture) +
-                "; fallback=" + nFallback.ToString(CultureInfo.InvariantCulture);
+                "; fallback=" + nFallback.ToString(CultureInfo.InvariantCulture) +
+                "; degraded=" + nDegraded.ToString(CultureInfo.InvariantCulture) +
+                "; кабелей=" + lstDecisions.Count.ToString(CultureInfo.InvariantCulture);
             oLogger.Log(strLine);
         }
 

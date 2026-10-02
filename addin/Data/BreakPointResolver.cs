@@ -6,11 +6,13 @@ namespace MyEplanActions
     /// BP (rev.16.2, план rev16.2 Task 2; решения пользователя 30.09.2026).
     /// ЧИСТЫЙ модуль — без EPLAN-типов (паттерн BlockPropMath; из конфигурации
     /// тянется AddInConfiguration — она и без EPLAN, как GhostFrameMath).
-    /// Вход — строки полных DT формата '=…++…+…#<n>-<имя>' (значения №20376
-    /// «Кабели: источник» / №20377 «Кабели: цель»; rev.16.1 — читаются только
+    /// Вход — строки полных DT формата '=…++…+…#<n>-<имя>': значениями
+    /// №31019 CONNECTION_SOURCE / №31020 CONNECTION_DESTINATION СВОЙСТВ СОЕДИНЕНИЙ
+    /// ЖИЛ (основной путь, Decide); значения №20376 «Кабели: источник» /
+    /// №20377 «Кабели: цель» — ТОЛЬКО fallback (DecideLegacy, rev.16.1 — читаются
     /// с главного определения функции, механика BlockFormatResolver).
     /// Правила (Decide) — первое совпавшее; Reason-строки фиксированы
-    /// тестами c16–c22 (BreakPointResolverTests).
+    /// тестами c16–c28 (BreakPointResolverTests).
     /// rev16.3 (план 2026-10-02-bp-multistrip-cores Task 1): признак multi
     /// переносится со СВОЙСТВ КАБЕЛЯ 20376/20377 на СВОЙСТВА СОЕДИНЕНИЙ ЖИЛ
     /// 31019/31020 → новая Decide(strStripOwnDt, string[] arrEnds) по списку
@@ -29,8 +31,11 @@ namespace MyEplanActions
     /// G/F и набор ТР_кабель(int_*.emc)), Reason — строка-обоснование.
     /// OppositeDt (rev16.3) — ДЕТЕРМИНИРОВАННЫЙ противоположный DT из списка
     /// концов жил: первый по StringComparer.Ordinal среди «чужих шкафов»
-    /// (null — такого нет). Заполняет Decide(strStripOwnDt, string[]);
-    /// DecideLegacy OppositeDt НЕ заполняет (заполняет вызывающий).</summary>
+    /// (null — такого нет). В multi-случае «свой шкаф, другое имя» при
+    /// отсутствии чужого шкафа берётся первый по Ordinal из этого случая
+    /// (иначе ОУ точки разрыва было бы пустым). Заполняет
+    /// Decide(strStripOwnDt, string[]); DecideLegacy OppositeDt НЕ заполняет
+    /// (заполняет вызывающий).</summary>
     public sealed class BreakPointDecision
     {
         public BpEndKind Kind;
@@ -198,27 +203,35 @@ namespace MyEplanActions
         /// <summary>Классификация по СПИСКУ DT концов жил (№31019/31020,
         /// rev16.3, решение пользователя 02.10.2026). arrEnds — все прочитанные
         /// DT соединений жил кабеля; strStripOwnDt — полное ОУ нашего клеммника.
-        /// Шкаф = CabinetKeyOf (сегменты между '+'); один шкаф + РАЗНОЕ буквенное
-        /// обозначение после последнего дефиса (X3 против X2) = кабель с одного
-        /// конца подключён к нескольким клемникам → multi. Разный шкаф — это
-        /// противоположный конец. Правила (первое совпавшее), все сравнения
-        /// строк Ordinal, элементы null/"" игнорируются:
+        /// Шкаф = CabinetKeyOf (сегменты между '+'); сигнал multi = ТОТ ЖЕ шкаф
+        /// И клеммник И отличное буквенное обозначение после последнего дефиса
+        /// (X3 против X2) — по ПРАВИЛУ ЗАКАЗЧИКА 02.10.2026. Всё прочее, что не
+        /// равно нашему DT, — противоположный конец (в т.ч. клеммник ДРУГОГО
+        /// шкафа и устройство своего шкафа: multi там НЕ присваивается).
+        /// Правила (первое совпавшее), все сравнения строк Ordinal, элементы
+        /// null/"" игнорируются:
         ///   1) нет ни одного непустого элемента → 'no-core-ends';
         ///   2) своего DT среди значений нет → 'own-end-missing' (проверяется
         ///      ДО multi, иначе «нет своего конца» выдавалось бы за multi);
-        ///   3) есть чужой DT в том же шкафу → 'multi-strip', при наличии
-        ///      чужого шкафа Reason = 'multi-strip same-cabinet';
-        ///   4) есть чужой DT из другого шкафа → он и есть OppositeDt; если его
-        ///      имя начинается с X/Х → 'multi-strip' (оба конца — клеммники
-        ///      РАЗНЫХ шкафов), иначе 'opposite-device';
+        ///   3) есть «свой шкаф + клеммник + другое имя» → multi: при наличии
+        ///      чужого шкафа Reason = 'multi-strip same-cabinet', иначе
+        ///      'multi-strip';
+        ///   4) иначе противоположный конец (чужой шкаф ИЛИ устройство своего
+        ///      шкафа) → он же OppositeDt; его имя начинается с X/Х ⇒
+        ///      'opposite-strip' при MultiStrip = false (клеммник чужого шкафа
+        ///      multi НЕ даёт — ревью, I1), иначе 'opposite-device';
         ///   5) иначе (только свой DT) → 'own-end-only' (BP ставить не на что).
-        /// OppositeDt = первый по StringComparer.Ordinal среди чужих шкафов
-        /// (детерминированно, независимо от порядка чтения жил).</summary>
+        /// OppositeDt — детерминированный (StringComparer.Ordinal, независимо от
+        /// порядка чтения жил): правило 3 — первый чужой шкаф, иначе первый
+        /// «свой шкаф + клеммник + другое имя» (иначе ОУ точки разрыва пусто —
+        /// ревью, C2); правила 2 и 4 — первый «прочий».</summary>
         public static BreakPointDecision Decide(string strStripOwnDt, string[] arrEnds)
         {
-            // Разбор списка одним проходом: свой / тот же шкаф / чужой шкаф.
+            // Разбор списка одним проходом: свой / «свой шкаф + клеммник + другое
+            // имя» (сигнал multi) / всё остальное (кандидат в OppositeDt).
             string strOwnKey = CabinetKeyOf(strStripOwnDt);
-            bool bOwn = false, bSameCab = false;
+            bool bOwn = false, bSameCabStrip = false;
+            string strFirstSameCab = null;
             string strFirstForeign = null;
             if (arrEnds != null)
             {
@@ -231,30 +244,49 @@ namespace MyEplanActions
                         bOwn = true;
                         continue;
                     }
-                    if (string.Equals(CabinetKeyOf(strDt), strOwnKey, StringComparison.Ordinal))
-                        bSameCab = true;
+                    // ИДЕНТИЧНОСТЬ сигнала multi: тот же шкаф И клеммник И имя
+                    // отличается (свой DT уже отсеян выше). Проверка
+                    // IsStripCodeLetter ОБЯЗАТЕЛЬНА: без неё любое устройство /
+                    // предохранитель / реле своего шкафа даёт ложный multi
+                    // ('=…++ЯЧ67+#1-SB1' — тот же шкаф, но НЕ клеммник) → две
+                    // точки разрыва вместо одной (ревью, находка C1).
+                    if (IsStripCodeLetter(DeviceNameOf(strDt)) &&
+                        string.Equals(CabinetKeyOf(strDt), strOwnKey, StringComparison.Ordinal))
+                    {
+                        bSameCabStrip = true;
+                        if (strFirstSameCab == null ||
+                            string.CompareOrdinal(strDt, strFirstSameCab) < 0)
+                            strFirstSameCab = strDt;
+                    }
                     else if (strFirstForeign == null ||
                         string.CompareOrdinal(strDt, strFirstForeign) < 0)
                         strFirstForeign = strDt;
                 }
             }
             // 1) ни одного читаемого DT жилы.
-            if (!bOwn && !bSameCab && strFirstForeign == null)
+            if (!bOwn && !bSameCabStrip && strFirstForeign == null)
                 return MkOpp(false, "no-core-ends", BpEndKind.Unreadable, null);
             // 2) своего клеммника среди значений нет — раньше любых multi.
             if (!bOwn)
                 return MkOpp(false, "own-end-missing", BpEndKind.Unreadable, strFirstForeign);
-            // 3) тот же шкаф, другое обозначение → multi (X3 против X2).
-            if (bSameCab)
+            // 3) тот же шкаф, другое обозначение клеммника → multi (X3 против X2).
+            // OppositeDt = чужой шкаф, а если его нет — «свой шкаф, другое имя»:
+            // иначе кабель «наш клеммник + соседний клеммник ТОГО ЖЕ шкафа» дал
+            // бы multi с ПУСТЫМ ОУ точки разрыва (ревью, находка C2).
+            if (bSameCabStrip)
                 return MkOpp(true,
                     strFirstForeign == null ? "multi-strip" : "multi-strip same-cabinet",
-                    BpEndKind.TerminalStrip, strFirstForeign);
-            // 4) противоположный конец из другого шкафа: он же OppositeDt.
+                    BpEndKind.TerminalStrip, strFirstForeign ?? strFirstSameCab);
+            // 4) противоположный конец: чужой шкаф ИЛИ устройство своего шкафа —
+            // он же OppositeDt. multi НЕ присваивается даже для клеммника
+            // чужого шкафа: по ПРАВИЛУ ЗАКАЗЧИКА «если НЕ совпадает — это
+            // противоположный конец», multi даёт только сигнал пункта 3
+            // (ревью, находка I1).
             if (strFirstForeign != null)
             {
                 bool bOppStrip = IsStripCodeLetter(DeviceNameOf(strFirstForeign));
-                return MkOpp(bOppStrip,
-                    bOppStrip ? "multi-strip" : "opposite-device",
+                return MkOpp(false,
+                    bOppStrip ? "opposite-strip" : "opposite-device",
                     bOppStrip ? BpEndKind.TerminalStrip : BpEndKind.Device,
                     strFirstForeign);
             }
