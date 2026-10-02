@@ -438,16 +438,19 @@ namespace MyEplanActions
             oGeomCfg.ReferenceArrowLengthMm = AddInConfiguration.CableReferenceArrowLengthMm;
             oGeomCfg.ReferenceArrowHalfWidthMm = AddInConfiguration.CableReferenceArrowHalfWidthMm;
             oGeomCfg.ReferenceArrowNotchDepthMm = AddInConfiguration.CableReferenceArrowNotchDepthMm;
-            // rev.16.2 (Task 4): BP-решения — чтение 20376/20377 уникальных
-            // кабелей (главное определение rev.16.1) → BreakPointResolver.DecideLegacy
-            // (своя сторона = полное ОУ клеммника = AddInConfiguration.TargetStripName).
+            // rev.16.3 (Task 3): BP-решения — ОСНОВНОЙ источник концов = свойства
+            // СОЕДИНЕНИЙ ЖИЛ №31019/№31020 (oDm.CableCoreEnds, задача 2) →
+            // BreakPointResolver.Decide по списку DT; жил нет → fallback на 20376/20377
+            // (DecideLegacy, ленивое перечисление ResolveCableEnds). Своя сторона =
+            // полное ОУ клеммника = AddInConfiguration.TargetStripName (№20006).
+            // out-параметр с концами кабеля УДАЛЁН: DT точки разрыва
+            // теперь берётся из решения (BreakPointDecision.OppositeDt).
             List<bool> lstBpFlags;
             List<bool> lstBpMulti;
             List<BreakPointDecision> lstDecisions;
-            Dictionary<string, string[]> dicEnds;
             string strStripOwnDt = AddInConfiguration.TargetStripName;
-            PrepareBreakPointDecisions(oLayout, oProject, strStripOwnDt, _logger,
-                out lstBpFlags, out lstBpMulti, out lstDecisions, out dicEnds);
+            PrepareBreakPointDecisions(oLayout, oProject, strStripOwnDt, oDm, _logger,
+                out lstBpFlags, out lstBpMulti, out lstDecisions);
 
             // Край ряда по оси выноса (ревизия 2): H — max X колонок К4, V — min Y.
             // К4 невалиден — NaN, builder уйдёт в fallback на точки кабеля (WARN).
@@ -472,8 +475,10 @@ namespace MyEplanActions
                 oLayout, AddInConfiguration.Orientation, oGeomCfg, dStripEndAxis,
                 lstBpFlags, lstBpMulti);   // rev.16.2: BP-списки (фича в двух режимах)
 
-            // rev.16.2 (Task 4): начинка BreakPointPlacement (OppositeDt/Kind) —
-            // решения по dicEnds; потребляет BreakPointSymbolCreator.
+            // rev.16.3 (Task 3): начинка BreakPointPlacement (OppositeDt/Kind) —
+            // ИСТОЧНИК DT — САМО РЕШЕНИЕ (OppositeDt): его заполняет Decide по
+            // списку DT жил 31019/31020 либо DecideLegacy + вызывающий (fallback
+            // 20376/20377). Потребляет BreakPointSymbolCreator.
             for (int i = 0; i < oGeom.BreakPoints.Count; i++)
             {
                 if (oGeom.BreakPoints[i] == null) continue;
@@ -481,14 +486,8 @@ namespace MyEplanActions
                 if (nIdx < 0 || nIdx >= lstDecisions.Count) continue;
                 BreakPointDecision oDec = lstDecisions[nIdx];
                 if (oDec == null) continue;
-                string[] arrEndsForBp;
-                string strCableKey = oGeom.BreakPoints[i].CableName;
-                if (strCableKey != null && dicEnds.TryGetValue(strCableKey, out arrEndsForBp))
-                {
-                    oGeom.BreakPoints[i].OppositeDt =
-                        (strStripOwnDt == arrEndsForBp[0]) ? arrEndsForBp[1] : arrEndsForBp[0];
-                    oGeom.BreakPoints[i].Kind = oDec.Kind;
-                }
+                oGeom.BreakPoints[i].OppositeDt = oDec.OppositeDt;
+                oGeom.BreakPoints[i].Kind = oDec.Kind;
             }
 
             foreach (CableSymbolPlacement oSym in oGeom.Symbols)
@@ -2009,16 +2008,19 @@ namespace MyEplanActions
             oGeomCfg.ReferenceArrowLengthMm = AddInConfiguration.CableReferenceArrowLengthMm;
             oGeomCfg.ReferenceArrowHalfWidthMm = AddInConfiguration.CableReferenceArrowHalfWidthMm;
             oGeomCfg.ReferenceArrowNotchDepthMm = AddInConfiguration.CableReferenceArrowNotchDepthMm;
-            // rev.16.2 (Task 4): BP-решения — чтение 20376/20377 уникальных
-            // кабелей (главное определение rev.16.1) → BreakPointResolver.DecideLegacy
-            // (своя сторона = полное ОУ клеммника = strTargetStripName).
+            // rev.16.3 (Task 3): BP-решения — ОСНОВНОЙ источник концов = свойства
+            // СОЕДИНЕНИЙ ЖИЛ №31019/№31020 (oDm.CableCoreEnds, задача 2) →
+            // BreakPointResolver.Decide по списку DT; жил нет → fallback на 20376/20377
+            // (DecideLegacy, ленивое перечисление ResolveCableEnds). Своя сторона =
+            // полное ОУ клеммника = strTargetStripName (№20006).
+            // out-параметр с концами кабеля УДАЛЁН: DT точки разрыва
+            // теперь берётся из решения (BreakPointDecision.OppositeDt).
             List<bool> lstBpFlags;
             List<bool> lstBpMulti;
             List<BreakPointDecision> lstDecisions;
-            Dictionary<string, string[]> dicEnds;
             string strStripOwnDt = strTargetStripName;
-            PrepareBreakPointDecisions(oLayout, oProject, strStripOwnDt, _logger,
-                out lstBpFlags, out lstBpMulti, out lstDecisions, out dicEnds);
+            PrepareBreakPointDecisions(oLayout, oProject, strStripOwnDt, oDm, _logger,
+                out lstBpFlags, out lstBpMulti, out lstDecisions);
 
             // Край ряда по оси выноса (ревизия 2): H — max X колонок К4, V — min Y.
             // К4 невалиден — NaN, builder уйдёт в fallback на точки кабеля (WARN).
@@ -2044,8 +2046,10 @@ namespace MyEplanActions
                 oLayout, eOrientation, oGeomCfg, dStripEndAxis,
                 lstBpFlags, lstBpMulti);   // rev.16.2: BP-списки (фича в двух режимах)
 
-            // rev.16.2 (01.10): начинка BreakPointPlacement (OppositeDt/Kind) —
-            // решения по dicEnds; потребляет BreakPointSymbolCreator.
+            // rev.16.3 (Task 3): начинка BreakPointPlacement (OppositeDt/Kind) —
+            // ИСТОЧНИК DT — САМО РЕШЕНИЕ (OppositeDt): его заполняет Decide по
+            // списку DT жил 31019/31020 либо DecideLegacy + вызывающий (fallback
+            // 20376/20377). Потребляет BreakPointSymbolCreator.
             for (int i = 0; i < oGeom.BreakPoints.Count; i++)
             {
                 if (oGeom.BreakPoints[i] == null) continue;
@@ -2053,14 +2057,8 @@ namespace MyEplanActions
                 if (nIdx < 0 || nIdx >= lstDecisions.Count) continue;
                 BreakPointDecision oDec = lstDecisions[nIdx];
                 if (oDec == null) continue;
-                string[] arrEndsForBp;
-                string strCableKey = oGeom.BreakPoints[i].CableName;
-                if (strCableKey != null && dicEnds.TryGetValue(strCableKey, out arrEndsForBp))
-                {
-                    oGeom.BreakPoints[i].OppositeDt =
-                        (strStripOwnDt == arrEndsForBp[0]) ? arrEndsForBp[1] : arrEndsForBp[0];
-                    oGeom.BreakPoints[i].Kind = oDec.Kind;
-                }
+                oGeom.BreakPoints[i].OppositeDt = oDec.OppositeDt;
+                oGeom.BreakPoints[i].Kind = oDec.Kind;
             }
 
             foreach (CableSymbolPlacement oSym in oGeom.Symbols)
@@ -2172,49 +2170,60 @@ namespace MyEplanActions
             catch { return (short)-1; }
         }
 
-        /// <summary>rev.16.2 (Task 4): BP-решения по уникальным кабелям.
-        /// Перечисление 20376/20377 (BlockFormatResolver.ResolveCableEnds —
-        /// от главного определения rev.16.1) → BreakPointResolver.DecideLegacy на
-        /// КАЖДЫЙ кабель oLayout (своя сторона = полное ОУ клеммника =
-        /// strStripOwnDt; значение равно oStrip.Name = №20006, rev.12.2).
+        /// <summary>rev.16.2 (Task 4), пересборка rev.16.3 (Task 3): BP-решения по
+        /// уникальным кабелям oLayout.
+        /// ОСНОВНОЙ источник концов — СВОЙСТВА СОЕДИНЕНИЙ ЖИЛ №31019/№31020
+        /// (oDmForBp.CableCoreEnds, задача 2; ключ = полное DT кабеля) →
+        /// BreakPointResolver.Decide(строка DT жил) — признак multi переносится
+        /// с кабельных свойств на соединения жил (план 2026-10-02, Task 1).
+        /// Жил нет (отчёт не передан / ключа нет / все значения пустые) → FALLBACK
+        /// на свойства КАБЕЛЯ 20376/20377: BlockFormatResolver.ResolveCableEnds
+        /// (главное определение rev.16.1) + BreakPointResolver.DecideLegacy. Вызов
+        /// ResolveCableEnds ЛЕНИВЫЙ и ОДИН: он перечисляет функции по ВСЕМУ проекту
+        /// (дорого + ~21 строка [CABENDS] в логе), поэтому при живых 31019/31020
+        /// не выполняется вовсе, а при fallback — один раз на весь прогон.
+        /// Своя сторона в обоих путях = полное ОУ клеммника (strStripOwnDt, равно
+        /// oStrip.Name = №20006, rev.12.2); сравнение — только Ordinal (в Decide).
         /// Выходы: per-кабельные списки (BP-ставить, multi) для
-        /// CableGeometryBuilder.Build + parallel-список решений для начинки
-        /// BreakPointPlacement (OppositeDt/Kind — AnalyzeAction в Build-вызове).
+        /// CableGeometryBuilder.Build + parallel-список решений. DT точки разрыва
+        /// берётся ИЗ РЕШЕНИЯ (BreakPointDecision.OppositeDt) — отдельного
+        /// out-параметра с концами кабеля больше нет; OppositeDt заполняют оба
+        /// пути (Decide — сам; DecideLegacy — вызывающий, по старому правилу
+        /// «противоположный = конец, не равный нашему»).
         /// Без EPLAN-объектов устойчиво: перечисление не удалось → все false
         /// (BP нет, поведение прежнее) + WARN.</summary>
         private static void PrepareBreakPointDecisions(CableLayoutModel oLayout,
-            Project oProjectForBp, string strStripOwnDt, DiagnosticLogger oLogger,
+            Project oProjectForBp, string strStripOwnDt, DmReport oDmForBp,
+            DiagnosticLogger oLogger,
             out List<bool> lstBpFlags, out List<bool> lstBpMulti,
-            out List<BreakPointDecision> lstDecisions,
-            out Dictionary<string, string[]> dicEnds)
+            out List<BreakPointDecision> lstDecisions)
         {
             lstBpFlags = new List<bool>();
             lstBpMulti = new List<bool>();
             lstDecisions = new List<BreakPointDecision>();
-            dicEnds = oProjectForBp != null
-                ? BlockFormatResolver.ResolveCableEnds(oProjectForBp, oLogger, "[BP]")
-                : new Dictionary<string, string[]>();
-            if (oProjectForBp == null)
-                oLogger.Warn("[BP] проект недоступен — концы кабелей не читаются, BP не ставится");
+            // rev.16.3: legacy-концы 20376/20377 — по требованию, только если
+            // встретился кабель без жил. null = ещё НЕ запрашивались (важно:
+            // ResolveCableEnds может вернуть ПУСТЫЙ словарь — это не «не
+            // запрашивались», повторный вызов был бы лишним перечислением).
+            Dictionary<string, string[]> dicLegacyEnds = null;
             if (oLayout == null || oLayout.Cables == null) return;
             for (int i = 0; i < oLayout.Cables.Count; i++)
             {
                 CableModel oCable = oLayout.Cables[i];
                 string strName = oCable != null ? oCable.Name : null;
-                string[] arrEnds;
+                // Шаг 2.1: концы жил по кабелю. oDmForBp == null (отчёт в ветке
+                // вызова недоступен) = всегда fallback, НЕ заглушка.
+                List<string> lstCore = null;
+                if (oDmForBp != null && !string.IsNullOrEmpty(strName))
+                    oDmForBp.CableCoreEnds.TryGetValue(strName, out lstCore);
+                string[] arrCore = (lstCore != null && lstCore.Count > 0)
+                    ? lstCore.ToArray()
+                    : null;
                 BreakPointDecision oDec;
-                if (string.IsNullOrEmpty(strName) || !dicEnds.TryGetValue(strName, out arrEnds) ||
-                    arrEnds == null)
+                if (arrCore != null)
                 {
-                    oDec = new BreakPointDecision();
-                    oDec.Kind = BpEndKind.Unreadable;
-                    oDec.Reason = "no-ends-read";
-                    oLogger.Warn("[BP] кабель '" + (strName ?? "<без имени>") +
-                        "': концы 20376/20377 не читаются — BP не ставится");
-                }
-                else
-                {
-                    oDec = BreakPointResolver.DecideLegacy(strStripOwnDt, arrEnds[0], arrEnds[1]);
+                    // Шаг 2.2: новая ветка — признак multi по списку DT жил.
+                    oDec = BreakPointResolver.Decide(strStripOwnDt, arrCore);
                     if (oDec.Kind == BpEndKind.Unreadable)
                         oLogger.Warn("[BP] кабель '" + strName +
                             "': обратный конец не определён (" + oDec.Reason +
@@ -2222,6 +2231,48 @@ namespace MyEplanActions
                     else
                         oLogger.Log("[INFO] [BP-DECIDE] '" + strName + "': " +
                             oDec.Reason + (oDec.MultiStrip ? " (multi)" : ""));
+                }
+                else
+                {
+                    // Шаг 2.3: жил нет → решение по 20376/20377 (старая логика).
+                    oLogger.Log("[BP-FALLBACK] '" + (strName ?? "<без имени>") +
+                        "': 31019/31020 пусты — решение по 20376/20377");
+                    if (dicLegacyEnds == null)
+                    {
+                        // WARN здесь, а не на входе: без проекта fallback не
+                        // читаем, но при живых 31019/31020 он и не нужен — входной
+                        // WARN кричал бы «BP не ставится» там, где BP ставится.
+                        if (oProjectForBp == null)
+                            oLogger.Warn("[BP] проект недоступен — 20376/20377 " +
+                                "не читаются, fallback по жилым недоступен");
+                        dicLegacyEnds = oProjectForBp != null
+                            ? BlockFormatResolver.ResolveCableEnds(oProjectForBp, oLogger, "[BP]")
+                            : new Dictionary<string, string[]>();
+                    }
+                    string[] arrEnds;
+                    if (string.IsNullOrEmpty(strName) ||
+                        !dicLegacyEnds.TryGetValue(strName, out arrEnds) || arrEnds == null)
+                    {
+                        oDec = new BreakPointDecision();
+                        oDec.Kind = BpEndKind.Unreadable;
+                        oDec.Reason = "no-ends-read";
+                        oLogger.Warn("[BP] кабель '" + (strName ?? "<без имени>") +
+                            "': концы 20376/20377 не читаются — BP не ставится");
+                    }
+                    else
+                    {
+                        oDec = BreakPointResolver.DecideLegacy(strStripOwnDt, arrEnds[0], arrEnds[1]);
+                        // Старое правило начинки BreakPointPlacement перенесено в
+                        // решение: противоположный DT = конец, НЕ равный нашему.
+                        oDec.OppositeDt = (strStripOwnDt == arrEnds[0]) ? arrEnds[1] : arrEnds[0];
+                        if (oDec.Kind == BpEndKind.Unreadable)
+                            oLogger.Warn("[BP] кабель '" + strName +
+                                "': обратный конец не определён (" + oDec.Reason +
+                                ") — BP не ставится");
+                        else
+                            oLogger.Log("[INFO] [BP-DECIDE] '" + strName + "': " +
+                                oDec.Reason + (oDec.MultiStrip ? " (multi)" : ""));
+                    }
                 }
                 lstDecisions.Add(oDec);
                 lstBpFlags.Add(oDec != null && oDec.Kind != BpEndKind.Unreadable);
