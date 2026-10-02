@@ -147,16 +147,20 @@ namespace MyEplanActions
             _log.Log("[CBLPROP-SUM] соединений: " + _nCblPropConns + ", свойств: " + _nCblPropValues);
             _log.Log("[PROBE5-SUM] соединений: " + _nProbe5Conns + ", direct-ok: " + _nProbe5DirectOk +
                 ", cdp-ok: " + _nProbe5CdpOk + ", connprop: " + _nProbe5ConnProps);
-            // rev.16.3 (задача 2): сколько кабелей получили хотя бы один непустой
-            // DT жилы (#31019/#31020) — ровно число ключей CableCoreEnds, и ровно
-            // столько же УНИКАЛЬНЫХ кабелей стоит в логе "[CBP] '<кабель>': <dt>"
-            // (grep ... | sed "s/^\[CBP\] '\([^']*\)':.*/\1/" | sort -u | wc -l).
+            // rev.16.4 (задача 3.1-bis): сколько кабелей получили хотя бы одну строку [DM]
+            // с ПОЛНЫМ ОУ клемы — ровно число ключей CableStripEnds, и ровно
+            // столько же УНИКАЛЬНЫХ кабелей стоит в логе "[BPE] '<кабель>': <dt>"
+            // (grep ... | sed "s/^\[BPE\] '\([^']*\)':.*/\1/" | sort -u | wc -l).
             // ВНИМАНИЕ, инвариант НЕ «строки = ключи»: строка печатается на КАЖДЫЙ
-            // новый уникальный DT кабеля, поэтому число строк = сумма длин списков
-            // и >= числа ключей (равенство только при одной жиле на кабель).
-            // Сверять строки с [CBP-SUM] нельзя — на любом многожильном кабеле это
+            // новый уникальный DT клемы, поэтому число строк = сумма длин списков
+            // и >= числа ключей (равенство только при одной клеме на кабель).
+            // Сверять строки с [BPE-SUM] нельзя — на любом многоклемном кабеле это
             // дало бы ложную тревогу.
-            _log.Log("[CBP-SUM] кабелей с DT жил: " + oReport.CableCoreEnds.Count);
+            // Тег прежнего [CBP-SUM] («кабелей с DT жил») исчез вместе с CableCoreEnds:
+            // признак multi больше не считается по №31019/№31020 (см. DmModels.
+            // CableStripEnds — почему). Сами 31019/31020 по-прежнему читаются и печатаются
+            // в строке [DM] — как диагностика формата, не как источник решения.
+            _log.Log("[BPE-SUM] кабелей с концами [DM]: " + oReport.CableStripEnds.Count);
             return oReport;
         }
 
@@ -366,55 +370,77 @@ namespace MyEplanActions
             oRow.IsCableCdp = oInfo.IsCableCdp;
             oRow.CableSource = oInfo.CableSource;
             oRow.CableDest = oInfo.CableDest;
-            // rev.16.3 (задача 2): сбор DT жил по кабелю в DmReport.CableCoreEnds.
-            // Стоит ПОСЛЕ присваивания oRow.CableName/31019/31020 (нужен готовый
-            // DT жилы) и ВНЕ ветки первого чтения — иначе повторный вызов на тот
-            // же уникальный Connection (каждый вывод/пин) ничего бы не добавлял, а
-            // кабель без первого попадания не получил бы ключ вовсе.
-            // Фикс-волна 02.10.2026 (задача Ф-2, дефект A1). КЛЮЧ — СНАЧАЛА
+            // rev.16.4 (задача 3.1-bis): сбор концов кабеля в DmReport.CableStripEnds.
+            // Источник — ПОЛНОЕ ОУ КЛЕМЫ этой же строки ([DM].TerminalName), а НЕ
+            // значения №31019/№31020: EPLAN собирает их только из «идентифицирующих»
+            // свойств, поэтому у приборов сегменты «++»/«+» в строку не попадают вовсе,
+            // а настройка живёт в свойствах проекта ⇒ разбор строки зависел бы от
+            // конфигурации чужого проекта (подробно — в DmModels.CableStripEnds).
+            // Ничего нового для этого не читаем: обход и так проходит по ВСЕМ
+            // клеммникам проекта (Project.Pages -> Page.TerminalStrips), т.е. строки
+            // второго конца видны и без 31019/31020 — НО ТОЛЬКО если второй конец
+            // сам клеммник. ПРИБОР в обход не попадает (он не клема), поэтому для
+            // кабеля «клеммник → прибор» список концов [DM] содержит один элемент,
+            // Decide даёт 'own-end-only', и потребитель откатывается на 20376/20377
+            // (третий триггер отката в AnalyzeAction.PrepareBreakPointDecisions).
+            // Это НЕ регрессия: rev16.3 по 31019/31020 видел оба конца, но полагался
+            // на конфигурацию чужого проекта.
+            // Стоит ПОСЛЕ присваивания oRow.TerminalName/CableName и ВНЕ ветки
+            // первого чтения — иначе повторный вызов на тот же уникальный Connection
+            // (каждый вывод/пин) ничего бы не добавлял. КЛЮЧ — СНАЧАЛА
             // oRow.ConnectionName, при пустом — oRow.CableName: полное DT кабеля
-            // живёт в ConnectionName (проба rev.9.5, так же в CableLayoutBuilder:34),
-            // а CableName — CDP-путь, который на стенде ВСЕГДА null ('cable=<провод>')
-            // ⇒ оттуда и был '[CBP-SUM] кабелей с DT жил: 0' и 100%-откат на
-            // 20376/20377. Порядок полей ДОЛЖЕН совпадать с CableLayoutBuilder:
-            // потребитель (AnalyzeAction.PrepareBreakPointDecisions) ищет
-            // oDm.CableCoreEnds[strCable] по oCable.Name = ConnectionName ?? CableName.
+            // живёт в ConnectionName (проба rev.9.5, так же в CableLayoutBuilder:34).
+            // Порядок полей ДОЛЖЕН совпадать с CableLayoutBuilder: потребитель
+            // (AnalyzeAction.PrepareBreakPointDecisions) ищет
+            // oDm.CableStripEnds[strCable] по oCable.Name = ConnectionName ?? CableName.
             // Фильтр — MatchBuilder.IsCableRow(oRow) (тот же предикат, по которому
             // TerminalConnectionModelBuilder помечает строку кабельной): без него в
-            // словарь попали бы не-кабельные ConnectionName ('=++ЯЧ67+#4' у Int) и
-            // 'peer=…' у мостов (у Bridge ConnectionName не заполняется вовсе).
+            // словарь попали бы внутренние соединения с пустым именем кабеля
+            // ('=+++#' — на стенде 02.10 таких строк 420 из 1398, и в одной группе
+            // оказывались 30 клеммников из шести шкафов ⇒ ложный multi) и 'peer=…'
+            // у мостов (у Bridge ConnectionName не заполняется вовсе).
             string strCableKey = oRow.ConnectionName;
             if (string.IsNullOrEmpty(strCableKey)) strCableKey = oRow.CableName;
             if (MatchBuilder.IsCableRow(oRow) && !string.IsNullOrEmpty(strCableKey))
-            {
-                AddCoreEnd(oReport, strCableKey, oRow.CableSource);
-                AddCoreEnd(oReport, strCableKey, oRow.CableDest);
-            }
+                AddStripEnd(oReport, strCableKey, oRow.TerminalName);
         }
 
-        /// <summary>rev.16.3 (задача 2): один конец жилы (#31019/#31020) в
-        /// DmReport.CableCoreEnds по ключу-кабелю. Пустое имя кабеля (провод, не
-        /// кабель) и пустое/нечитаемое значение свойства (null от SafeConnPropText)
-        /// пропускаются. Дубль по Ordinal не добавляется, поэтому строка [CBP]
-        /// печатается РОВНО один раз на пару «кабель+DT», сколько бы выводов/пинов
-        /// у этого соединения ни было.
-        /// Формат строки [CBP] ОТЛИЧАЕТСЯ от [CBP] первого чтения соединения
+        /// <summary>rev.16.4 (задача 3.1-bis): ОДНО ПОЛНОЕ ОУ КЛЕМЫ в
+        /// DmReport.CableStripEnds по ключу-кабелю. Пустое имя кабеля (провод, не
+        /// кабель) и пустое/нечитаемое имя клемы пропускаются. Дубль по Ordinal не
+        /// добавляется, поэтому строка [BPE] печатается РОВНО один раз на пару
+        /// «кабель+клема», сколько бы выводов/пинов у соединения ни было.
+        /// Хвост ':пин' в значении ОСТАЁТСЯ ('=HII-1.1++ЯЧ67+#1-X3:1') — потребитель
+        /// (BreakPointResolver.Decide) снимает его сам через DesignationOf, поэтому
+        /// 'X3:1' и 'X3:3' — один конец, а 'X3' против 'X2' — разные.
+        /// Формат строки [BPE] ОТЛИЧАЕТСЯ от [CBP] первого чтения соединения
         /// (задача 0) позицией двоеточия: там после имени идёт «conn=», здесь —
-        /// «: » сразу, поэтому фильтр стенда '\\[CBP\\] '[^']*': ' разводит их.
-        /// Дополнение к букве брифа: бриф просил лог по условию Count == 1, но это
-        /// условие срабатывает лишь на ПЕРВЫЙ уникальный DT кабеля (второй DT того
-        /// же соединения даёт Count == 2) — полный перечень DT, требуемый гейтом
-        /// шага 4 («со всеми DT этого кабеля»), не выполнился бы. Печатаем поэтому
-        /// на КАЖДЫЙ новый уникальный DT; детерминизм «первый по Ordinal»
-        /// (которого ждёт Task 3) задаёт потребитель, не ридер.</summary>
-        private void AddCoreEnd(DmReport oReport, string strCable, string strDt)
+        /// «: » сразу, поэтому фильтр стенда '\\[BPE\\] '[^']*': ' разводит их.
+        /// Печатаем на КАЖДЫЙ новый уникальный DT клемы, а не по условию Count == 1:
+        /// оно сработало бы лишь на ПЕРВЫЙ уникальный DT кабеля, и перечень, требуемый
+        /// потребителем, был бы неполным; детерминизм «первый по Ordinal»
+        /// задаёт потребитель, не ридер.</summary>
+        private void AddStripEnd(DmReport oReport, string strCable, string strDt)
         {
             if (string.IsNullOrEmpty(strCable) || string.IsNullOrEmpty(strDt)) return;
+            // Заглушка SafeText на НЕПРОЧИТАННОМ имени (SafeText("<n/a>", …) в
+            // ReadTerminal) в список концов попадать НЕ должна. Раньше это было
+            // безопасно: значение приходило из свойства, которое могло быть null,
+            // и guard выше его отбрасывал. Теперь источник — oRow.TerminalName,
+            // который заглушку НЕ несёт (т.е. guard на неё мёртв), а хуже того
+            // заглушка ПЕРЕВЕРНУЛА бы противоположный конец: у «<n/a>» нет '+'
+            // ⇒ CabinetKeyOf = «<n/a>», DesignationOf = "" ⇒ IsStripCodeLetter("")
+            // = false, а по Ordinal '<' (U+003C) < '=' (U+003D) ⇒ именно «<n/a>»
+            // стал бы ПЕРВЫМ «чужим» концом и дал opposite-device (устройство)
+            // вместо opposite-strip (клеммник) — неверный Kind и неверное имя
+            // точки разрыва. Отсекаем все значения, начинающиеся с '<' —
+            // настоящие ОУ из [DM] всегда начинаются с '='.
+            if (strDt[0] == '<') return;
             List<string> lstEnds;
-            if (!oReport.CableCoreEnds.TryGetValue(strCable, out lstEnds))
+            if (!oReport.CableStripEnds.TryGetValue(strCable, out lstEnds))
             {
                 lstEnds = new List<string>();
-                oReport.CableCoreEnds[strCable] = lstEnds;
+                oReport.CableStripEnds[strCable] = lstEnds;
             }
             // Явный Ordinal-обход, а не List.Contains: сравнение обязано быть
             // Ordinal (как Decide в BreakPointResolver), а Contains для List<string>
@@ -422,7 +448,7 @@ namespace MyEplanActions
             for (int i = 0; i < lstEnds.Count; i++)
                 if (string.Equals(lstEnds[i], strDt, StringComparison.Ordinal)) return;
             lstEnds.Add(strDt);
-            _log.Log("[CBP] '" + strCable + "': " + strDt);
+            _log.Log("[BPE] '" + strCable + "': " + strDt);
         }
 
         /// <summary>№31058 «Соединение: Принадлежность=Кабель» (bool, read-only).
