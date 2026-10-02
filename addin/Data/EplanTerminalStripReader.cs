@@ -188,10 +188,16 @@ namespace MyEplanActions
                             oRow.TerminalName = strTermName;
                             oRow.Side = "Bridge";
                             oRow.HasConn = oSegment.Conn != null;
-                            if (oSegment.Conn != null) FillCable(oReport, oRow, oSegment.Conn);
+                            // PeerName ДО FillCable (fix round 1): лог [CBP] внутри
+                            // FillCable печатает для моста peer=<PeerName> — раньше
+                            // поле заполнялось после вызова, и в [CBP] всегда было
+                            // peer=?. Перестановка безопасна: FillCable читает только
+                            // StripName/TerminalName/Side/ConnectionName/PeerName, и
+                            // Bridge до FillCable их уже не меняет.
                             oRow.PeerName = oSegment.BridgedTerminal != null
                                 ? SafeText("<n/a>", () => oSegment.BridgedTerminal.Name)
                                 : null;
+                            if (oSegment.Conn != null) FillCable(oReport, oRow, oSegment.Conn);
                             Emit(oReport, oRow);
                         }
                     }
@@ -221,19 +227,25 @@ namespace MyEplanActions
             string strCable = oRow.CableName == null ? "<провод>" : oRow.CableName;
             string strProbe = " | cdp=" + FmtCdp(oRow.CdpCount) +
                 " | 31058=c:" + FmtBool(oRow.IsCableConn) + " d:" + FmtBool(oRow.IsCableCdp);
+            // Проба rev.16.3: №31019/№31020 печатаются в ОБЕИХ ветках [DM],
+            // включая Bridge: bridge-сегмент с Conn!=null тоже проходит через
+            // FillCable (строка вызова в ветке мостов), поэтому значения
+            // заполнены реально. Раньше (коммит 7116917) bridge-ветка их не
+            // печатала — соединения мостов выпадали из гейта шага 5 (неверный
+            // «нет» по п.1 → неверная развилка).
+            string strSrcDest = " | 31019='" + (oRow.CableSource ?? "—") +
+                "' 31020='" + (oRow.CableDest ?? "—") + "'";
             if (oRow.Side == "Bridge")
             {
                 _log.Log("[DM] " + oRow.TerminalName + " | Bridge | ->" + (oRow.PeerName ?? "?") +
-                    " | conn=" + (oRow.HasConn ? "yes" : "no") + " | cable=" + strCable + strProbe);
+                    " | conn=" + (oRow.HasConn ? "yes" : "no") + " | cable=" + strCable +
+                    strProbe + strSrcDest);
             }
             else
             {
-                // Проба rev.16.3: №31019/№31020 в строке [DM] (Bridge не печатает —
-                // у моста нет Connection, оба поля были бы «—»).
                 _log.Log("[DM] " + oRow.TerminalName + " | " + oRow.Side + " | " +
                     oRow.ConnectionName + " | " + oRow.PinName + " | pin=" + oRow.PinIndex +
-                    " | cable=" + strCable + strProbe +
-                    " | 31019='" + (oRow.CableSource ?? "—") + "' 31020='" + (oRow.CableDest ?? "—") + "'");
+                    " | cable=" + strCable + strProbe + strSrcDest);
             }
             if (oRow.CableName != null)
             {
@@ -313,8 +325,13 @@ namespace MyEplanActions
 
                 // [CBP] строка на каждое НЕПУСТОЕ значение — только здесь, в ветке
                 // первого чтения соединения (дальше значения из кэша CableInfo).
+                // Идентификатор соединения: у Ext/Int заполнен ConnectionName, у
+                // Bridge он НЕ присваивается никогда (строка 190 — HasConn, но не
+                // ConnectionName) → без fallback строки мостов печатали conn=''
+                // и не коррелировались ни с чем.
                 if (oInfo.CableSource != null || oInfo.CableDest != null)
-                    _log.Log("[CBP] '" + oRow.TerminalName + "' conn='" + oRow.ConnectionName +
+                    _log.Log("[CBP] '" + oRow.TerminalName + "' conn='" +
+                        (oRow.ConnectionName ?? ("peer=" + (oRow.PeerName ?? "?"))) +
                         "' side=" + oRow.Side + " cable=" + (oInfo.CableName ?? "<провод>") +
                         " 31019='" + (oInfo.CableSource ?? "—") + "'" +
                         " 31020='" + (oInfo.CableDest ?? "—") + "'");
