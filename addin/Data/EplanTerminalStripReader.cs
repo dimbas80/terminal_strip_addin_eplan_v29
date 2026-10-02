@@ -228,9 +228,12 @@ namespace MyEplanActions
             }
             else
             {
+                // Проба rev.16.3: №31019/№31020 в строке [DM] (Bridge не печатает —
+                // у моста нет Connection, оба поля были бы «—»).
                 _log.Log("[DM] " + oRow.TerminalName + " | " + oRow.Side + " | " +
                     oRow.ConnectionName + " | " + oRow.PinName + " | pin=" + oRow.PinIndex +
-                    " | cable=" + strCable + strProbe);
+                    " | cable=" + strCable + strProbe +
+                    " | 31019='" + (oRow.CableSource ?? "—") + "' 31020='" + (oRow.CableDest ?? "—") + "'");
             }
             if (oRow.CableName != null)
             {
@@ -303,6 +306,18 @@ namespace MyEplanActions
                     catch { /* ожидаемо при ≠1 CDP — основной путь выше */ }
                 }
                 oInfo.IsCableConn = ReadIsCable31058(oConn);
+                // Проба rev.16.3 (задача 0): что фактически лежит в №31019/№31020
+                // соединения жилы. Только чтение и лог — логики классификации нет.
+                oInfo.CableSource = SafeConnPropText(oConn, 31019);
+                oInfo.CableDest = SafeConnPropText(oConn, 31020);
+
+                // [CBP] строка на каждое НЕПУСТОЕ значение — только здесь, в ветке
+                // первого чтения соединения (дальше значения из кэша CableInfo).
+                if (oInfo.CableSource != null || oInfo.CableDest != null)
+                    _log.Log("[CBP] '" + oRow.TerminalName + "' conn='" + oRow.ConnectionName +
+                        "' side=" + oRow.Side + " cable=" + (oInfo.CableName ?? "<провод>") +
+                        " 31019='" + (oInfo.CableSource ?? "—") + "'" +
+                        " 31020='" + (oInfo.CableDest ?? "—") + "'");
 
                 if (oInfo.CdpCount < 0) oReport.ConnCdpErr++;
                 else if (oInfo.CdpCount == 0) oReport.ConnCdpZero++;
@@ -322,6 +337,8 @@ namespace MyEplanActions
             oRow.CdpCount = oInfo.CdpCount;
             oRow.IsCableConn = oInfo.IsCableConn;
             oRow.IsCableCdp = oInfo.IsCableCdp;
+            oRow.CableSource = oInfo.CableSource;
+            oRow.CableDest = oInfo.CableDest;
         }
 
         /// <summary>№31058 «Соединение: Принадлежность=Кабель» (bool, read-only).
@@ -337,6 +354,31 @@ namespace MyEplanActions
                 if (strValue.Equals("True", StringComparison.OrdinalIgnoreCase) || strValue == "1") return true;
                 if (strValue.Equals("False", StringComparison.OrdinalIgnoreCase) || strValue == "0") return false;
                 return null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Проба rev.16.3: текст произвольного свойства Connection по
+        /// НОМЕРУ — тот же паттерн SafeAnyProp (id из
+        /// CreateAnyPropertyIdFromNumber, чтение Properties[AnyPropertyId]), но
+        /// для Connection, а не Function (у SafeAnyProp параметр Function, и
+        /// Connection им не является). №31019 CONNECTION_SOURCE /
+        /// №31020 CONNECTION_DESTINATION — по KB (eplan.help API 2.9,
+        /// ConnectionPropertyList.CONNECTION_SOURCE/DESTINATION) строковые
+        /// свойства соединения, не индексированные. null = нечитаемо (null id,
+        /// исключение, IsEmpty, пустая строка); в логе — «—».
+        /// ВНИМАНИЕ (проба): содержимое этих свойств на стенде НЕ проверено —
+        /// неизвестно, лежит ли там DT второго клеммника; см. отчёт задачи 0.</summary>
+        private static string SafeConnPropText(Connection oConn, int nNumber)
+        {
+            AnyPropertyId oId = CableSymbolCreator.CreateAnyPropertyIdFromNumber(nNumber);
+            if (oId == null) return null;
+            try
+            {
+                PropertyValue oValue = oConn.Properties[oId];
+                if (oValue == null || oValue.IsEmpty) return null;
+                string strValue = oValue.ToString();
+                return strValue.Length == 0 ? null : strValue;
             }
             catch { return null; }
         }

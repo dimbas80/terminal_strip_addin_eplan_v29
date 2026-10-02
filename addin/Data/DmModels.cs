@@ -26,6 +26,8 @@ namespace MyEplanActions
         public int CdpCount = -1;      // ConnectionDefPoints: 0/1/>1; -1 = проба не удалась
         public bool? IsCableConn;      // №31058 на Connection (null = свойство не задано)
         public bool? IsCableCdp;       // №31058 на первом CDP (null = нет CDP/не задано)
+        public string CableSource;      // №31019 CONNECTION_SOURCE на Connection (проба rev.16.3)
+        public string CableDest;        // №31020 CONNECTION_DESTINATION на Connection (проба rev.16.3)
     }
 
     /// <summary>Итог пробы кабеля одного Connection (rev.5.0): кэш на прогон.
@@ -39,6 +41,9 @@ namespace MyEplanActions
         public int CdpCount = -1;
         public bool? IsCableConn;
         public bool? IsCableCdp;
+        // Проба rev.16.3: №31019/№31020 — только чтение и лог, в логике не участвуют.
+        public string CableSource;
+        public string CableDest;
     }
 
     /// <summary>Статистика одного клеммника (rev.4.1: сверка [CROSS] по-клеммнику —
