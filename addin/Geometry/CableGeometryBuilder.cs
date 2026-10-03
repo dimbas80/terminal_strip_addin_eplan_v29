@@ -165,6 +165,22 @@ namespace MyEplanActions
         // находится; сетка страхует реальные прогоны.
         private const int MaxSymbolColumnTries = 16;
 
+        /// <summary>Шаг уровней шин (мм): max(dLevelPitchMinMm,
+        /// dSymbolHeightMm·dLevelPitchMinMm/14) — правило 2 решения пользователя
+        /// 23.09.2026 в редакции rev.10.8 (шаг учитывает высоту символа B, но не
+        /// падает ниже минимума). rev.16.6 (замер прогона 14:19) — формула
+        /// ВЫНЕСЕНА из Build в отдельную чистую функцию: тем же шагом GhostFrameMath
+        /// считает разнос шин призрака (ComputeBusSpreadMm), иначе два места
+        /// разъедутся (как уже разъехались бы при правке одной формулы вручную).
+        /// ЧИСТЫЙ АРИФМЕТИЧЕСКИЙ КОНСТРУКТ: ни EPLAN, ни конфигурации — входы
+        /// (B и минимум) передаёт вызывающий. Поведение Build не изменилось —
+        /// вызов байт-в-байт прежний (Case29_ComputeLevelPitchMm + Case13).</summary>
+        public static double ComputeLevelPitchMm(double dSymbolHeightMm, double dLevelPitchMinMm)
+        {
+            return Math.Max(dLevelPitchMinMm,
+                dSymbolHeightMm * dLevelPitchMinMm / LevelPitchRefHeightMm);
+        }
+
         /// <summary>dStripEndAxis — крайняя колонка клеммника по оси выноса
         /// (H: max X колонок K4, V: min Y); NaN → fallback на крайнюю точку
         /// кабеля + WARN (ревизия 2: сход за габаритом ряда, как на эталоне).
@@ -203,8 +219,7 @@ namespace MyEplanActions
             // вдоль страничной X лежит A, вдоль Y — B; в Vertical ось = Y → B).
             double dAxisExtentMm = bV ? oCfg.SymbolHeightMm : oCfg.SymbolWidthMm;
             double dGap = dAxisExtentMm / 2.0;   // зазор линия–символ (rev.10.11: от габарита по оси выноса)
-            double dLevelPitch = Math.Max(oCfg.LevelPitchMinMm,   // шаг уровней шин (rev.10.8: учёт B)
-                oCfg.SymbolHeightMm * oCfg.LevelPitchMinMm / LevelPitchRefHeightMm);
+            double dLevelPitch = ComputeLevelPitchMm(oCfg.SymbolHeightMm, oCfg.LevelPitchMinMm);   // шаг уровней шин (rev.10.8: учёт B; rev.16.6 — формула вынесена)
 
             // --- Проход 1: уровни шин и оси подходов всех кабелей. Расстановка
             // (rev.10.10) зависит от ВСЕХ кабелей (ряды символов — по уровням шин,
