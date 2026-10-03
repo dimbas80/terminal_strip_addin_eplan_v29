@@ -2566,7 +2566,15 @@ namespace MyEplanActions
             {
                 Console.WriteLine("[MDDIRS] Settings() отказ — " +
                     oEx.GetType().Name + ": " + oEx.Message);
-                if (oLogger != null) oLogger.Log("[MDDIRS] Settings() отказ — " +
+                // rev.16.7-тер (03.10): Warn, а не Log — это ОТКАЗ (канал
+                // Settings() бросил, все пути символов пусты). Warn мимо гейта
+                // режима лога ВСЕГДА, значит отказ не теряется в обычном режиме
+                // и попадает в список предупреждений финального окна. Побочный
+                // эффект осознан: в файле строка станет
+                // «[WARN] [MDDIRS] Settings() отказ — …» (канал добавляет
+                // префикс сам), тег [MDDIRS] остаётся в списке IMPORTANT_TAGS_NO_ERR
+                // для возможных других вызовов этого тега.
+                if (oLogger != null) oLogger.Warn("[MDDIRS] Settings() отказ — " +
                     oEx.GetType().Name + ": " + oEx.Message);
             }
             foreach (string strPath in arrSettingPaths)

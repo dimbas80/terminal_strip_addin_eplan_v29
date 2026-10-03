@@ -38,7 +38,10 @@ namespace MyEplanActions
     /// InvariantCulture.
     /// rev.16.0: ИСКЛЮЧЕНИЕ — BlockFormat1/BlockFormat2 пустое значение
     /// ЗАПИСЫВАЕТСЯ как "" (фича «формат свойства блока» off; спека
-    /// 2026-09-30-blockprop-format-design.md §3).
+    /// 2026-09-30-blockprop-format-design.md §3). rev16.11: ИСКЛЮЧЕНИЕ —
+    /// ключ LogMode пишется ВСЕГДА (значения "on"/"off", дефолт "off"),
+    /// даже когда поле пустое (тогда "off"), — переключатель режима лога
+    /// обязан быть виден в файле (решение заказчика 03.10).
     /// Исключения наружу не выходят: Load при любых IO-ошибках возвращает
     /// дефолты (strUsedPath=null), Save — false.
     /// </summary>
@@ -82,6 +85,18 @@ namespace MyEplanActions
         /// детекция из дерева отчёта).</summary>
         public SettingsOrientation OrientationMode;
 
+        /// <summary>Режим лога (rev.16.7, 03.10, решение заказчика): "debug" —
+        /// полный лог, пусто — обычный (только ошибки и предупреждения).
+        /// rev16.11 (03.10, ВТОРОЕ решение по этому же ключу, дословно
+        /// заказчика: «сделать что бы в настройках LogMode присутствовал
+        /// всегда. Сейчас же можно его сделать равным on/off. Пусть по
+        /// умолчанию будет off»): каноничные значения — "on"/"off", дефолт
+        /// "off", ключ пишется в файл ВСЕГДА. Разбор значения — статика
+        /// IsDebugLogMode (правило в одном месте, тестируется без файла
+        /// настроек); AnalyzeAction читает поле через неё же и передаёт
+        /// режим в DiagnosticLogger.BeginRun.</summary>
+        public string LogMode;
+
         /// <summary>Выбор профиля .emc для СТУБА, слот H (дефолт — null: выбора
         /// нет). Значение — EmcProfileCatalog.EncodeSelection(file, name)
         /// ("file|name", задача 2 rev.17); consumer — задача 5/7.</summary>
@@ -124,6 +139,13 @@ namespace MyEplanActions
             VariantH = AddInConfiguration.SymbolVariant;
             VariantV = AddInConfiguration.SymbolVariant;
             OrientationMode = SettingsOrientation.Auto;
+            // rev16.11 (03.10, «пусть по умолчанию будет off»): дефолт
+            // ОБЫЧНЫЙ режим задан ЯВНОЙ строкой "off" — не пустой и не null.
+            // Раньше дефолтом был "" и Save пустое значение НЕ писал, из-за
+            // чего в файле настроек ключа не было вовсе, а включить отладку
+            // можно было только правкой от руки; теперь переключатель виден
+            // всегда и в файле, и в этом поле. Load нормализует мусор в "off".
+            LogMode = "off";
             // rev.17 (спека 2026-10-01-ui-emc-profiles): профили .emc не выбраны —
             // null (пустое значение Save не пишет; после Load поле остаётся null).
         }
@@ -152,9 +174,46 @@ namespace MyEplanActions
         /// GridPitch.&lt;форма&gt; значим — урок п.33); известный ключ с пустым
         /// значением пропускается — поле остаётся дефолтным (ИСКЛЮЧЕНИЕ
         /// rev.16.0: BlockFormat1/BlockFormat2 пустое записывается как "").</summary>
+        /// rev16.9: это thin-обёртка над трёхаргументной перегрузкой — разбор
+        /// живёт ТОЛЬКО там (дублировать нельзя: разойдутся), заметка здесь
+        /// просто выбрасывается. Контракт прежний (регрессия — кейсы 26/27).</summary>
         public static AddInSettings Load(string[] arrDirCandidates, out string strUsedPath)
         {
+            string strNote;
+            return Load(arrDirCandidates, out strUsedPath, out strNote);
+        }
+
+        /// <summary>rev16.9 (03.10, наблюдаемость настроек): та же загрузка +
+        /// strNote — человекочитаемая заметка О ПРОБЛЕМЕ разбора, "" когда
+        /// штатно. Поведение (что именно применяется) НЕ меняется — заметка
+        /// только называет то, что иначе осталось невидимым.
+        /// ЗАЧЕМ: в обычном режиме лога строка «[SETTINGS] load: …» пишется
+        /// через Log(), то есть в файле её НЕТ; когда ручная правка
+        /// «LogMode=debug» исчезала из файла, доказать, чей это был файл и
+        /// было ли значение в файле при чтении, было НЕЧЕМ — диагностика
+        /// молчала. Три ситуации, которые она различает:
+        /// (1) сбой чтения/разбора (catch) → «файл не прочитан: …» — раньше
+        ///     этот случай молча отдавал new AddInSettings();
+        /// (2) строка с ключом LogMode в файле ЕСТЬ, а значение не распознано →
+        ///     «не распознано (допустимо on/off; debug — легаси-синоним)» с
+        ///     исходным значением «как есть». rev16.11: признание значения
+        ///     считает отдельная статика IsKnownLogMode — после нормализации
+        ///     в "on"/"off" отличить «явно off» от «мусор, случайно давший
+        ///     off» уже нельзя;
+        /// (3) файла/каталога нет либо ключ распознан → "" (штатно).
+        /// ЧТО НЕ МЕНЯЕТСЯ: ключ в ApplyValue уходит СЫРЫМ (урок п.33),
+        /// порядок/приоритет строк прежний. Побочно в разбор
+        /// добавлено ОДНО запоминание — первая строка, чей ключ ПОСЛЕ трима
+        /// равен LogMode (OrdinalIgnoreCase) — читателю заметки, не разбору.
+        /// Исключения наружу не выходят: прежний bare catch стал
+        /// catch (Exception oEx) (нужен тип и текст в заметке).</summary>
+        public static AddInSettings Load(string[] arrDirCandidates, out string strUsedPath,
+            out string strNote)
+        {
             strUsedPath = null;
+            strNote = "";
+            string strRawLogMode = null;    // значение ПЕРВОЙ строки LogMode, как есть
+            bool bLogModeLineSeen = false;
             try
             {
                 string strDir = FirstExistingDir(arrDirCandidates);
@@ -175,14 +234,28 @@ namespace MyEplanActions
                         continue;   // повреждённая строка (нет '=') — пропуск
                     string strKey = strLine.Substring(0, iEq);   // БЕЗ trim (урок п.33)
                     string strValue = strLine.Substring(iEq + 1);   // БЕЗ trim (урок п.33)
+                    // rev16.9: запоминаем ПЕРВУЮ строку с ключом LogMode (сравнение
+                    // OrdinalIgnoreCase, ключ тримнутый — только для заметки; в
+                    // ApplyValue уходит СЫРОЙ ключ, разбор не тронут).
+                    if (!bLogModeLineSeen
+                        && string.Equals(strKey.Trim(), "LogMode", StringComparison.OrdinalIgnoreCase))
+                    {
+                        bLogModeLineSeen = true;
+                        strRawLogMode = strValue;
+                    }
                     ApplyValue(oSettings, strKey, strValue);
                 }
                 strUsedPath = strPath;
+                if (bLogModeLineSeen && !IsKnownLogMode(strRawLogMode))
+                    strNote = "в файле есть LogMode со значением '" + strRawLogMode
+                        + "' — не распознано (допустимо on/off; debug — легаси-синоним)";
                 return oSettings;
             }
-            catch
+            catch (Exception oEx)
             {
-                return new AddInSettings();   // IO-ошибка чтения — дефолты
+                strNote = "файл не прочитан: " + oEx.GetType().Name + ": " + oEx.Message
+                    + " — применены дефолты, они перезапишут файл";
+                return new AddInSettings();   // IO-ошибка чтения — дефолты (как прежде)
             }
         }
 
@@ -191,7 +264,8 @@ namespace MyEplanActions
         /// null/пустые строковые значения НЕ пишутся — после Load соответствующее
         /// поле остаётся дефолтным (ИСКЛЮЧЕНИЕ rev.16.0: BlockFormat1/BlockFormat2
         /// пишутся ВСЕГДА, пустое значение = явное отключение механизма, спека §3;
-        /// иначе Load вернул бы дефолт и фича самопере-включилась бы).
+        /// ИСКЛЮЧЕНИЕ rev16.11: ключ LogMode тоже пишется ВСЕГДА — в "on"/"off",
+        /// пустое поле = "off"; иначе Load вернул бы дефолт и фича самопере-включилась бы).
         /// Атомарная запись: сперва во временный файл
         /// SETTINGS_FILE_NAME + ".tmp" в том же каталоге, затем File.Replace
         /// (замена невозможна — в т.ч. файла ещё нет — fallback delete+move);
@@ -227,6 +301,17 @@ namespace MyEplanActions
                 // запись 20202[x] на символ кабеля удалены. Unknown-ключи старых
                 // settings-файлов Load пропускает молча (default-ветка).
                 lstLines.Add("OrientationMode=" + OrientationName(oSettings.OrientationMode));
+                // rev16.11 (03.10, решение заказчика «пусть в настройках
+                // LogMode присутствует всегда»): ключ пишется БЕЗУСЛОВНО и в
+                // значениях on/off. Прежде он писался только непустым, то есть
+                // при обычном режиме (дефолт) в файле его НЕ БЫЛО — а это
+                // ровно то состояние, из которого начиналась неразрешимая
+                // диагностика «я включал отладку, а ключа в файле нет».
+                // Значение нормализовано конструктором и ApplyValue; вдруг
+                // пустое (правка кода в обход разбора) — пишем off, чтобы в
+                // файле не появилась голая строка "LogMode=".
+                lstLines.Add("LogMode=" +
+                    (string.IsNullOrEmpty(oSettings.LogMode) ? "off" : oSettings.LogMode));
                 // rev.17 (спека 2026-10-01-ui-emc-profiles): 6 профилей .emc —
                 // строковые поля, пишутся только непустые ("file|name"). Пусто
                 // (null или "") — строки нет; после Load поле остаётся null.
@@ -295,6 +380,37 @@ namespace MyEplanActions
             return null;
         }
 
+        /// <summary>rev.16.7, дополнено rev16.11 (03.10): разбор режима лога —
+        /// отладочный "on" (любой регистр) И "debug" (любой регистр) как
+        /// ЛЕГАСИ-СИНОНИМ rev16.7; ВСЁ остальное ("off", пусто, "normal",
+        /// "1", мусор, null) — обычный режим. Почему "debug" оставлен
+        /// синонимом, а не выброшен: в уже правленных вручную файлах стоит
+        /// ровно `LogMode=debug`, и если бы разбор перестал его признавать,
+        /// отладка молча выключилась бы у того, кто её включал, — переход
+        /// на "on" должен быть СОЗНАТЕЛЬНЫМ (Save сам пишет "on"). Отдельная
+        /// статика без обращения к файлу: правило режима должно быть одно и
+        /// проверяемое тестом, а не продублировано в ApplyValue и в
+        /// AnalyzeAction. Дефолт — обычный режим "off" (решение заказчика
+        /// 03.10).</summary>
+        public static bool IsDebugLogMode(string strLogMode)
+        {
+            return string.Equals(strLogMode, "on", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(strLogMode, "debug", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>rev16.11: значение ключа LogMode, которое разбор ПРИЗНАЁТ
+        /// (без нормализации): "on"/"off" — каноничные, "debug" — легаси.
+        /// Нужна заметке Load («в файле есть LogMode со значением … — не
+        /// распознано»): после нормализации в "on"/"off" отличить «явно off»
+        /// от «мусор, случайно давший off» уже нельзя. Значение БЕЗ trim
+        /// (урок п.33): " debug" — нераспознанное значение.</summary>
+        private static bool IsKnownLogMode(string strValue)
+        {
+            return string.Equals(strValue, "on", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(strValue, "off", StringComparison.OrdinalIgnoreCase)
+                || IsDebugLogMode(strValue);   // легаси "debug"
+        }
+
         /// <summary>Имя режима ориентации для файла (roundtrip с разбором в Load).</summary>
         private static string OrientationName(SettingsOrientation eMode)
         {
@@ -355,6 +471,17 @@ namespace MyEplanActions
                         oSettings.OrientationMode = SettingsOrientation.Vertical;
                     else if (string.Equals(strValue, "Auto", StringComparison.OrdinalIgnoreCase))
                         oSettings.OrientationMode = SettingsOrientation.Auto;
+                    break;
+                // rev.16.7: режим лога. Здесь пустое/мусорное значение НЕ
+                // «пропуск», как у строковых ключей выше, а ЯВНЫЙ обычный
+                // режим — иначе опечатка в settings-файле молча оставила бы
+                // дефолт, а правило «что значит значение» уехало бы в
+                // потребителя. Значение БЕЗ trim (урок п.33).
+                // rev16.11 (03.10): нормализация в "on"/"off" (прежде "debug"/""):
+                // каноничных значений в файле теперь два, а пустое больше не
+                // значит «обычный режим» молча — оно означает "off".
+                case "LogMode":
+                    oSettings.LogMode = IsDebugLogMode(strValue) ? "on" : "off";
                     break;
                 // rev.17 (спека 2026-10-01-ui-emc-profiles): 6 профилей .emc.
                 // Пустое значение — пропуск (поле остаётся null, дефолт).

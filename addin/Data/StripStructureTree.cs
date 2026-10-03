@@ -91,6 +91,70 @@ namespace MyEplanActions
             return lstRoot;
         }
 
+        /// <summary>rev16.11 (03.10): индекс конца структурной части полного
+        /// ОУ (начало листа), если имя СОГЛАСОВАНО с четырьмя свойствами
+        /// структуры, и -1 если не согласовано либо разбирать нечего. Сверка
+        /// ПОУРОВНЕВАЯ (по каждому виду уровня «=»/«++»/«+»/«#»), а НЕ
+        /// префиксом строки: прежняя склейка непустых частей даёт на пустом
+        /// месте установки №1200 префикс «=HII-1.1++ЯЧ67#1», который не является
+        /// префиксом имени «=HII-1.1++ЯЧ67+#1-X3» — 15 ложных [STRIPTREE] WARN
+        /// на стенде (прогон 21:12, проект ЯЧ67, [NPT]: NP1200=''). ПРАВИЛО по
+        /// КАЖДОМУ виду уровня: (1) свойство НЕПУСТОЕ ⇒ уровень в имени
+        /// обязателен и значения обязаны совпасть (Ordinal); (2) свойство
+        /// ПУСТОЕ ⇒ уровень в имени либо отсутствует, либо присутствует
+        /// ПУСТЫМ — такой уровень и в дереве не появится (уровни строятся из
+        /// свойств), то есть структура НЕ теряется; непустой уровень при
+        /// пустом свойстве, наоборот, ПОТЕРЯЛСЯ бы в дереве, а пустому
+        /// свойству доверять нельзя ⇒ -1. ИСКЛЮЧЕНИЕ: все четыре свойства
+        /// пусты — сверять нечего, разбор имени и так применяется целиком
+        /// (фоллбэк вызывающей стороны) ⇒ индекс находится. null/пустое имя
+        /// либо имя без структурного префикса ⇒ -1 (разбирать нечего).
+        /// Разбор — СУЩЕСТВУЮЩИЕ приватные ParseLevels/MatchPrefix (своей копии
+        /// разбора нет). ГРАНИЦА листа: по дефису через LeafOf
+        /// (Length − LeafOf.Length) — точна, когда лист в имени есть; когда
+        /// уровень один и дефис лист не отделяет (дефис принадлежит значению
+        /// уровня, «=HII-XT1» при Plant=HII), границу даёт склейка
+        /// согласованных уровней из свойств.</summary>
+        public static int MatchStructureEnd(string strFullName, string strPlant,
+            string strMount, string strPlace, string strUser)
+        {
+            if (string.IsNullOrEmpty(strFullName)) return -1;
+            List<string> lstLevels = ParseLevels(strFullName);
+            if (lstLevels.Count == 0) return -1;   // структурного префикса нет
+            string[] arrPrefix = new string[] { PrefixPlant, PrefixMount, PrefixPlace,
+                PrefixUser };
+            string[] arrProp = new string[] { strPlant, strMount, strPlace, strUser };
+            string strLeaf = LeafOf(strFullName);
+            // Единственный уровень + лист по дефису не отделился ⇒ дефис
+            // принадлежит значению уровня, и сверка идёт как «свойство + хвост».
+            bool bTailInValue = (lstLevels.Count == 1 && strLeaf.Length == 0);
+            bool bAnyProp = false;
+            for (int i = 0; i < arrProp.Length; i++)
+                if (!string.IsNullOrEmpty(arrProp[i])) { bAnyProp = true; break; }
+            int nMatchedLen = 0;   // склейка согласованных уровней (граница без листа)
+            for (int i = 0; i < arrPrefix.Length; i++)
+            {
+                int nCount = 0;
+                string strLevel = FindLevel(lstLevels, arrPrefix[i], out nCount);
+                if (nCount > 1)
+                    return -1;   // два уровня одного вида — имя разобрано неоднозначно
+                if (string.IsNullOrEmpty(arrProp[i]))
+                {
+                    if (bAnyProp && strLevel != null
+                        && strLevel.Length > arrPrefix[i].Length)
+                        return -1;   // непустой уровень имени при пустом свойстве
+                    continue;
+                }
+                if (strLevel == null) return -1;   // значения свойства в имени нет
+                if (!LevelMatches(strLevel, arrPrefix[i], arrProp[i], bTailInValue))
+                    return -1;
+                nMatchedLen += arrPrefix[i].Length + arrProp[i].Length;
+            }
+            if (strLeaf.Length > 0) return strFullName.Length - strLeaf.Length;
+            if (nMatchedLen > strFullName.Length) return strFullName.Length;
+            return nMatchedLen;
+        }
+
         /// <summary>Краткое имя устройства — остаток ПОСЛЕ последнего
         /// структурного токена (напр. «-XT1»). Если строка НЕ начинается со
         /// структурного префикса («=», «++», «+», «#») — возвращается целиком
@@ -185,6 +249,43 @@ namespace MyEplanActions
                 nPos = nNext;
             }
             return lst;
+        }
+
+        // Первый уровень вида strPrefix среди разобранных уровней (null — нет)
+        // + счётчик таких уровней (nCount): два уровня одного вида означают
+        // неоднозначное имя (MatchStructureEnd → -1). Вид уровня определяем ТЕМ
+        // ЖЕ MatchPrefix, что и ParseLevels, иначе «++» посчитался бы за «+».
+        private static string FindLevel(List<string> lstLevels, string strPrefix,
+            out int nCount)
+        {
+            nCount = 0;
+            string strFound = null;
+            foreach (string strLevel in lstLevels)
+            {
+                if (string.IsNullOrEmpty(strLevel)) continue;
+                if (!string.Equals(MatchPrefix(strLevel, 0), strPrefix,
+                        StringComparison.Ordinal)) continue;
+                nCount++;
+                if (strFound == null) strFound = strLevel;
+            }
+            return strFound;
+        }
+
+        // Значение уровня в имени согласуется со свойством, когда равно ему
+        // (Ordinal). Для одиночного уровня, у которого дефис лист не отделил
+        // (bTailInValue), допустимо и «свойство + хвост» («=HII-XT1» при
+        // Plant=HII) — но хвост обязан начинаться с «-»: иначе это не лист
+        // устройства (оборванный подчинённый сегмент, мусор), т.е. структура
+        // имени не разобрана.
+        private static bool LevelMatches(string strLevel, string strPrefix,
+            string strProp, bool bTailInValue)
+        {
+            string strValue = strLevel.Substring(strPrefix.Length);
+            if (string.Equals(strValue, strProp, StringComparison.Ordinal)) return true;
+            if (!bTailInValue || strValue.Length <= strProp.Length) return false;
+            if (!strValue.StartsWith(strProp, StringComparison.Ordinal)) return false;
+            return strValue.Substring(strProp.Length).StartsWith("-",
+                StringComparison.Ordinal);
         }
 
         // Индекс конца структурной части (= начала листа) для строки,

@@ -14,8 +14,10 @@ namespace MyEplanActions
     /// (CapturedX/CapturedY + Captured), рамка-призрак под курсором — SetStaticCursor
     /// (объект кладёт хук в PendingGhost ПОСЛЕ создания, ПОСЛЕ этого — запуск экшена:
     /// SetStaticCursor вызывается уже в OnStart интеракции). По паттерну
-    /// addin/Interaction/SymbolPickInteraction.cs (файл-проба append-only, буфер-кап,
-    /// try/catch на всех callback'ах — исключение наружу НЕ выпускать).
+    /// addin/Interaction/SymbolPickInteraction.cs (буфер-кап, try/catch на всех
+    /// callback'ах — исключение наружу НЕ выпускать; запись диагностики — ТОЛЬКО
+    /// в память, буфер IPingDump, сливается как [IPING-DUMP], файл-проба удалена
+    /// 03.10.2026 по решению заказчика).
     /// KB-факты API 2.9 (www.eplan.help/en-us/infoportal/content/api/2.9/):
     /// - XGedStartInteractionAction — «starts an interaction of the graphical editor»,
     ///   Name = «name of the interaction which should be started», пример
@@ -338,47 +340,46 @@ namespace MyEplanActions
             get { return false; }
         }
 
-        // --- пробы (паттерн SymbolPickInteraction.Probe, свой файл + тег [IA-POINT]) ---
+        // --- диагностика: ТОЛЬКО память (буфер IPingDump, кап DUMP_CAP) ---
+        // Отдельного файла пробы интеракции БОЛЬШЕ НЕТ (решение заказчика 03.10):
+        // он писался append-only с тегом [IA-POINT] и построчно дублировал то,
+        // что уже уходит в основной лог как [IPING-DUMP], при этом рос бесконечно
+        // (очистки не было), а в обычном режиме лога его содержимое всё равно не
+        // было видно — обе строки шли через Log("[INFO] …"), а обычный режим
+        // INFO отбрасывает.
 
-        /// <summary>Файловая проба жизненного цикла (append-only, НИКОГДА не бросает
-        /// наружу). Файл "insert_point_probe.log" — ОТДЕЛЬНЫЙ от
-        /// interaction_probe.log спайка; строки «HH:mm:ss.fff [IA-POINT] <что>».
-        /// Каталоги — те же кандидаты, что у логгера действия
-        /// (DiagnosticLogger.LOG_DIR_CANDIDATES + %TEMP%; writer/reader не разойдутся).</summary>
+        /// <summary>ЕДИНАЯ точка записи диагностики интеракции: строка уходит
+        /// ТОЛЬКО в статический буфер IPingDump (кап DUMP_CAP), больше НИКУДА — на
+        /// диск не пишется ничего, наружу ничего не бросает (контракт SPIKE-6).
+        /// Слив — в основной лог как [IPING-DUMP] (AnalyzeAction.TryPickInsertPoint).
+        /// Плата (принята заказчиком 03.10): при падении EPLAN во время выбора
+        /// точки эти строки не сохранятся — раньше их спасал append-only файл.
+        /// Раньше Probe писал строку и в файл пробы, и в буфер (через Buf), теперь
+        /// оба канала — это одна запись, второго места записи нет.</summary>
         private static void Probe(string strWhat)
         {
             try
             {
-                string[] arrDirs = new string[DiagnosticLogger.LOG_DIR_CANDIDATES.Length + 1];
-                DiagnosticLogger.LOG_DIR_CANDIDATES.CopyTo(arrDirs, 0);
-                arrDirs[arrDirs.Length - 1] = System.IO.Path.GetTempPath();
-                string strDir = null;
-                foreach (string strCandidate in arrDirs)
-                {
-                    if (System.IO.Directory.Exists(strCandidate)) { strDir = strCandidate; break; }
-                }
-                if (strDir == null) return;
-                string strLine = DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture) +
-                    " [IA-POINT] " + strWhat + Environment.NewLine;
-                System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(strDir, "insert_point_probe.log"), strLine);
+                if (IPingDump.Count < DUMP_CAP) IPingDump.Add(strWhat);
+                else s_nSuppressed++;
             }
             catch (Exception)
             {
-                // Отказ пробы молчалив: интеракцию не ломать (контракт SPIKE-6).
+                // Отказ диагностики молчалив: интеракцию не ломать (контракт SPIKE-6).
             }
         }
 
+        /// <summary>Шимм для вызывающих (Buf приватен) — реализован через Probe,
+        /// чтобы две точки записи в диагностику не разошлись (03.10.2026).
+        /// Поведение прежнее: строка попадает в буфер дампа, наружу не бросается.</summary>
         private static void Buf(string strLine)
         {
             Probe(strLine);
-            if (IPingDump.Count < DUMP_CAP) IPingDump.Add(strLine);
-            else s_nSuppressed++;
         }
 
         /// <summary>Шимм для EscCancelFilter (B1, Track B 01.10.2026): Buf
-        /// приватен, классу фильтра нужен свой вход — диагноз Esc попадает в
-        /// тот же буфер [IPING-DUMP]/файл пробы, что и остальные пробы.</summary>
+        /// приватен, классу фильтра нужен свой вход — диагноз Esc попадает в тот же
+        /// буфер [IPING-DUMP], что и остальные строки диагностики интеракции.</summary>
         internal static void NoteEscFilter(string strWhat)
         {
             Buf(strWhat);

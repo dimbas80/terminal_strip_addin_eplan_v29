@@ -14,7 +14,7 @@ namespace MyEplanActions
     /// IMessageFilter.PreFilterMessage). Сообщения НИКОГДА не глотаются
     /// (return false) — Esc доходит до EPLAN штатно. Диагноз — через шимм
     /// InsertPointInteraction.NoteEscFilter (Buf приватен) в буфер
-    /// [IPING-DUMP]/файл пробы. НЕ для тест-раннера (тянет WinForms).
+    /// [IPING-DUMP]. НЕ для тест-раннера (тянет WinForms).
     /// Итерация 2 (01.10.2026): фильтр не только ставит флаг — вызывает
     /// TryMarkCancelled (Cancelled=true + ClearCursor + статус-строка): рамка
     /// гаснет мгновенно, пайплайн гарантированно уходит в тихую отмену;
