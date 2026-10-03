@@ -131,7 +131,11 @@ namespace MyEplanActions
         // UI-режим диалога вставки. Переключается вручную: true — UI-режим
         // (стенд H-2), false — headless-регресс A/B (счётчики == rev.11.15
         // обязательны на каждом шаге).
-        public const bool UseUi = true;
+        // rev16.8 (03.10, решение заказчика): поле больше НЕ const — static readonly.
+        // const позволял компилятору свернуть ветку и доказать недостижимость её тела
+        // (8× CS0162 «Обнаружен недостижимый код» в сборке на Windows); static readonly —
+        // нет. Код гейта остаётся на месте и включается сменой значения.
+        public static readonly bool UseUi = true;
 
         // SPIKE (throwaway, H-4v2): гейты диагностики нативного диалога «Вставить
         // символ». УДАЛИТЬ вместе с addin/UI/NativeSymbolDialogSpike.cs и хуком
@@ -142,8 +146,15 @@ namespace MyEplanActions
         // spike-1 (rev.13.2) ЗАКРЫТ фактами 25.09 (диалог синхронен полному циклу,
         // ctx пуст, ActionManager перечисления не даёт) — гейты выключены, код цел.
         // spike-2 (rev.13.3): производный InsertInteraction + дампы OnSuccess.
-        public const bool SpikeNativeInsertSymbol = false;
-        public const bool SpikeActionDump = false;
+        // rev16.8 (03.10, решение заказчика): оба поля больше НЕ const — static
+        // readonly. Причина — ровно та же, что у UseUi: const позволял компилятору
+        // свернуть ветку и доказать недостижимость её тела, и CS0162 «Обнаружен
+        // недостижимый код» на выключенных гейтах был ОЖИДАЕМЫМ и снимается этой
+        // правкой (AnalyzeAction.cs:688 — тело NativeSymbolDialogSpike.Run,
+        // NativeSymbolDialogSpike.cs:53 — DumpActions). Код за гейтами НЕ потерян и
+        // НЕ удалён: он остаётся на месте и включается сменой значения.
+        public static readonly bool SpikeNativeInsertSymbol = false;
+        public static readonly bool SpikeActionDump = false;
 
         // rev.14.15 (диагностика крэшей, summary п.108-109): шторм проб
         // rev.14.12/13 ([VARPROP]/[VARPROP-EXC]/[VARPROP-MEMS]/[SYMPL] —
@@ -152,7 +163,13 @@ namespace MyEplanActions
         // clr.dll, 0x80131506 Fatal Execution Engine Error). Гейт OFF —
         // код остаётся для точечных ре-проб, исполнения нет. Классификация
         // идёт через ридер-скан (TryGetMemberValueViaScan), а не через шторм.
-        public const bool ProbeStormEnabled = false;
+        // rev16.8 (03.10, решение заказчика): поле больше НЕ const — static readonly.
+        // Причина — ровно та же, что у UseUi: const позволял компилятору свернуть
+        // ветку и доказать недостижимость её тела; 4× CS0162 «Обнаружен недостижимый
+        // код» на выключенном шторме (SymbolBrowserDialog.cs 1637, 1815, 1936, 2035)
+        // были ОЖИДАЕМЫМИ и снимаются этой правкой. Код проб НЕ потерян: он остаётся
+        // на месте для точечных ре-проб и включается сменой значения.
+        public static readonly bool ProbeStormEnabled = false;
 
         // Фаза H (rev.12.0, spec §6): рамка-призрак — записи GridPitch.<форма>
         // в настройках нет → фиксированный шаг 10 мм.
@@ -169,7 +186,12 @@ namespace MyEplanActions
         // Esc — возврат в диалог). Headless не затронут: интеракция запускается
         // только в UI-ветке (RunUi). Отказ запуска/таймаут — MessageBox + заново
         // диалог, ничего не создаётся (безопасная деградация).
-        public const bool UseInsertPointPick = true;
+        // rev16.8 (03.10, решение заказчика): поле больше НЕ const — static readonly.
+        // Причина — ровно та же, что у UseUi: const позволял компилятору свернуть
+        // ветку и доказать недостижимость её тела (ветка фиксированной точки,
+        // AnalyzeAction.cs:980). Код гейта остаётся на месте и включается сменой
+        // значения.
+        public static readonly bool UseInsertPointPick = true;
 
         // H-5/H-6 (rev.15.0): кап ожидания клика вставки точки (сек) — модель
         // ожидания SPIKE-8 (AnalyzeAction, кап 120 с на интеракцию спайка).
