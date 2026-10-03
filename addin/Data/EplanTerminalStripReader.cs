@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using Eplan.EplApi.DataModel;
 using Eplan.EplApi.DataModel.EObjects;
@@ -42,6 +43,21 @@ namespace MyEplanActions
         // (TargetNameMultiPage). Заполняется в Read(), читается после.
         private readonly Dictionary<string, List<string>> _dicStripPages =
             new Dictionary<string, List<string>>();
+
+        // rev.17-диагностика: номер свойства «Уровень» многоуровневого клеммника
+        // (KB: eplan.help API 2.9, FunctionPropertyList.FUNC_TERMINALLEVEL = 20034;
+        // Remarks: «Level of the multi-level terminal; if the value is "0", then there
+        // are no multi-level terminals, but a terminal with only one level»). Читается
+        // ТОЛЬКО в дампе [DLV] (DumpTerminalLinks) — в логике чтения не участвует.
+        private const int PROP_TERMINAL_LEVEL = 20034;
+
+        // rev.17 (правка поведения, 4-й проход): Side для строк, которые ридер
+        // достаёт из Terminal.Pins[].Connections. РЕШЕНИЕ ЗАКАЗЧИКА: EPLAN эти
+        // соединения вообще не классифицирует, метка наша собственная; выбрано
+        // «Int», потому что (а) по смыслу это соединения «в щит», а не в кабель,
+        // (б) геометрически все эти выводы верхние — TerminalGeometry.PointSide
+        // даёт для них Top, а TerminalConnectionModelBuilder на Top тянет пул Int.
+        private const string SIDE_PIN_CONN = "Int";
 
         public EplanTerminalStripReader(DiagnosticLogger oLogger, string strTargetStripName)
         {
@@ -171,7 +187,9 @@ namespace MyEplanActions
                     foreach (Terminal oTerminal in arrTerminals)
                     {
                         lstNames.Add(SafeText("<n/a>", () => oTerminal.Name));
+                        int nRowsBeforeTerm = oReport.Rows.Count;
                         ReadTerminal(oReport, oStrip, oTerminal);
+                        DumpTerminalLinks(oReport, strStripName, oTerminal, nRowsBeforeTerm);
                     }
                     oReport.StripTerminalNames[strStripName] = lstNames;
                     for (int i = nRowsBefore; i < oReport.Rows.Count; i++)
@@ -184,6 +202,14 @@ namespace MyEplanActions
                 }
             }
             _log.Log("[CBLPROP-SUM] соединений: " + _nCblPropConns + ", свойств: " + _nCblPropValues);
+            _log.Log("[PIN-SUM] связей на пинах: " + _nPinConnSeen + ", новых строк [DM]: " +
+                _nPinConnNew + ", уже выведено без повтора: " + _nPinConnSkip);
+            _log.Log("[JUMPER-SUM] перемычек (уникальных пар): " + _dicBridgePairs.Count +
+                " — соседних " + CountPairs(false) + ", дальних " + CountPairs(true) +
+                " (в геометрию НЕ попадают: рисует форма)");
+            _log.Log("[JUMPER-FAR] потенциальные перемычки целевого клеммника '" +
+                _strTargetStripName + "': " + _dicBridgePairsFar.Count + " — " +
+                (_dicBridgePairsFar.Count == 0 ? "нет" : string.Join("; ", FarPairsSorted().ToArray())));
             _log.Log("[PROBE5-SUM] соединений: " + _nProbe5Conns + ", direct-ok: " + _nProbe5DirectOk +
                 ", cdp-ok: " + _nProbe5CdpOk + ", connprop: " + _nProbe5ConnProps);
             // rev.16.4 (задача 3.1-bis): сколько кабелей получили хотя бы одну строку [DM]
@@ -224,6 +250,8 @@ namespace MyEplanActions
             _log.Log("[NPTS-SUM] клеммников с частями ОУ: " + CountStripsWithParts(oReport) +
                 " из " + oReport.StripCount + " в обходе (ключей прочитано: " +
                 oReport.StripPartsByDt.Count + ")");
+            _log.Log("[DLV-SUM] дамп связей клемм напечатан для целевого клеммника '" +
+                _strTargetStripName + "' — по одной строке [DLV] на клемму");
             return oReport;
         }
 
@@ -418,12 +446,17 @@ namespace MyEplanActions
             string strStripName = SafeText("<n/a>", () => oStrip.Name);
             string strTermName = SafeText("<n/a>", () => oTerminal.Name);
 
+            // Дедупликация 4-го прохода: всё, что уже ушло в модель по ЭТОЙ клемме,
+            // — по ссылке (lstEmitted) и по строковому ключу 31019->31020 (lstKeys).
+            List<Connection> lstEmitted = new List<Connection>();
+            List<string> lstKeys = new List<string>();
+
             try
             {
                 Terminal.ConnectionInfo[] arrExt = oTerminal.ExternalConnections;
                 if (arrExt != null)
                     foreach (Terminal.ConnectionInfo oInfo in arrExt)
-                        AddConnRow(oReport, strStripName, strTermName, "Ext", oInfo);
+                        AddConnRow(oReport, strStripName, strTermName, "Ext", oInfo, lstEmitted, lstKeys);
             }
             catch (Exception oException) { DmErr(oReport, "ExternalConnections ('" + strTermName + "')", oException); }
 
@@ -432,7 +465,7 @@ namespace MyEplanActions
                 Terminal.ConnectionInfo[] arrInt = oTerminal.InternalConnections;
                 if (arrInt != null)
                     foreach (Terminal.ConnectionInfo oInfo in arrInt)
-                        AddConnRow(oReport, strStripName, strTermName, "Int", oInfo);
+                        AddConnRow(oReport, strStripName, strTermName, "Int", oInfo, lstEmitted, lstKeys);
             }
             catch (Exception oException) { DmErr(oReport, "InternalConnections ('" + strTermName + "')", oException); }
 
@@ -460,28 +493,365 @@ namespace MyEplanActions
                             oRow.PeerName = oSegment.BridgedTerminal != null
                                 ? SafeText("<n/a>", () => oSegment.BridgedTerminal.Name)
                                 : null;
-                            if (oSegment.Conn != null) FillCable(oReport, oRow, oSegment.Conn);
+                            if (oRow.Side == "Bridge")   // всегда true в этом цикле, но пусть будет явно
+                            {
+                                // -1 = не распознан: пара в счётчики НЕ идёт (неизвестное — не «дальняя»)
+                                int nMe = AnchorResolver.ParseTerminalNumber(strTermName ?? "");
+                                int nPeer = AnchorResolver.ParseTerminalNumber(oRow.PeerName ?? "");
+                                if (nMe >= 0 && nPeer >= 0)
+                                {
+                                    // Ключ пары — по возрастанию номера клеммы: та же идея, что
+                                    // в MatchBuilder ([BRIDGE], сравнение по Ordinal), только по
+                                    // числу — в пределах клеммника номера уникальны.
+                                    int nLo = nMe < nPeer ? nMe : nPeer;
+                                    int nHi = nMe < nPeer ? nPeer : nMe;
+                                    string strPair = NumOf(nLo) + "↔" + NumOf(nHi);
+                                    if (!_dicBridgePairs.ContainsKey(strPair))
+                                        _dicBridgePairs[strPair] = nHi - nLo <= 1 ? 0 : 1;
+                                    // Список [JUMPER-FAR] подписан «целевого клеммника» —
+                                    // значит и набирать его надо только по нему. Общее число
+                                    // дальних пар по проекту уже есть в [JUMPER-SUM]
+                                    // (CountPairs(true)), так что фильтр ничего не теряет,
+                                    // зато подпись перестаёт врать на проекте, где дальняя
+                                    // перемычка есть и у другого клеммника.
+                                    if (nHi - nLo > 1 && strStripName == _strTargetStripName
+                                        && !_dicBridgePairsFar.ContainsKey(strPair))
+                                        _dicBridgePairsFar[strPair] = 1;
+                                }
+                            }
+                            if (oSegment.Conn != null)
+                            {
+                                FillCable(oReport, oRow, oSegment.Conn);
+                                lstEmitted.Add(oSegment.Conn);
+                                lstKeys.Add(ConnKey(oSegment.Conn));
+                            }
                             Emit(oReport, oRow);
                         }
                     }
                 }
             }
             catch (Exception oException) { DmErr(oReport, "Bridges ('" + strTermName + "')", oException); }
+
+            // --- 4-й проход: связи, висящие на ПИНАХ клеммы ---
+            //
+            // ЗАЧЕМ (четвёртая дверь). Первые три прохода — это внешние, внутренние
+            // и мостовые связи, которые EPLAN отдаёт САМ. Но Terminal.
+            // ExternalConnections/InternalConnections НЕ отдают связи, у которых
+            // второй конец — вывод прибора без ОУ (только имя пина), и ридер
+            // поэтому терял их наглухо. Лечатся только через Pins[].Connections.
+            //
+            // ДОКАЗАТЕЛЬСТВО (стенд 03.10 13:23, клеммник '=++ШОБ+#-XT1.1',
+            // 69 клемм): связей на пинах 117 (сумма по 276 пинам), строк [DM] было
+            // Ext=34 + Int=37 + Bridge=38 = 109. Разница 8 — ровно по одной на
+            // клеммы :42, :44, :46, :48, :51, :53, :55, :57, то есть связи +EB1,
+            // -EB1, +EB2, -EB2, +EB3, +EB3, +EB4, +EB4. Клемм, где строк БОЛЬШЕ,
+            // чем связей на пинах, НОЛЬ — значит три старых прохода дают строгое
+            // подмножество, двойного чтения до правки не было и быть не могло.
+            // Ожидаемый результат: 117 строк (Ext=34, Int=45, Bridge=38),
+            // Ext+Int = 79 = числу геометрических точек, гейт [CROSSGATE] проходит.
+            //
+            // ПОЧЕМУ Side = SIDE_PIN_CONN ("Int"), А НЕ "Ext"/"Bridge". EPLAN эти
+            // соединения вообще не классифицирует — метка наша собственная.
+            // Заказчик выбрал Int: (а) по смыслу это соединения «в щит», а не в
+            // кабель; (б) геометрически все эти выводы верхние — PointSide даёт
+            // для них Top, а TerminalConnectionModelBuilder на Top тянет пул Int.
+            // Поэтому же метка не мешает и сверке [CROSSGATE]: Ext+Int теперь
+            // полны, а Bridge не сдвинулся.
+            //
+            // ДЕДУПЛИКАЦИЯ ДВУХУРОВНЕВАЯ, потому что неизвестно, отдаёт ли EPLAN
+            // при повторном обращении ТОТ ЖЕ экземпляр Connection. Уровень 1 —
+            // ReferenceEquals по списку уже выведенных связей: если EPLAN отдаёт
+            // тот же объект, попадём сюда. Уровень 2 — строковый ключ
+            // "31019->31020" (ConnKey): если EPLAN отдаёт новый объект с теми же
+            // данными, попадём сюда. Совпадение ЛЮБОГО из двух уровней означает
+            // «уже выведено» — иначе на клемме с двумя пинами, соединёнными между
+            // собой, одна связь дала бы две строки. Ключ специально НЕ Connection.
+            // Name: в этом репозитории он встречается только в докстрингах и не
+            // проверен компиляцией, а SafeConnPropText проверен. Одинаковый ключ
+            // = одна и та же связь по данным EPLAN.
+            //
+            // Порядок: [PINROW] печатается ДО Emit, чтобы новая строка была
+            // видна отдельной строкой лога и не слилась с последующей [DM].
+            // Счётчики _nPinConnSeen/New/Skip — общие на весь обход, печатаются
+            // в [PIN-SUM]; инвариант Seen = New + Skip.
+            try
+            {
+                Pin[] arrPins = oTerminal.Pins;
+                if (arrPins != null)
+                    for (int nPin = 0; nPin < arrPins.Length; nPin++)
+                    {
+                        Pin oPin = arrPins[nPin];
+                        if (oPin == null) continue;
+                        System.Array arrConns = oPin.Connections as System.Array;
+                        if (arrConns == null) continue;
+                        for (int nC = 0; nC < arrConns.Length; nC++)
+                        {
+                            Connection oConn = arrConns.GetValue(nC) as Connection;
+                            if (oConn == null) continue;
+                            _nPinConnSeen++;
+                            string strKey = ConnKey(oConn);
+                            bool bAlready = lstKeys.Contains(strKey);
+                            for (int nE = 0; !bAlready && nE < lstEmitted.Count; nE++)
+                                if (object.ReferenceEquals(lstEmitted[nE], oConn)) bAlready = true;
+                            if (bAlready) { _nPinConnSkip++; continue; }
+                            _nPinConnNew++;
+
+                            DmRow oRow = new DmRow();
+                            oRow.StripName = strStripName;
+                            oRow.TerminalName = strTermName;
+                            oRow.Side = SIDE_PIN_CONN;
+                            oRow.HasConn = true;
+                            oRow.ConnectionName = strKey;
+                            oRow.PinName = SafeText("", () => oPin.Designation);
+                            oRow.PinIndex = nPin;
+                            FillCable(oReport, oRow, oConn);
+                            lstEmitted.Add(oConn);
+                            lstKeys.Add(strKey);
+                            _log.Log("[PINROW] " + strStripName + "/" + strTermName + " pin" +
+                                nPin + " conn=" + strKey);
+                            Emit(oReport, oRow);
+                        }
+                    }
+            }
+            catch (Exception oException)
+            {
+                DmErr(oReport, "Pins[].Connections ('" + strTermName + "')", oException);
+            }
         }
 
+        /// <summary>ЧИСТО ДИАГНОСТИЧЕСКИЙ дамп связей одной клеммы целевого
+        /// клеммника — строка [DLV]. ПОВЕДЕНИЕ НЕ МЕНЯЕТ: читает только, ничего
+        /// не пишет в DmReport и ни на что не влияет; выход по нецелевому
+        /// клеммнику — сразу, чтобы дамп печатался ровно для одного DT.
+        ///
+        /// ЗАЧЕМ (стенд 03.10 12:01): гейт [CROSSGATE] упал — геометрия дала 79
+        /// точек подключения, а в DataModel у '=++ШОБ+#-XT1.1' Ext+Int=71; восемь
+        /// «лишних» верхних выводов пришлись на клеммы 42,44,46,48,51,53,55,57,
+        /// для которых ридер не создал НИ ОДНОЙ строки DmRow. Вопрос, который
+        /// закрывает дамп: EPLAN ВООБЩЕ не отдаёт по этим клеммам связей (тогда
+        /// правка в ридере не поможет — нет данных), EPLAN отдаёт, а ридер их
+        /// теряет (правка в ридере), либо связей в проекте нет и неверно само
+        /// ожидание гейта. Ответ даёт сверка трёх чисел слева (сколько ЭЛЕМЕНТОВ
+        /// пришло от EPLAN по каждой из трёх коллекций) с числами справа (сколько
+        /// из них ридер превратил в строки [DM]).
+        ///
+        /// ЧТО ПЕЧАТАЕТ: level — FUNC_TERMINALLEVEL (KB: eplan.help API 2.9,
+        /// FunctionPropertyList.FUNC_TERMINALLEVEL = 20034; «0» = одноуровневая
+        /// клемма, иначе номер уровня многоуровневой) — прямой признак, что клемма
+        /// является под-клеммой; parent — ParentFunction != null (у главной функции
+        /// возвращает NULL по документации); main — Terminal.IsMainTerminal
+        /// («Determines whether terminal is main») — в связке с parent отличает
+        /// под-клемму от главной клеммы; pins — длина Function.Pins («массив
+        /// точек подключения функции»); разбор пинов pinN:'обозначение'/направление/
+        /// c=N{31019->31020} идёт сразу за pins= и печатает Designation и Direction
+        /// каждого пина и СПИСОК его Pin.Connections («Returns connections which start
+        /// or end at this connection point») с 31019/31020 каждого соединения через
+        /// SafeConnPropText. ЭТО ПРОВЕРКА ГИПОТЕЗЫ, а не украшение: connections могут
+        /// висеть на ПИНАХ клеммы, и тогда ни ExternalConnections, ни
+        /// InternalConnections их не отдают (стенд 03.10 12:36 — у клемм :42,:44,:46,:48
+        /// ext=0 int=0, при том что связь к +EB1 подтверждена пользователем в
+        /// навигаторе соединений EPLAN и висит на нашей клемме). Ненулевое c= при
+        /// нулевых ext/int подтвердит гипотезу, нули везде — опровергнут её;
+        /// ext/int/bridges/сегментов — длины ExternalConnections,
+        /// InternalConnections, Bridges и BridgeSegments по всем мостам. Сегменты
+        /// мостов печатаются списком (peer + наличие Conn), потому что Bridges по
+        /// документации покрывает «внутренние, внешние и малые (jumper) перемычки» —
+        /// их вклад в 8 «лишних» выводов может быть неочевиден.
+        ///
+        /// ЧТЕНИЕ СТРОК [DM]: nRowsExt/nRowsInt/nRowsBr считаются по
+        /// oReport.Rows начиная с nRowsBefore, который вызывающий передаёт как
+        /// число строк ДО ReadTerminal ТЕКУЩЕЙ клеммы, — то есть это вклад
+        /// ровно этой клеммы, а не накопительная сумма по клеммнику.
+        /// Слева ext/int/bridges/сегментов — тоже по этой клемме, поэтому обе
+        /// половины строки сопоставимы напрямую.
+        ///
+        /// ВСЕ ЧТЕНИЯ ОБЁРНУТЫ: любой отказ (BaseException, IncorrectObjectTypeException
+        /// на чтении невозможен, но подстраховка) даёт -1 и НЕ прерывает обход
+        /// клеммника — дамп не должен ломать чтение.</summary>
+        private void DumpTerminalLinks(DmReport oReport, string strStripName,
+            Terminal oTerminal, int nRowsBefore)
+        {
+            if (strStripName != _strTargetStripName) return;
+            string strTermName = SafeText("<n/a>", () => oTerminal.Name);
+
+            string strLevel = SafeAnyProp(oTerminal, PROP_TERMINAL_LEVEL);
+
+            bool bHasParent = false;
+            try { bHasParent = oTerminal.ParentFunction != null; }
+            catch { bHasParent = false; }
+
+            bool bMainTerm = false;
+            try { bMainTerm = oTerminal.IsMainTerminal; }
+            catch { bMainTerm = false; }
+
+            int nPins = -1;
+            try
+            {
+                object oPinsObj = oTerminal.Pins;
+                System.Array arrPins = oPinsObj as System.Array;
+                if (arrPins != null) nPins = arrPins.Length;
+            }
+            catch { }
+
+            int nExt = -1, nInt = -1, nBridges = -1, nSegments = 0;
+            try { Terminal.ConnectionInfo[] arrExt = oTerminal.ExternalConnections; nExt = arrExt == null ? -1 : arrExt.Length; }
+            catch { nExt = -1; }
+            try { Terminal.ConnectionInfo[] arrInt = oTerminal.InternalConnections; nInt = arrInt == null ? -1 : arrInt.Length; }
+            catch { nInt = -1; }
+
+            StringBuilder oSegDump = new StringBuilder();
+            try
+            {
+                Terminal.Bridge[] arrBridges = oTerminal.Bridges;
+                nBridges = arrBridges == null ? -1 : arrBridges.Length;
+                if (arrBridges != null)
+                    for (int nB = 0; nB < arrBridges.Length; nB++)
+                    {
+                        if (arrBridges[nB] == null || arrBridges[nB].BridgeSegments == null) continue;
+                        Terminal.Bridge.BridgeInfo[] arrSegs = arrBridges[nB].BridgeSegments;
+                        for (int nS = 0; nS < arrSegs.Length; nS++)
+                        {
+                            nSegments++;
+                            string strPeer = arrSegs[nS].BridgedTerminal == null
+                                ? "<null>"
+                                : SafeText("<err>", () => arrSegs[nS].BridgedTerminal.Name);
+                            string strConn = arrSegs[nS].Conn == null ? "<null>" : "ok";
+                            oSegDump.Append(" seg" + nB + "." + nS + ":peer=" + strPeer +
+                                ",conn=" + strConn);
+                        }
+                    }
+            }
+            catch { }
+
+            StringBuilder oPinDump = new StringBuilder();
+            try
+            {
+                Pin[] arrPins = oTerminal.Pins;
+                if (arrPins != null)
+                    for (int nP = 0; nP < arrPins.Length; nP++)
+                    {
+                        Pin oPin = arrPins[nP];
+                        string strDesig = oPin == null ? "<null>"
+                            : SafeText("<err>", () => oPin.Designation);
+                        string strDir = oPin == null ? "-" : SafeText("?", () => oPin.Direction.ToString());
+                        int nPinConns = -1;
+                        oPinDump.Append(" pin" + nP + ":'" + strDesig + "'/" + strDir + "/c=");
+                        System.Array arrConns = oPin == null ? null : (oPin.Connections as System.Array);
+                        if (arrConns != null)
+                        {
+                            nPinConns = arrConns.Length;
+                            oPinDump.Append(nPinConns.ToString(CultureInfo.InvariantCulture));
+                            for (int nC = 0; nC < arrConns.Length; nC++)
+                            {
+                                Connection oConn = arrConns.GetValue(nC) as Connection;
+                                string strSrc = oConn == null ? "<null>" : SafeConnPropText(oConn, 31019);
+                                string strDst = oConn == null ? "<null>" : SafeConnPropText(oConn, 31020);
+                                oPinDump.Append("{" + (strSrc ?? "—") + "->" + (strDst ?? "—") + "}");
+                            }
+                        }
+                        else
+                        {
+                            oPinDump.Append("err");
+                        }
+                    }
+            }
+            catch (Exception oException)
+            {
+                oPinDump.Append(" pinerr=" + oException.GetType().Name);
+            }
+
+            int nRowsExt = 0, nRowsInt = 0, nRowsBr = 0;
+            for (int i = nRowsBefore; i < oReport.Rows.Count; i++)
+            {
+                if (oReport.Rows[i].Side == "Ext") nRowsExt++;
+                else if (oReport.Rows[i].Side == "Int") nRowsInt++;
+                else nRowsBr++;
+            }
+
+            _log.Log("[DLV] '" + strTermName + "' level=" + strLevel +
+                " parent=" + (bHasParent ? "да" : "нет") +
+                " main=" + (bMainTerm ? "да" : "нет") +
+                " pins=" + nPins.ToString(CultureInfo.InvariantCulture) +
+                "|" + oPinDump.ToString() +
+                " ext=" + nExt.ToString(CultureInfo.InvariantCulture) +
+                " int=" + nInt.ToString(CultureInfo.InvariantCulture) +
+                " bridges=" + nBridges.ToString(CultureInfo.InvariantCulture) +
+                " сегментов=" + nSegments.ToString(CultureInfo.InvariantCulture) +
+                " | строк [DM]: Ext=" + nRowsExt.ToString(CultureInfo.InvariantCulture) +
+                " Int=" + nRowsInt.ToString(CultureInfo.InvariantCulture) +
+                " Bridge=" + nRowsBr.ToString(CultureInfo.InvariantCulture) +
+                " |" + oSegDump.ToString());
+        }
+
+        /// <summary>Строка [DM] для одного ConnectionInfo (проходы Ext и Int) +
+        /// регистрация связи в списках дедупликации 4-го прохода. lstEmitted и
+        /// lstKeys накапливают ВСЁ, что уже ушло в модель по этой клемме (Ext,
+        /// Int, мосты), чтобы 4-й проход не вывел то же самое второй раз.
+        /// Регистрация делается сразу после HasConn — до FillCable/Emit: если
+        /// FillCable бросит, связь всё равно уже засчитана за этот проход, иначе
+        /// 4-й проход вывел бы её повторно.</summary>
         private void AddConnRow(DmReport oReport, string strStrip, string strTerm, string strSide,
-            Terminal.ConnectionInfo oInfo)
+            Terminal.ConnectionInfo oInfo, List<Connection> lstEmitted, List<string> lstKeys)
         {
             DmRow oRow = new DmRow();
             oRow.StripName = strStrip;
             oRow.TerminalName = strTerm;
             oRow.Side = strSide;
             oRow.HasConn = oInfo.Conn != null;
+            if (oInfo.Conn != null) { lstEmitted.Add(oInfo.Conn); lstKeys.Add(ConnKey(oInfo.Conn)); }
             oRow.ConnectionName = SafeText("<n/a>", () => oInfo.ConnectionName);
             oRow.PinName = SafeText("", () => oInfo.FunctionPinName);
             oRow.PinIndex = SafeInt(-1, () => oInfo.PinIndex);
             if (oInfo.Conn != null) FillCable(oReport, oRow, oInfo.Conn);
             Emit(oReport, oRow);
+        }
+
+        /// <summary>Ключ связи для дедупликации 4-го прохода: «31019->31020».
+        /// Читается проверенным SafeConnPropText; null (свойство не задано или
+        /// отказ чтения) заменяется на «—», чтобы ключ никогда не был null и
+        /// сравнение строк работало. Одинаковый ключ = одна и та же связь по
+        /// данным EPLAN. Connection.Name как ключ НЕ используется осознанно (не
+        /// проверен компиляцией в этом репозитории).</summary>
+        private static string ConnKey(Connection oConn)
+        {
+            if (oConn == null) return "<null>";
+            string strSrc = SafeConnPropText(oConn, 31019);
+            string strDst = SafeConnPropText(oConn, 31020);
+            return (strSrc ?? "—") + "->" + (strDst ?? "—");
+        }
+
+        /// <summary>Номер клеммы строкой для списка дальних перемычек [JUMPER-FAR].
+        /// Отрицательный (не распознан) печатается как «?» — в [_JUMPER-FAR] такая
+        /// пара не попадает, но подстраховка от «-1» в логе читается лучше.
+        /// Инвариантная культура, как и во всех прочих числах этого файла.</summary>
+        private static string NumOf(int n)
+        {
+            return n < 0 ? "?" : n.ToString(CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>Число УНИКАЛЬНЫХ пар перемычек: bFar=false — соседних (|Δ| ≤ 1),
+        /// bFar=true — дальних (потенциальных). Считает по _dicBridgePairs, где
+        /// значение 0 = соседняя, 1 = дальняя; ключ уже нормализован «min↔max»,
+        /// поэтому каждая физическая перемычка учтена ровно один раз, несмотря на
+        /// то что Terminal.Bridges отдаёт её с обоих концов. Инвариант:
+        /// CountPairs(false) + CountPairs(true) == _dicBridgePairs.Count.</summary>
+        private int CountPairs(bool bFar)
+        {
+            int n = 0;
+            foreach (KeyValuePair<string, int> oKv in _dicBridgePairs)
+                if ((oKv.Value == 1) == bFar) n++;
+            return n;
+        }
+
+        /// <summary>Список дальних пар «min↔max» для [JUMPER-FAR], отсортированный
+        /// по Ordinal — чтобы лог был детерминированным (Dictionary сам не
+        /// упорядочен, а по номеру клеммы «10» встал бы раньше «9»).
+        /// Копия в новый список: сортировать Keys напрямую нельзя.</summary>
+        private List<string> FarPairsSorted()
+        {
+            List<string> lst = new List<string>(_dicBridgePairsFar.Keys);
+            lst.Sort(StringComparer.Ordinal);
+            return lst;
         }
 
         private void Emit(DmReport oReport, DmRow oRow)
@@ -961,6 +1331,38 @@ namespace MyEplanActions
         // Счётчики пробы: соединений обработано / непустых значений выдамплено.
         private int _nCblPropConns;
         private int _nCblPropValues;
+
+        // Счётчики 4-го прохода (Terminal.Pins[].Connections): сколько связей
+        // перечислено на пинах (_nPinConnSeen), сколько из них дали новую строку
+        // [DM] сверх Ext/Int/Bridges (_nPinConnNew) и сколько уже было выведено
+        // этими тремя проходами, поэтому повторно не выводились (_nPinConnSkip).
+        // Печатаются одной строкой [PIN-SUM]. Инвариант стенда: Seen = New + Skip.
+        private int _nPinConnSeen;
+        private int _nPinConnNew;
+        private int _nPinConnSkip;
+
+        // Фиксация наличия перемычек (Side=Bridge) — ТОЛЬКО учёт, БЕЗ влияния на
+        // пайплайн. Решение заказчика дословно: «Форма рисует перемычки. Рисовать их
+        // пайплайном не нужно. Просто фиксировать что они есть. может в будующем
+        // пригодится». Поэтому здесь нет ни строки в DmReport сверх уже существующей
+        // Bridge-строки, ни влияния на сопоставление — только два словаря.
+        //
+        // СЧИТАЕМ ПАРАМИ, А НЕ СТРОКАМИ (правка дефекта, стенд 03.10 14:19).
+        // Terminal.Bridges отдаёт каждую физическую перемычку С ОБОИХ КОНЦОВ, поэто-
+        // му Bridge-СТРОК ровно вдвое больше, чем перемычек: 106 строк = 53 пере-
+        // мычки. Первая версия считала строки и поэтому показала «соседних 94,
+        // дальних 12» и вывела каждую дальнюю пару дважды (45↔72 и 72↔45).
+        //
+        // Ключ — неупорядоченная пара, приведённая к виду «min↔max», поэтому оба
+        // конца дают ОДИН ключ. Значение в _dicBridgePairs: 0 = соседняя
+        // (|Δ| ≤ 1), 1 = дальняя (потенциальная, через пол-щита).
+        // _dicBridgePairsFar — только дальние, ключ тот же нормализованный, т.е.
+        // каждая дальняя пара в нём ровно одна. Пары с нераспознанным номером
+        // (-1) в оба словаря НЕ идут: неизвестное — не «дальняя».
+        private readonly Dictionary<string, int> _dicBridgePairs =
+            new Dictionary<string, int>();
+        private readonly Dictionary<string, int> _dicBridgePairsFar =
+            new Dictionary<string, int>();
 
         // Кэши сбора AnyPropertyId (один раз за прогон на вариант; пусто после
         // неудачного сбора — проба молча не даёт строк).
