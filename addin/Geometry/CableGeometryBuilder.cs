@@ -217,6 +217,10 @@ namespace MyEplanActions
             double dMaxApproachSigned = double.NegativeInfinity;   // последний подход (все кабели)
             double dMaxBilateralSigned = double.NegativeInfinity;  // последний подход (двусторонние)
             bool bHasBilateral = false;
+            // Счётчики номера КАБЕЛЯ СВОЕЙ СТОРОНЫ — множитель шага уровня шины
+            // (см. расчёт arrBusRight ниже). Порядок обхода прежний, поэтому
+            // относительный порядок шин не меняется — уплотняется только шаг.
+            int nRankRight = 0, nRankLeft = 0, nRankOther = 0;
 
             for (int nCable = 0; nCable < nCount; nCable++)
             {
@@ -244,9 +248,22 @@ namespace MyEplanActions
                         " точек Unknown-стороны (Other) — шина по общему правилу, правило не валидировано данными");
 
                 // Уровни шин групп: Right/Other — за max(perp)+Off, Left — за min(perp)−Off.
-                double dBusRight = CountOf(oRight) > 0 ? MaxPerpOf(oRight, bV) + oCfg.BusOffsetMm + oCfg.BusLiftMm + nCable * dLevelPitch : double.NaN;
-                double dBusLeft = CountOf(oLeft) > 0 ? MinPerpOf(oLeft, bV) - (oCfg.BusOffsetMm + oCfg.BusLiftMm + nCable * dLevelPitch) : double.NaN;
-                double dBusOther = CountOf(oOther) > 0 ? MaxPerpOf(oOther, bV) + oCfg.BusOffsetMm + oCfg.BusLiftMm + nCable * dLevelPitch : double.NaN;
+                // Множитель — НОМЕР КАБЕЛЯ СВОЕЙ СТОРОНЫ, а не nCable (стенд
+                // 03.10, клеммник =1Т++ШЗВ+#-XT1: 11 односторонних кабелей, 6 Right
+                // и 5 Left в чередующейся раскладке). При nCable шины раздвигались
+                // на Δиндекса×dLevelPitch, и «дыры» от чужих кабелей давали 16 и
+                // 24 мм при dLevelPitch = 8 (Right idx 0,2,3,6,8,9 → разрывы
+                // 2,1,3,2,1). Ряды при этом были свободны — наложений не было,
+                // отчёт просто вышел лишним. Наложения по-прежнему исключены:
+                // уровни своей стороны различаются номером, Right и Left лежат по
+                // разные стороны ряда. Ось подхода (: ниже) по решению заказчика
+                // остаётся на глобальном индексе.
+                double dBusRight = CountOf(oRight) > 0 ? MaxPerpOf(oRight, bV) + oCfg.BusOffsetMm + oCfg.BusLiftMm + nRankRight * dLevelPitch : double.NaN;
+                double dBusLeft = CountOf(oLeft) > 0 ? MinPerpOf(oLeft, bV) - (oCfg.BusOffsetMm + oCfg.BusLiftMm + nRankLeft * dLevelPitch) : double.NaN;
+                double dBusOther = CountOf(oOther) > 0 ? MaxPerpOf(oOther, bV) + oCfg.BusOffsetMm + oCfg.BusLiftMm + nRankOther * dLevelPitch : double.NaN;
+                if (CountOf(oRight) > 0) nRankRight++;
+                if (CountOf(oLeft) > 0) nRankLeft++;
+                if (CountOf(oOther) > 0) nRankOther++;
                 arrBusRight[nCable] = dBusRight;
                 arrBusLeft[nCable] = dBusLeft;
                 arrBusOther[nCable] = dBusOther;
@@ -276,9 +293,36 @@ namespace MyEplanActions
             if (double.IsNegativeInfinity(dMaxApproachSigned))
                 return oRes;   // ни одного кабеля с точками — предупреждения уже в списке
 
-            // Колонка символов: за последним подходом двусторонних (нет двусторонних —
-            // за последним подходом всех).
-            double dLastSigned = bHasBilateral ? dMaxBilateralSigned : dMaxApproachSigned;
+            // Колонка символов. rev16.5-бис-ж (стенд 03.10, замеры в тикете
+            // .scratch/graphics-cosmetic/issues/02): резерв под подходы нужен
+            // ТОЛЬКО двусторонним кабелям — именно у них рисуются oRiser и
+            // oEntry на оси подхода. Односторонний идёт от шины сразу к оси
+            // символа (AddGroup(..., dBusEndAxis)), подхода не рисует вовсе,
+            // поэтому колонка, отодвинутая на dMaxApproachSigned (= край ряда +
+            // ApproachOffset + ПОСЛЕДНИЙ ИНДЕКС·ApproachPitch), уезжала вхолостую:
+            // на стенде при 11 односторонних кабелях символ вставал в 120 мм от
+            // последней клеммы вместо 40 мм.
+            // Поэтому при отсутствии двусторонних резерв НЕ обнуляется, а
+            // СОКРАЩАЕТСЯ до одного подхода (n = 0): остаётся ровно
+            // ApproachOffsetMm (10 мм при дефолте). Оговорка «n = 0» важна при
+            // следующем тюнинге: колонка зависит от ApproachOffsetMm, хотя
+            // подхода там не рисуется.
+            // Ветка NaN обязательна: при dStripEndAxis = NaN база подхода выводится
+            // из крайних точек самого кабеля (dBaseAxis = dMaxSigned * sDir) и
+            // «сдвига на отступ» посчитать не от чего — оставляем прежний путь
+            // (кейс 3: single point, stripEnd NaN fallback).
+            // arrX[] НЕ трогаем: от него зависят nSide и хвост шинного BP.
+            double dLastSigned;
+            if (bHasBilateral)
+                dLastSigned = dMaxBilateralSigned;
+            else if (double.IsNaN(dStripEndAxis))
+                dLastSigned = dMaxApproachSigned;
+            else
+                // ЛОВУШКА знака: dLastSigned — величина ПОДПИСАННАЯ (sDir·dXi),
+                // поэтому отступ подхода в неё входит БЕЗ знака. Запись
+                // sDir·(dStripEndAxis + ApproachOffsetMm) дала бы двойное
+                // умножение и ушла бы на 2·ApproachOffset в Vertical (sDir = −1).
+                dLastSigned = sDir * dStripEndAxis + oCfg.ApproachOffsetMm;
             double dSymAxis = sDir * dLastSigned + sDir * oCfg.SymbolColumnOffsetMm;
 
             // Боксы уже размещённых символов (осевые координаты) — для эскалации

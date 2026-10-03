@@ -36,37 +36,88 @@ namespace MyEplanActions
         {
             Dictionary<string, string[]> dicEnds = new Dictionary<string, string[]>();
 
-            // перечисление кабелей (копия шага 5 Resolve).
-            Function[] arrFunctions;
+            // Перечисление функций кабельных ОПРЕДЕЛЕНИЙ.
+            // rev16.5-бис-д (03.10.2026, стенд «БТЭЦ-2 замена Т-1», клеммник
+            // =1Т++ШЗВ+#-XT1): кабель задаётся НЕ только символом 4/CABDL
+            // (Category.Cable). Определение, сделанное символом 5/SH —
+            // ЭКРАНИРОВАНИЕ, это отдельная категория Function.Enums.Category.Shielding
+            // (KB: EObjects.Shield~Category — «only 'Shielding' is allowed»;
+            // KB: CableService.DoReassignWires — Cable и Function этой категории
+            // обрабатываются как равноправные кабели). Прежний код брал ТОЛЬКО
+            // Category.Cable ⇒ 5 кабелей клеммника (=1Т++М+#3-K140/K144/K145/
+            // K146/K156) не дали ни 20376, ни 20377 ⇒ имя точки разрыва не
+            // строилось, BP не ставился, а стрелка оставалась.
+            // FunctionsFilter.Category — ОДНО значение ({get;set;} типа Category,
+            // KB: FunctionsFilter~Category) ⇒ ДВА прохода в один список. Второй
+            // не должен ронять первый: ошибка Shielding логируется и идёт дальше.
+            List<FunctionHit> lstAll = new List<FunctionHit>();
+            DMObjectsFinder oFinder;
             try
             {
-                DMObjectsFinder oFinder = new DMObjectsFinder(oProject);
-                FunctionsFilter oCableFilter = new FunctionsFilter();
-                oCableFilter.Category = Function.Enums.Category.Cable;
-                arrFunctions = oFinder.GetFunctions(oCableFilter);
+                // Конструктор бросает ArgumentNullException на null-проекте —
+                // защиту из rev.16.1 НЕ теряем (ревью 03.10, Important 1): при
+                // вынесении из try исключение ушло бы наружу из public static.
+                oFinder = new DMObjectsFinder(oProject);
             }
             catch (Exception oException)
             {
-                log.Warn("[CABENDS] перечисление кабелей не удалось (DMObjectsFinder/GetFunctions): " +
+                log.Warn("[CABENDS] перечисление кабелей не удалось (DMObjectsFinder): " +
                     oException.GetType().Name + ": " + oException.Message);
                 log.Log("[INFO] [CABENDS-SUM] уникальных кабелей 0 (ошибка перечисления)");
                 return dicEnds;
             }
-            if (arrFunctions == null || arrFunctions.Length == 0)
+            for (int c = 0; c < 2; c++)
             {
-                log.Log("[INFO] [CABENDS-SUM] уникальных кабелей 0");
+                Function.Enums.Category oCat = c == 0
+                    ? Function.Enums.Category.Cable
+                    : Function.Enums.Category.Shielding;
+                Function[] arrFunctions;
+                try
+                {
+                    FunctionsFilter oFilter = new FunctionsFilter();
+                    oFilter.Category = oCat;
+                    arrFunctions = oFinder.GetFunctions(oFilter);
+                }
+                catch (Exception oException)
+                {
+                    log.Warn("[CABENDS] перечисление категории " + oCat.ToString() +
+                        " не удалось (DMObjectsFinder/GetFunctions): " +
+                        oException.GetType().Name + ": " + oException.Message);
+                    continue;
+                }
+                int nAdded = 0;
+                if (arrFunctions != null)
+                    for (int i = 0; i < arrFunctions.Length; i++)
+                        if (arrFunctions[i] != null)
+                        {
+                            FunctionHit oHit = new FunctionHit();
+                            oHit.Definition = arrFunctions[i];
+                            oHit.Shielding = oCat == Function.Enums.Category.Shielding;
+                            lstAll.Add(oHit);
+                            nAdded++;
+                        }
+                log.Log("[INFO] [CABENDS] категория " + oCat.ToString() +
+                    ": функций " + nAdded.ToString(CultureInfo.InvariantCulture));
+            }
+            if (lstAll.Count == 0)
+            {
+                log.Log("[INFO] [CABENDS-SUM] уникальных кабелей 0" +
+                    " (категории Cable и Shielding не дали ни одной функции)");
                 return dicEnds;
             }
 
-            // Фаза A (копия rev.16.1).
+            // Фаза A (копия rev.16.1). Тип объекта намеренно НЕ сужаем до Cable:
+            // определение экранирования — объект Shield, и `as Cable` вернул бы
+            // для него null ⇒ continue, кабель молча выпал бы даже при правильном
+            // фильтре. Нужны только Function.Name и SafeAnyProp (оба — на
+            // Function), поэтому работаем с Function целиком.
             List<CableDefGroup> lstGroups = new List<CableDefGroup>();
             Dictionary<string, CableDefGroup> dicGroups = new Dictionary<string, CableDefGroup>();
-            for (int i = 0; i < arrFunctions.Length; i++)
+            for (int i = 0; i < lstAll.Count; i++)
             {
-                Cable oCable = arrFunctions[i] as Cable;
-                if (oCable == null) continue;
+                Function oFunc = lstAll[i].Definition;
                 string strName;
-                try { strName = oCable.Name; }
+                try { strName = oFunc.Name; }
                 catch { strName = null; }
                 if (string.IsNullOrEmpty(strName))
                 {
@@ -83,7 +134,30 @@ namespace MyEplanActions
                     lstGroups.Add(oGroup);
                     dicGroups.Add(strName, oGroup);
                 }
-                oGroup.Definitions.Add(arrFunctions[i]);
+                // Признак Shielding — «хоть одно определение из экранирования»: проход Cable
+                // идёт первым и задал бы false, а для диагностики нужен факт.
+                // Смешанная группа (имя и в Cable, и в Shielding) ловится ТОЛЬКО
+                // здесь — на щите, пришедшем ПОСЛЕ кабеля. Прежняя запись вида
+                // `if (Shielding) ... else if (Shielding) warn` была недостижима:
+                // кабель приходит первым и всегда снимал else-ветку, WARN не
+                // срабатывал НИ РАЗУ — стенд 03.10 это и показал (K276 смешанная,
+                // предупреждения нет). Поэтому «видел кабель» хранится явно.
+                if (lstAll[i].Shielding)
+                {
+                    if (oGroup.SawCable)
+                        // Имя встречается и как Shielding, и как Cable. Главное
+                        // определение может оказаться щитом — тогда 20376/20377
+                        // прочитаются с другого объекта, чем раньше. Это решение
+                        // предметной области, не молчалив: помечаем WARN (ревью
+                        // 03.10, Important 2), чтобы стенд показал случай явно.
+                        log.Warn("[CABENDS] кабель '" + TrimForLog(strName) +
+                            "': имя есть и как Shielding (5/SH), и как Cable (4/CABDL) — " +
+                            "главное определение выберется по №20122, приоритет источника НЕ задан");
+                    oGroup.Shielding = true;
+                }
+                else
+                    oGroup.SawCable = true;
+                oGroup.Definitions.Add(oFunc);
             }
 
             // Фаза B (копия rev.16.1): главное определение → 20376/20377.
@@ -125,10 +199,17 @@ namespace MyEplanActions
                 arrEnds[1] = strCabTarget.Length == 0 ? null : strCabTarget;
                 dicEnds[strName] = arrEnds;
                 log.Log("[INFO] [CABENDS] '" + TrimForLog(strName) + "': 20376='" +
-                    TrimForLog(strCabSource) + "' 20377='" + TrimForLog(strCabTarget) + "'");
+                    TrimForLog(strCabSource) + "' 20377='" + TrimForLog(strCabTarget) +
+                    "'" + (oGroup.Shielding ? " [Shielding — определение символом 5/SH]" : ""));
             }
+            int nShieldNames = 0;
+            for (int g = 0; g < lstGroups.Count; g++)
+                if (lstGroups[g].Shielding) nShieldNames++;
             log.Log("[INFO] [CABENDS-SUM] уникальных кабелей " +
-                lstGroups.Count.ToString(CultureInfo.InvariantCulture));
+                lstGroups.Count.ToString(CultureInfo.InvariantCulture) +
+                " (Shielding/5-SH: " + nShieldNames.ToString(CultureInfo.InvariantCulture) +
+                ", Cable/4-CABDL: " +
+                (lstGroups.Count - nShieldNames).ToString(CultureInfo.InvariantCulture) + ")");
             return dicEnds;
         }
 
@@ -152,6 +233,17 @@ namespace MyEplanActions
             return strValue.Substring(0, 60);
         }
 
+        /// <summary>rev16.5-бис-д: функция из перечисления + признак, что она
+        /// пришла из категории Shielding (символ 5/SH), а не Cable (4/CABDL).
+        /// Нужен для диагностики [CABENDS]: у клиента определение кабеля может
+        /// быть сделано экранированием, и такие кабели раньше не попадали в
+        /// перечисление вообще.</summary>
+        private sealed class FunctionHit
+        {
+            public Function Definition;
+            public bool Shielding;
+        }
+
         /// <summary>rev.16.1: группа ОПРЕДЕЛЕНИЙ функции одного уникального
         /// кабеля (полный DT = ключ). Решение — по главному определению
         /// (#20122=TRUE), иначе по первому + WARN.</summary>
@@ -159,6 +251,8 @@ namespace MyEplanActions
         {
             public string Name;
             public List<Function> Definitions;
+            public bool Shielding;
+            public bool SawCable;
         }
     }
 }
