@@ -235,6 +235,13 @@ namespace MyEplanActions
         public const int BreakPointVariantMultiH = 4;      // E(4), горизонтальный отчёт (BPIN)
         public const int BreakPointVariantMultiV = 1;      // B(1), вертикальный отчёт (BPIN)
         public const string PointSchemeFolder = "point";
+        // rev.16.14 (04.10): подпапка Add-in'а внутри папки «Сценарии» из
+        // настроек EPLAN (ProjectManager.Paths.Scripts) — там живут лог и файл
+        // настроек. Раньше каталог был прописан руками под одну машину, поэтому
+        // на любой другой лог уезжал в TEMP (подробности — в истории BUILD_STAMP).
+        // Имя подпапки — здесь, рядом с PointSchemeFolder (обе константы — про
+        // файлы рядом с Add-in'ом), а сам путь собирает LogDirResolver.
+        public const string LogSubFolderName = "terminal_strip_addin";
         public const string EmcStraightStripH = "ТР_Кабель(горизонт).emc";
         public const string EmcStraightStripV = "ТР_Кабель(вертик).emc";
         public const string EmcStraightDeviceH = "ТР_Устройство(горизонт).emc";

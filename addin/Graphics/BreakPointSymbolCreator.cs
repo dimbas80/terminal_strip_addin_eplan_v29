@@ -40,6 +40,21 @@ namespace MyEplanActions
         /// (упрощение решения пользователя).</summary>
         public static string ResolvePointFolder()
         {
+            // rev.16.14: вызов без внешних кандидатов — поведение прежнее.
+            return ResolvePointFolder(null);
+        }
+
+        /// <summary>rev.16.14: перегрузка с кандидатами из настроек EPLAN
+        /// (AnalyzeAction.Execute собирает «Сценарии» + подпапку Add-in'а через
+        /// LogDirResolver; null здесь = вызов без них). Порядок проб прежний:
+        /// каталог загруженной сборки → CodeBase (реальная сборка ДО shadow-copy)
+        /// → переданные каталоги, первый СУЩЕСТВУЮЩИЙ. Захардкоженных путей в
+        /// проекте не осталось (решение заказчика 04.10), поэтому после
+        /// переданных каталогов запасных проб нет вовсе — point/ ищется там, где
+        /// её действительно клали. Контракт прежний: null/отказ → null, WARN у
+        /// потребителя (BP без набора).</summary>
+        public static string ResolvePointFolder(string[] arrExtraDirs)
+        {
             try
             {
                 Assembly oAsm = Assembly.GetExecutingAssembly();
@@ -70,11 +85,24 @@ namespace MyEplanActions
                 }
             }
             catch { }
-            // Внешний кандидат (01.10): папки из Diagnostics (лог/настройки
-            // живут в D:\…\Сценарии\terminal_strip_addin — РЯДОМ с реальной
+            // rev.16.14: переданные кандидаты (01.10): папки из Diagnostics (лог/
+            // настройки живут в папке «Сценарии» EPLAN — РЯДОМ с реальной
             // сборкой; CodeBase может указывать в иное место после регистрации
-            // аддина в EPLAN). Первый существующий.
-            foreach (string strCandidate in DiagnosticLogger.LOG_DIR_CANDIDATES)
+            // аддина в EPLAN). Это последняя проба: первые две — каталог сборки и
+            // CodeBase, дальше запасных каталогов нет (решение заказчика 04.10).
+            // Первый существующий.
+            return TryPointFolderIn(arrExtraDirs);
+        }
+
+        /// <summary>rev.16.14: первый существующий point/ среди каталогов списка.
+        /// null/пустой список и null/пустые элементы пропускаются; на каждый
+        /// кандидат свой try/catch — один недоступный каталог (сеть, запрет) не
+        /// должен обрывать перебор, как и до rev.16.14.</summary>
+        private static string TryPointFolderIn(string[] arrDirs)
+        {
+            if (arrDirs == null)
+                return null;
+            foreach (string strCandidate in arrDirs)
             {
                 try
                 {

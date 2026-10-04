@@ -544,7 +544,8 @@ namespace MyEplanActions
             // PathMap~Remarks), разворачивается PathMap.SubstitutePath (KB:
             // «Substitutes variables with their values»); Paths.Forms = дефолт,
             // настройку НЕ отражает (факт прогона 10:28: настройка
-            // D:\YandexDisk\!EPLAN, Paths.Forms вернул D:\Мои документы\...).
+            // каталога указывала на сетевой диск, а Paths.Forms вернул каталог
+            // документов пользователя).
             // ProjectDirectoryPath УДАЛЁН (решение 30.09: формы в каталоге проекта не хранятся); Paths.Forms — фоллбэк-дефолт.
             string[] arrBaseDirs = null;
             try

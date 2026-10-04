@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;   // rev.16.14: List<string> в SetLogDirCandidates (без EPLAN!)
 using System.Text;
 using System.IO;
 using System.Globalization;
@@ -55,21 +56,32 @@ namespace MyEplanActions
     /// </summary>
     public sealed class DiagnosticLogger
     {
-        // Каталог лога: 1) LOG_DIR_OVERRIDE (если задан и существует);
-        // 2) первый существующий из LOG_DIR_CANDIDATES (создаётся при первом
-        // прогоне); 3) %TEMP%.
-        private const string LOG_DIR_OVERRIDE = "";
+        // Каталог лога берётся ТОЛЬКО из кандидатов, заданных перед прогоном
+        // (папка «Сценарии» ИЗ НАСТРОЕК EPLAN, см. ниже): первый существующий
+        // каталог, а если ни один не существует — создаётся первый кандидат.
+        // Крайний случай, когда кандидатов нет вовсе (настройки EPLAN не
+        // отдались), — %TEMP%: лог и файл настроек должны лечь КУДА УГОДНО, даже
+        // если папка «Сценарии» недоступна (её может не быть, каталог может быть
+        // на сети или под запретом).
+        // rev.16.14 (04.10, решение заказчика): захардкоженные пути удалены из
+        // проекта ЦЕЛИКОМ, а не оставлены фолбэком — писать в папку, которой на
+        // другой машине нет, бессмысленно, а «сработало бы на машине заказчика»
+        // не должно выглядеть как рабочая настройка.
 
-        // Папка Add-in'а внутри «Сценарии» и корневая «Сценарии» на машине
-        // пользователя (пути подтверждены прогонами Этапа 1). rev.12.0 (Фаза H):
-        // public static readonly — ЕДИНЫЙ источник кандидатов каталога для лога
-        // И файла настроек AddInSettings (ruling R1; НЕ Assembly.Location —
-        // ShadowCopy, урок п.10).
-        public static readonly string[] LOG_DIR_CANDIDATES = new string[]
-        {
-            @"D:\YandexDisk\!EPLAN\Сценарии\terminal_strip_addin",
-            @"D:\YandexDisk\!EPLAN\Сценарии"
-        };
+        // rev.16.14 (04.10): кандидаты каталога, ЗАДАННЫЕ ПЕРЕД ПРОГОНОМ (из
+        // настроек EPLAN: ProjectManager.Paths.Scripts + подпапка
+        // AddInConfiguration.LogSubFolderName, см. LogDirResolver). Пока null —
+        // кандидатов нет, и ResolveLogPath уходит в %TEMP%. Список приходит
+        // готовым и нормализованным извне (AnalyzeAction.Execute собирает его ДО
+        // загрузки настроек — иначе лог записался бы мимо каталога «Сценарии»).
+        // ПОЧЕМУ ЗДЕСЬ НЕТ ВЫЗОВА LogDirResolver.BuildCandidates: этот файл входит
+        // в консольный раннер tests/build_tests.bat, где нет EPLAN-DLL, а
+        // LogDirResolver.cs (единственный вызов ProjectManager) в список исходников
+        // раннера НЕ добавлен и добавлен быть не может — ссылка на него дала бы
+        // CS0246 в тестовой сборке. Поэтому нормализация (пропуск null/пустых,
+        // дубли по OrdinalIgnoreCase) повторена здесь, а на стороне EPLAN-ветки
+        // всё равно всегда вызывается LogDirResolver.BuildCandidates.
+        private string[] _arrLogDirCandidates = null;
 
         private const string LOG_FILE_NAME = "terminal_strip_addin.log";
 
@@ -509,33 +521,91 @@ namespace MyEplanActions
             catch { }
         }
 
-        /// <summary>rev.14.14: резолв пути файла лога (извлечено из SaveLog, логика
-        /// прежняя: LOG_DIR_OVERRIDE → первый существующий LOG_DIR_CANDIDATES →
-        /// создание первого кандидата → %TEMP%). Возвращает полный путь или null.</summary>
+        /// <summary>rev.16.14: задать кандидатов каталога лога (из настроек
+        /// EPLAN). Зовётся AnalyzeAction.Execute ДО загрузки настроек. Правила
+        /// прежние (первый существующий кандидат → создание первого кандидата →
+        /// %TEMP%), изменился только СПИСОК кандидатов.
+        /// Нормализация (пропуск null/пустых, дубли без учёта регистра) повторена
+        /// локально намеренно — LogDirResolver.BuildCandidates недоступен этому
+        /// файлу, он собирается консольным раннером tests/build_tests.bat без
+        /// EPLAN-DLL (пояснение у поля _arrLogDirCandidates). Список из одних
+        /// пустых строк ЗАПИСЫВАЕТСЯ как пустой, и тогда кандидатов нет вовсе:
+        /// резолв сразу уходит в %TEMP%.</summary>
+        public void SetLogDirCandidates(string[] arrDirs)
+        {
+            List<string> lstDirs = new List<string>();
+            if (arrDirs != null)
+            {
+                for (int i = 0; i < arrDirs.Length; ++i)
+                {
+                    string strDir = arrDirs[i];
+                    if (string.IsNullOrEmpty(strDir))
+                        continue;
+                    if (IsAlreadyIn(lstDirs, strDir))
+                        continue;
+                    lstDirs.Add(strDir);
+                }
+            }
+            _arrLogDirCandidates = lstDirs.ToArray();
+        }
+
+        /// <summary>rev.16.14: есть ли уже такой каталог в списке (регистр не
+        /// значит). Ручной проход, а НЕ List.Contains/Enumerable.Contains: у
+        /// List версия сравнивает Ordinal, а перегрузка с IEqualityComparer живёт
+        /// в LINQ, а LINQ в проекте не используется.</summary>
+        private static bool IsAlreadyIn(List<string> lstDirs, string strDir)
+        {
+            for (int i = 0; i < lstDirs.Count; ++i)
+            {
+                if (string.Equals(lstDirs[i], strDir,
+                    StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>rev.16.14: кандидаты каталога, которые реально использует
+        /// резолв пути: заданный список, а пока его нет (или он пуст) — ПУСТОЙ
+        /// массив, то есть «путей не задано» и ResolveLogPath уходит в %TEMP%.
+        /// Захардкоженных кандидатов у логгера больше нет (решение заказчика
+        /// 04.10) — возвращать нечего. ВАЖНО: в файле остаётся ни одной ссылки
+        /// на EPLAN API, иначе консольный раннер tests/build_tests.bat перестанет
+        /// собираться (пояснение у поля _arrLogDirCandidates).</summary>
+        public string[] CurrentLogDirCandidates()
+        {
+            if (_arrLogDirCandidates != null && _arrLogDirCandidates.Length > 0)
+                return _arrLogDirCandidates;
+            return new string[0];
+        }
+
+        /// <summary>rev.14.14: резолв пути файла лога (извлечено из SaveLog,
+        /// логика прежняя: первый существующий кандидат → создание первого
+        /// кандидата → %TEMP%). rev.16.14: перебор идёт по
+        /// CurrentLogDirCandidates() (заданы из настроек EPLAN — см.
+        /// SetLogDirCandidates); список пуст (настройки EPLAN не отдались) —
+        /// сразу %TEMP%. Возвращает полный путь или null.</summary>
         private string ResolveLogPath()
         {
-            string strDir = LOG_DIR_OVERRIDE;
-            if (string.IsNullOrEmpty(strDir) || !Directory.Exists(strDir))
+            string[] arrDirs = CurrentLogDirCandidates();
+            string strDir = null;
+            foreach (string strCandidate in arrDirs)
             {
-                foreach (string strCandidate in LOG_DIR_CANDIDATES)
+                if (Directory.Exists(strCandidate))
                 {
-                    if (Directory.Exists(strCandidate))
-                    {
-                        strDir = strCandidate;
-                        break;
-                    }
+                    strDir = strCandidate;
+                    break;
                 }
-                if (string.IsNullOrEmpty(strDir))
+            }
+            if (string.IsNullOrEmpty(strDir) && arrDirs.Length > 0)
+            {
+                // Папка Add-in'а ещё не создана — создаём первый кандидат,
+                // чтобы все прогоны Этапа 2 лежали в одном месте.
+                try
                 {
-                    // Папка Add-in'а ещё не создана — создаём первый кандидат,
-                    // чтобы все прогоны Этапа 2 лежали в одном месте.
-                    try
-                    {
-                        Directory.CreateDirectory(LOG_DIR_CANDIDATES[0]);
-                        strDir = LOG_DIR_CANDIDATES[0];
-                    }
-                    catch { }
+                    Directory.CreateDirectory(arrDirs[0]);
+                    strDir = arrDirs[0];
                 }
+                catch { }
             }
             if (string.IsNullOrEmpty(strDir) || !Directory.Exists(strDir))
                 strDir = Path.GetTempPath();

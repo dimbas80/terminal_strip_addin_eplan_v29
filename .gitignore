@@ -1,5 +1,5 @@
 # Артефакты сборки (csc.exe, build_addin.bat / spike)
-*.dll
+
 *.pdb
 bin/
 obj/
