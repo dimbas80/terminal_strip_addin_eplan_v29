@@ -13,7 +13,9 @@ namespace MyEplanActions
     /// EmbeddedReportReader.LayerNameOf — прямой GraphicalLayer.Name в 2.9 не доказан;
     /// на стресс-стенде 67 линий на EPLAN100); перо — из AddInConfiguration.
     /// Отказ отдельной линии — WARN [GRAPH], остальные продолжают (паттерн [PREVIEW]).
-    /// НЕ идемпотентно: повторный прогон дублирует линии (очистка — Фаза I).</summary>
+    /// rev17.0: каждый созданный объект помечается маркером владельца
+    /// (GraphicsOwnerMark.Mark) — перед следующим прогоном маркерные линии
+    /// удаляются (RemoveOwned), генерация идемпотентна.</summary>
     public static class GraphicLineCreator
     {
         /// <summary>Объект слоя strLayerName из дерева отчёта lstTree: первый
@@ -46,7 +48,7 @@ namespace MyEplanActions
         /// <summary>Линия на каждый Seg: Create + перо (конфиг) + слой oLayer
         /// (null — слой по умолчанию). Возвращает число созданных.</summary>
         public static int CreateLines(Page oPage, CableGeometryResult oGeom,
-            GraphicalLayer oLayer, DiagnosticLogger log)
+            GraphicalLayer oLayer, DiagnosticLogger log, string strStrip = null)
         {
             if (oPage == null || oGeom == null)
             {
@@ -73,6 +75,8 @@ namespace MyEplanActions
                     oLine.Create(oPage,
                         new PointD(oSeg.A.X, oSeg.A.Y),
                         new PointD(oSeg.B.X, oSeg.B.Y));
+                    // rev17.0: маркер владельца — очистка перед следующим прогоном.
+                    GraphicsOwnerMark.Mark(oLine, strStrip, log);
                     oLine.Pen = oPen;
                     if (oLayer != null) oLine.Layer = oLayer;
                     nCreated++;

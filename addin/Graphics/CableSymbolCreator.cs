@@ -154,7 +154,8 @@ namespace MyEplanActions
     /// компенсацией центра (dx,dy) из замера [SYMSIZE-OFF] позиция вставки
     /// скорректирована (SymbolPlacementMath.Compensate) — визуальный центр символа
     /// на конце линии; offset (0;0) (CABDCP2, headless) — поведение прежнее. Отказ —
-    /// WARN [SYMBOL]. НЕ идемпотентно (очистка — Фаза I).</summary>
+    /// WARN [SYMBOL]. rev17.0: маркер владельца у каждого символа —
+    /// генерация идемпотентна (RemoveOwned перед следующим прогоном).</summary>
     public static class CableSymbolCreator
     {
         /// <summary>Старая (headless) сигнатура — обёртка полной перегрузки с
@@ -162,11 +163,11 @@ namespace MyEplanActions
         /// headless побайтно без изменений; CABDCP2 Δ=(0;0) доказан пробой п.49 —
         /// поведение == rev.11.15+).</summary>
         public static int CreateSymbols(Page oPage, CableGeometryResult oGeom,
-            DiagnosticLogger log)
+            DiagnosticLogger log, string strStrip = null)
         {
             return CreateSymbols(oPage, oGeom, log,
                 AddInConfiguration.SymbolLibrary, AddInConfiguration.SymbolName,
-                AddInConfiguration.SymbolVariant, 0.0, 0.0);
+                AddInConfiguration.SymbolVariant, 0.0, 0.0, strStrip);
         }
 
         /// <summary>Символ на каждый CableSymbolPlacement. Возвращает число созданных.
@@ -181,7 +182,7 @@ namespace MyEplanActions
         public static int CreateSymbols(Page oPage, CableGeometryResult oGeom,
             DiagnosticLogger log,
             string strLibrary, string strSymbolName, int nVariant,
-            double dOffsetX, double dOffsetY)
+            double dOffsetX, double dOffsetY, string strStrip = null)
         {
             if (oPage == null || oGeom == null)
             {
@@ -214,6 +215,8 @@ namespace MyEplanActions
                 {
                     Function oFunc = new Function();
                     oFunc.Create(oPage, oVariant);
+                    // rev17.0: маркер владельца — очистка перед следующим прогоном.
+                    GraphicsOwnerMark.Mark(oFunc, strStrip, log);
                     // rev.11.1: главная функция off — свойство 20122 FUNC_MAINFUNCTION
                     // (Boolean, объекты «Functions», перезаписываемое). Каждый отказ —
                     // WARN [SYMFUNC] и не мешает второй записи.

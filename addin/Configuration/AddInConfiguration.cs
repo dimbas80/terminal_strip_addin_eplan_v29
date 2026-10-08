@@ -94,10 +94,22 @@ namespace MyEplanActions
         // разводки вместо превью. Линии — слой EPLAN100 и красное перо (решение
         // пользователя, spec §2.2); слой резолвится из дерева отчёта
         // (GraphicLineCreator.ResolveLayerFromTree), не найден — слой по умолчанию.
-        // НЕ идемпотентно: повторный прогон дублирует объекты (очистка — Фаза I).
+        // rev17.0: идемпотентность — маркерные объекты прошлого прогона
+        // удаляются перед вставкой (GraphicsOwnerMark.RemoveOwned).
         public const string GraphicsLayerName = "EPLAN100";
         public const int GraphicsPenColorId = 1;      // красный в штатной палитре EPLAN
         public const double GraphicsPenWidthMm = 0.35;
+
+        // rev17.0 (артефакт ревью P1): маркер владельца для идемпотентности
+        // генерации (GraphicsOwnerMark). Пишется в допол. поле №20901
+        // (Supplementary field # 20901, KB API 2.9: indexed, возможные индексы
+        // 1..1000; запись по базовому номеру — ячейка индекса 1 по умолчанию)
+        // у каждого вставляемого объекта Фазы G; очистка перед вставкой удаляет
+        // все объекты с этим значением. Повторная запись той же ячейки — overwrite.
+        public const int OwnerMarkPropertyNumber = 20901;
+        public const int OwnerMarkParametricNumber = 19100;  // INSTANCE_PARAMETRICRULE, графические объекты (KB 2.9: GraphicalPlacementPropertyList, незindexed, writable)
+        public const string OwnerMarkStripSeparator = "|";   // "TERMINAL_STRIP_ADDIN|<ОУ>" — очистка удаляет только объекты ЭТОГО клеммника
+        public const string OwnerMarkValue = "TERMINAL_STRIP_ADDIN";
 
         // Символ кабеля: библиотека SPECIAL, 16 / CABDCP2, вариант 0 (= «A»; решение
         // пользователя 22.09.2026). Индексация Symbol.Item 0-based (эмпирика rev.10.0:

@@ -19,7 +19,9 @@ namespace MyEplanActions
     /// IsSurfaceFilled присваивается СТРОГО после Closed=true. Перо/слой —
     /// унаследованы от GraphicalPlacement (как у Line). Отказ отдельного
     /// элемента — WARN [REF], остальные продолжают (паттерн [GRAPH]/[PREVIEW]).
-    /// НЕ идемпотентно: повторный прогон дублирует объекты (очистка — Фаза I).</summary>
+    /// rev17.0: линия и стрелка (два независимых объекта страницы) помечаются
+    /// маркером владельца (GraphicsOwnerMark.Mark) — перед следующим прогоном
+    /// маркерные объекты удаляются (RemoveOwned), генерация идемпотентна.</summary>
     public static class ReferenceArrowCreator
     {
         /// <summary>Линия-ссылка на каждый ReferenceElement: Line.Create + перо
@@ -27,7 +29,7 @@ namespace MyEplanActions
         /// (4 точки контура, Closed, заливка). Возвращает число созданных
         /// линий-ссылок (счётчик стрелок — отдельный, в логе [REF-SUM]).</summary>
         public static int CreateReferences(Page oPage, CableGeometryResult oGeom,
-            GraphicalLayer oLayer, DiagnosticLogger log)
+            GraphicalLayer oLayer, DiagnosticLogger log, string strStrip = null)
         {
             if (oPage == null || oGeom == null)
             {
@@ -56,6 +58,9 @@ namespace MyEplanActions
                     oLine.Create(oPage,
                         new PointD(oRef.Line.A.X, oRef.Line.A.Y),
                         new PointD(oRef.Line.B.X, oRef.Line.B.Y));
+                    // rev17.0: маркер владельца (линия и стрелка — два объекта
+                    // страницы) — очистка перед следующим прогоном.
+                    GraphicsOwnerMark.Mark(oLine, strStrip, log);
                     oLine.Pen = oPen;
                     if (oLayer != null) oLine.Layer = oLayer;
                     bLineOk = true;
@@ -95,6 +100,7 @@ namespace MyEplanActions
                     {
                         PolyLine oArrow = new PolyLine();
                         oArrow.Create(oPage);
+                        GraphicsOwnerMark.Mark(oArrow, strStrip, log);
                         for (int i = 0; i < 4; i++)
                         {
                             PointD oPt = new PointD(oRef.Arrow[i].X, oRef.Arrow[i].Y);

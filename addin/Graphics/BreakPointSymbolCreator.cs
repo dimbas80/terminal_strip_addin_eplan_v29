@@ -27,9 +27,10 @@ namespace MyEplanActions
     /// структура наследуется от страницы отчёта — НЕ пишем 1100/1400/1200/
     /// 1600) + NameService.AdjustVisibleName; DT —
     /// BreakPointResolver.ComposeBpDeviceTag (клеммник → структура обратного
-    /// конца + код кабеля + '(EXT)', устройство → как есть). НЕ идемпотентно
-    /// (как [SYMBOL]); отказы — WARN [BP-ERR], отчёт не прерывается; итог
-    /// [BP-SUM]. Кросс-ссылка зашита в .emc, отдельно не пишем.</summary>
+    /// конца + код кабеля + '(EXT)', устройство → как есть). rev17.0: маркер
+    /// владельца у каждого BP — генерация идемпотентна
+    /// (как [SYMBOL]; отказы — WARN [BP-ERR], отчёт не прерывается; итог
+    /// [BP-SUM]). Кросс-ссылка зашита в .emc, отдельно не пишем.</summary>
     public static class BreakPointSymbolCreator
     {
         /// <summary>Папка point/ с наборами .emc — решение пользователя
@@ -132,7 +133,7 @@ namespace MyEplanActions
         /// For вернул null — BP с дефолтным отображением, WARN/лог.</summary>
         public static int CreateBreakPoints(Page oPage, CableGeometryResult oGeom,
             bool bVertical, string strPointFolder, DiagnosticLogger log,
-            BpProfileSelections selections = null)
+            BpProfileSelections selections = null, string strStrip = null)
         {
             if (oPage == null || oGeom == null)
             {
@@ -209,6 +210,13 @@ namespace MyEplanActions
                         setProfileMissingLogged, log, selections);
 
                     WriteBpDeviceTag(oRef, oBpPlacement, oPage, log);
+
+                    // rev17.0 (прогон 11:01): маркер владельца — ПОСЛЕ записи ОУ
+                    // (KB 2.9: объект уже LockObject'ован в WriteBpDeviceTag;
+                    // свойство BP = InterruptionPointPropertyList, 20901 indexed —
+                    // см. GraphicsOwnerMark: попытка 1 [20901, 1]; до правки
+                    // маркер не писался: ни 20901 (S063113 до лок-а), ни 19100).
+                    GraphicsOwnerMark.Mark(oRef, strStrip, log);
 
                     nCreated++;
                     log.Log("[INFO] [BP] '" + strName + "' #" +

@@ -44,11 +44,21 @@ namespace MyEplanActions
     /// обязан быть виден в файле (решение заказчика 03.10).
     /// Исключения наружу не выходят: Load при любых IO-ошибках возвращает
     /// дефолты (strUsedPath=null), Save — false.
+    /// rev17.0 (артефакт ревью P1): Load при ошибке чтения/разбора ставит
+    /// статический флаг LastLoadFailed=true; автоматический Save после
+    /// LoadFailed ЗАПРЕЩЁН (первый guard Save возвращает false) — дефолты НЕ
+    /// перезаписывают рабочий файл; флаг сбрасывается в начале каждого Load.
     /// </summary>
     public class AddInSettings
     {
         /// <summary>Имя файла настроек (в каталоге лога — ruling R1).</summary>
         public const string SETTINGS_FILE_NAME = "terminal_strip_addin.settings";
+
+        // rev17.0 (артефакт ревью P1): флаг ПОСЛЕДНЕГО Load — true ТОЛЬКО когда
+        // Load ушёл в catch (чтение/разбор файла упал, наружу вернулись дефолты).
+        // В начале Load и в ветках «каталога нет»/«файла нет» — false. Контракт
+        // Load внешне прежний; флаг нужен ТОЛЬКО Save (запрет затирания).
+        public static bool LastLoadFailed { get; private set; }
 
         // Префикс ключей кэша шага сетки per-form (спека §2 п.6, §6).
         private const string GRID_PITCH_PREFIX = "GridPitch.";
@@ -212,6 +222,9 @@ namespace MyEplanActions
         {
             strUsedPath = null;
             strNote = "";
+            // rev17.0: к моменту успешного прохода (и веток «файла нет») флаг
+            // обязан быть false — сбрасываем СТРОГО в начале Load.
+            LastLoadFailed = false;
             string strRawLogMode = null;    // значение ПЕРВОЙ строки LogMode, как есть
             bool bLogModeLineSeen = false;
             try
@@ -253,8 +266,13 @@ namespace MyEplanActions
             }
             catch (Exception oEx)
             {
+                // rev17.0 (артефакт ревью P1): фиксация провала — Save (первый
+                // guard) обязан увидеть его и НЕ перезаписать рабочий файл
+                // дефолтами: автоматический Save после LoadFailed запрещён.
+                LastLoadFailed = true;
                 strNote = "файл не прочитан: " + oEx.GetType().Name + ": " + oEx.Message
-                    + " — применены дефолты, они перезапишут файл";
+                    + " — применены дефолты; Save заблокирован (LastLoadFailed),"
+                    + " рабочие настройки не перезапишутся";
                 return new AddInSettings();   // IO-ошибка чтения — дефолты (как прежде)
             }
         }
@@ -270,10 +288,19 @@ namespace MyEplanActions
         /// SETTINGS_FILE_NAME + ".tmp" в том же каталоге, затем File.Replace
         /// (замена невозможна — в т.ч. файла ещё нет — fallback delete+move);
         /// сбой на любом шаге — false, временный файл удаляется по возможности.
-        /// UTF-8 без BOM (File.WriteAllText по умолчанию), переводы строк CRLF.</summary>
+        /// UTF-8 без BOM (File.WriteAllText по умолчанию), переводы строк CRLF.
+        /// rev17.0 (артефакт ревью P1): ПЕРВЫЙ guard — LastLoadFailed ⇒ false:
+        /// автоматический Save после LoadFailed ЗАПРЕЩЁН — дефолты НЕ должны
+        /// перезаписать рабочий файл. Плюс резервная копия: если целевой файл
+        /// существует, перед записью создаётся «.bak» (File.Copy, overwrite);
+        /// отказ копирования сохранению НЕ мешает (best-effort).</summary>
         public static bool Save(AddInSettings oSettings, string[] arrDirCandidates, out string strUsedPath)
         {
             strUsedPath = null;
+            // rev17.0 (артефакт ревью P1): ЖЁСТКИЙ первый guard — Save после
+            // LoadFailed дефолтами запрещён; вся прочая логика СТРОГО ниже.
+            if (LastLoadFailed)
+                return false;
             if (oSettings == null)
                 return false;
             string strTmp = null;
@@ -283,6 +310,14 @@ namespace MyEplanActions
                 if (strDir == null)
                     return false;
                 string strPath = Path.Combine(strDir, SETTINGS_FILE_NAME);
+                // rev17.0: резервная копия СТАРОГО содержимого перед записью.
+                // Отказ копирования сохранению НЕ мешает (тихо, best-effort).
+                try
+                {
+                    if (File.Exists(strPath))
+                        File.Copy(strPath, strPath + ".bak", true);
+                }
+                catch { }
                 strTmp = strPath + ".tmp";   // временный файл — в том же каталоге
 
                 List<string> lstLines = new List<string>();

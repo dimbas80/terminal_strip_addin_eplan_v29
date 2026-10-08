@@ -42,3 +42,6 @@ test/
 # AGENTS.md — инструкции агентам; вычищены из истории git filter-repo.
 summary.md
 AGENTS.md
+
+# Локальный аудит ревью (ревью остаются на машине)
+review.md
