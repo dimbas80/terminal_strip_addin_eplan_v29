@@ -54,6 +54,28 @@ namespace MyEplanActions
         /// <summary>false, если контроль пропущен (стубов &lt; 2 или шаг не определён).</summary>
         public bool Valid;
 
+        /// <summary>rev.17.1 (решение заказчика п.3б, 21.10.2026): индексы колонок,
+        /// созданных в ПУСТЫХ ГНЁЗДАХ сетки клемм (пропуск между соседними колонками
+        /// больше 1.5 шага). EPLAN рисует «второй вывод» клеммы в гнезде, где нет
+        /// стуба-маркера, — детектор создаёт там виртуальную колонку, чтобы точка
+        /// подключения не оставалась «сиротой». Параллельный GapOwner[i] — индекс
+        /// колонки-владельца (реальная колонка СЛЕВА от дыры): ей принадлежит клемма,
+        /// чей второй вывод ушёл в гнездо. Потребитель — MatchBuilder (усвоение
+        /// колонки как оверфлоу-слота).</summary>
+        public readonly List<int> GapColumns = new List<int>();
+        /// <summary>Параллельно GapColumns — индекс колонки-владельца гнезда
+        /// (реальная колонка слева от дыры). rev.17.1 (п.3б).</summary>
+        public readonly List<int> GapOwner = new List<int>();
+
+        /// <summary>Колонка nCol — виртуальная, созданная в пустом гнезде сетки
+        /// (rev.17.1, п.3б)? Потребитель — MatchBuilder (ветка «усвоение гнёзд»).</summary>
+        public bool IsGapColumn(int nCol)
+        {
+            for (int i = 0; i < GapColumns.Count; i++)
+                if (GapColumns[i] == nCol) return true;
+            return false;
+        }
+
         /// <summary>Индекс колонки клеммы для точки (|Δ оси| ≤ полушага: X при
         /// Horizontal / Y при Vertical, rev.6.2), -1 = сирота.</summary>
         public int BindIndex(Pt oPoint)

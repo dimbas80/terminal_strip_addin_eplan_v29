@@ -73,7 +73,16 @@ namespace MyEplanActions
     /// Доработка по ревью rev.12.6: слот создаётся только при ≥2 Dm-подключений
     /// у клеммы-владельца (sanity) и если ни одна посторонняя точка не попадает
     /// в полушаговое окно слота (гард перехвата привязки); [MATCH-SUM] печатает
-    /// «сирот N (закрыто оверфлоу M)».</summary>
+    /// «сирот N (закрыто оверфлоу M)».
+    /// (е) rev.17.1 (решение заказчика п.3б, 21.10.2026): КОЛОНКИ В ПУСТЫХ ГНЁЗДАХ
+    /// СЕТКИ. EPLAN рисует «второй вывод» клеммы (два Ext-подключения) в гнезде
+    /// сетки без стуба-маркера; детектор (LeadDetector.CheckK4Report) создал в этом
+    /// гнезде виртуальную колонку (K4Report.GapColumns/GapOwner). Здесь гнездо
+    /// усваивается ровно как оверфлоу-слот: клемма-владелец = колонка СЛЕВА от дыры,
+    /// те же гарды (якорь владельца, ≥2 Dm-подключений, MAJOR-гард перехвата, отказ
+    /// при занятом слоте). Отличие от оверфлоу-слота: колонка УЖЕ есть в oK4.Columns —
+    /// она не дописывается (иначе дубль), а только получает номер клеммы и флаги;
+    /// nColumns не растёт. Путь «лист-сирота» (rev.12.6) не менялся.</summary>
     public static class MatchBuilder
     {
         /// <summary>Кабельное ли подключение: имя кабеля из CDP-пробы ИЛИ №31058
@@ -179,6 +188,9 @@ namespace MyEplanActions
             foreach (TerminalAnchor oAnchor in oMap.Anchors)
             {
                 double dDist;
+                // rev.17.1 (ревью M2): поиск только по НЕ-ГНЁЗДОВЫМ колонкам —
+                // иначе смещённый якорь утянул бы гнездо и оставил реальную
+                // колонку клеммы без клеммы.
                 int nCol = FindNearestColumn(oK4, oAnchor.Pos, out dDist);
                 if (nCol < 0) continue;
                 if (dDist > oK4.Pitch)
@@ -207,9 +219,23 @@ namespace MyEplanActions
             if (!bUseAnchors)
                 log.Warn("[MATCH] якорей формы не найдено — по-элементные [MATCHCOL]/[MATCH] пропущены " +
                     "(позиционного fallback нет, решение 20.09.2026); проверить чтение текста дескрипторов ([PH]/[PHPROBE])");
-            if (bUseAnchors && nColumns != lstTerminals.Count)
-                log.Warn("[MATCH] колонок К4 (" + nColumns + ") != клемм в DM (" + lstTerminals.Count +
-                    ") — есть колонки без клеммы/клеммы без колонки (см. [MATCHCOL])");
+            // rev.17.1 (п.3б): колонки в пустых гнёздах — это НЕ отдельные клеммы
+            // (гнездо принадлежит клемме-владельцу слева), поэтому из сверки
+            // «колонки ↔ клеммы в DM» они исключаются: иначе страница с дырой в
+            // сетке дала бы ложный WARN «колонок больше, чем клемм».
+            int nGapCols = 0;
+            for (int i = 0; i < nColumns; i++)
+                if (oK4.IsGapColumn(i)) nGapCols++;
+            int nRealColumns = nColumns - nGapCols;
+            if (bUseAnchors && nRealColumns != lstTerminals.Count)
+            {
+                // rev.17.1 (мелочь m11): формат без двойных скобок —
+                // «колонок К4 5 (из них 1 в пустых гнёздах) != клемм в DM 2».
+                log.Warn("[MATCH] колонок К4 " + nRealColumns +
+                    (nGapCols > 0 ? " (из них " + nGapCols + " в пустых гнёздах)" : "") +
+                    " != клемм в DM " + lstTerminals.Count +
+                    " — есть колонки без клеммы/клеммы без колонки (см. [MATCHCOL])");
+            }
 
             // --- 3б. Раздвоения вывода (rev.5.6, решение пользователя 20.09.2026):
             //         вывод может раздваиваться на две колонки — вторая колонка без
@@ -224,6 +250,11 @@ namespace MyEplanActions
             // параллельно arrSplitCol; после цикла мостов массивы ДОРАЩИВАЮТСЯ под
             // вирт-колонки, поэтому читаются по индексу, ограниченному новым nColumns.
             bool[] arrOverflowCol = new bool[nColumns];
+            // rev.17.1 (мелочь m3): колонки в ПУСТЫХ ГНЁЗДАХ сетки — отдельная
+            // сущность (не «оверфлоу-слот» rev.12.6): свой тег [GAP] в логе и
+            // своя метка «<гнездо → №N>» в [MATCHCOL] (иначе разбор логов по
+            // тегу [SPLIT] оверфлоу смешивал бы две разные сущности).
+            bool[] arrGapCol = new bool[nColumns];
             for (int i = 0; i < nColumns; i++) arrColTerminal[i] = arrColNumber[i];
             int nSplits = 0;
             int nOverflow = 0;    // rev.12.6: сводка [MATCH-SUM]; nSplits НЕ инкрементируется
@@ -247,6 +278,15 @@ namespace MyEplanActions
                     if (oEntry.Value.Count != 2) continue; // мост = ровно 2 листа-точки
                     int nCol1 = oK4.BindIndex(oAnalysis.Points[oEntry.Value[0]]);
                     int nCol2 = oK4.BindIndex(oAnalysis.Points[oEntry.Value[1]]);
+                    // rev.17.1 (п.3б): лист в колонке ПУСТОГО ГНЁЗДА сетки — колонку
+                    // создал детектор (LeadDetector.CheckK4Report), её владельца знает
+                    // oK4.GapOwner. Старый путь «раздвоение» (arrSplitCol) здесь не
+                    // годится: гнездо усваивается как оверфлоу-слот (отдельная ветка
+                    // ниже, с гардами оверфлоу). Пропускаем ТОЛЬКО когда оба листа
+                    // привязались (иначе сработал бы путь оверфлоу-сироты — он не
+                    // меняется).
+                    if (nCol1 >= 0 && nCol2 >= 0 &&
+                        (oK4.IsGapColumn(nCol1) || oK4.IsGapColumn(nCol2))) continue;
                     if (nCol1 < 0 || nCol2 < 0)
                     {
                         // rev.12.6 (Этап 8, H-3c, прогон XT1 25.09.2026 14:08, summary
@@ -377,6 +417,107 @@ namespace MyEplanActions
                         " привязана к клемме №" + nOwner + " (К2: мост = 2 вывода одной клеммы)");
                 }
 
+                // rev.17.1 (решение заказчика п.3б, 21.10.2026): УСВОЕНИЕ КОЛОНОК в
+                // ПУСТЫХ ГНЁЗДАХ сетки. Колонку создал детектор (LeadDetector.
+                // CheckK4Report: пропуск между соседними колонками больше 1.5 шага) —
+                // она УЖЕ есть в oK4.Columns, поэтому здесь ничего не дописываем:
+                // назначаем ей клемму-владельца (реальная колонка СЛЕВА от дыры,
+                // oK4.GapOwner) ровно как оверфлоу-слоту rev.12.6, с теми же гардами:
+                // якорь у владельца, ≥2 Dm-подключений у клеммы-владельца, MAJOR-гард
+                // перехвата (в окне ±полушага слота не должно быть чужой точки) и
+                // отказ, если слот уже занят другим владельцем.
+                List<GapSlot> lstGap = new List<GapSlot>();
+                for (int i = 0; i < oK4.GapColumns.Count; i++)
+                {
+                    int nGapCol = oK4.GapColumns[i];
+                    if (nGapCol < 0 || nGapCol >= nColumns) continue;
+                    int nOwnerCol = (i < oK4.GapOwner.Count) ? oK4.GapOwner[i] : -1;
+                    // rev.17.1 (ревью M1): владелец гнезда — клемма, которой
+                    // принадлежит ВТОРОЙ лист моста (там, где клемма реально
+                    // стоит), а не колонка СЛЕВА от дыры: если «второй вывод»
+                    // нарисован СЛЕВА от своей клеммы, колонка слева — ЧУЖАЯ
+                    // клемма, и гнездо уходило бы ей тихо, без WARN. Правило
+                    // rev.12.6 (оверфлоу-слот) — то же: владелец по якорной
+                    // колонке второго листа. Откат — GapOwner (колонка слева).
+                    bool bOwnerByBridge = false;
+                    int nGapPt = FindGapPoint(oAnalysis, oK4, nGapCol);
+                    if (nGapPt >= 0 && IsBridgePoint(oAnalysis, nGapPt))
+                    {
+                        int nComp = (nGapPt < oAnalysis.PointComponent.Count)
+                            ? oAnalysis.PointComponent[nGapPt] : -1;
+                        int nSecondCol = FindSecondLeafColumn(oAnalysis, oK4, nGapPt, nComp);
+                        if (nSecondCol >= 0 && nSecondCol < nColumns &&
+                            arrColNumber[nSecondCol] >= 0)
+                        {
+                            nOwnerCol = nSecondCol;
+                            bOwnerByBridge = true;
+                        }
+                    }
+                    // якорь в самом гнезде → гнездо не пустое, усвоение не нужно
+                    // (после rev.17.1/M2 недостижимо: якоря не цепляются к гнёздам —
+                    // остаётся страховкой на случай ручной сборки K4Report).
+                    if (arrColNumber[nGapCol] >= 0)
+                    {
+                        log.Warn("[GAP] гнездо " + strAxis + "=" + FmtX(oK4.Columns[nGapCol]) +
+                            " имеет якорь №" + arrColNumber[nGapCol] + " — слот не усвоен (гнездо не пустое)");
+                        continue;
+                    }
+                    // гард 1: владелец обязан иметь якорь (иначе клемма неизвестна)
+                    if (nOwnerCol < 0 || nOwnerCol >= nColumns || arrColNumber[nOwnerCol] < 0)
+                    {
+                        log.Warn("[GAP] колонка в пустом гнезде " + strAxis + "=" +
+                            FmtX(oK4.Columns[nGapCol]) + " — у колонки-владельца нет якоря, слот не усвоен");
+                        continue;
+                    }
+                    int nOwnerNum = arrColNumber[nOwnerCol];
+                    // гард 2 (sanity, как у оверфлоу-слота): у клеммы-владельца
+                    // ≥2 Dm-подключений (оба вывода клеммы их «закрывают»)
+                    DmTerminalGroup oGapGrp = FindGroupByAnchorNumber(oMap, nOwnerNum, dicGroups, dicByNumber);
+                    if (oGapGrp == null || oGapGrp.ConnCount < 2)
+                    {
+                        log.Warn("[GAP] колонка в пустом гнезде " + strAxis + "=" +
+                            FmtX(oK4.Columns[nGapCol]) + " — у клеммы-владельца №" + nOwnerNum +
+                            " меньше 2 подключений, слот не усвоен");
+                        continue;
+                    }
+                    // гард 3: слот уже занят (другим владельцем или прежним раздвоением)
+                    if (arrColTerminal[nGapCol] >= 0)
+                    {
+                        log.Warn("[GAP] слот " + strAxis + "=" + FmtX(oK4.Columns[nGapCol]) +
+                            " уже привязан к №" + arrColTerminal[nGapCol] + ", гнездо к №" + nOwnerNum +
+                            " отброшено (оставлен первый)");
+                        continue;
+                    }
+                    // гард 4 (MAJOR, перехват): ни одна ДРУГАЯ точка не должна
+                    // находиться в окне ±полушага от оси слота (как у оверфлоу-слота)
+                    double dGapAxis = oK4.Columns[nGapCol];
+                    bool bGapSteal = false;
+                    for (int nPt = 0; nPt < oAnalysis.Points.Count; nPt++)
+                    {
+                        if (Math.Abs(AxisOf(oK4, oAnalysis.Points[nPt]) - dGapAxis) > oK4.Half) continue;
+                        // свой лист гнезда (ближе всего к нему) — не «чужая» точка
+                        if (oK4.BindIndex(oAnalysis.Points[nPt]) == nGapCol) continue;
+                        bGapSteal = true;
+                        break;
+                    }
+                    if (bGapSteal)
+                    {
+                        log.Warn("[GAP] слот " + strAxis + "=" + FmtX(dGapAxis) +
+                            " потенциально перехватил бы привязку другой точки — вирт-колонка не усвоена");
+                        continue;
+                    }
+                    GapSlot oGapNew = new GapSlot();
+                    oGapNew.Col = nGapCol;
+                    oGapNew.OwnerNumber = nOwnerNum;
+                    oGapNew.Leaves = (oK4.Counts != null && nGapCol < oK4.Counts.Length)
+                        ? oK4.Counts[nGapCol] : 0;
+                    lstGap.Add(oGapNew);
+                    log.Log("[GAP] колонка в пустом гнезде " + strAxis + "=" + FmtX(dGapAxis) +
+                        " — клемма-владелец №" + nOwnerNum + " (колонка " + strAxis + "=" +
+                        FmtX(oK4.Columns[nOwnerCol]) +
+                        (bOwnerByBridge ? ", второй лист моста" : ", слева от гнезда") + ")");
+                }
+
                 // rev.12.6 (H-3c): материализация оверфлоу-слотов — ДОПОЛНЯЕМ
                 // oK4.Columns/Counts и параллельные массивы ДО построения секций 4/5.
                 // WHY именно мутация oK4 (а не локальные списки-клоны): к этому месту
@@ -397,26 +538,34 @@ namespace MyEplanActions
                 // Счёт oK4.Orphans остаётся детекторным (точка была сиротой на момент
                 // К4) — поле [MATCH-SUM] не меняется; порядок колонок не сортируем —
                 // вирт-слоты дописываются в хвост, индексы реальных колонок стабильны.
-                nOverflow = lstOverflow.Count;
-                if (nOverflow > 0)
+                // rev.17.1 (п.3б): два вида слотов. «НОВЫЙ» (лист-сирота моста) —
+                // дописывается в oK4.Columns, как ниже. «СУЩЕСТВУЮЩИЙ» (колонка в
+                // пустом гнезде, её создал детектор) — в oK4.Columns УЖЕ есть:
+                // дописывать нельзя (иначе дубль колонки), поэтому ниже только
+                // проставляем номер клеммы и флаги в существующие массивы, nColumns
+                // не растёт.
+                int nNewOverflow = lstOverflow.Count;
+                if (nNewOverflow > 0)
                 {
                     int nOld = nColumns;
-                    nColumns = nOld + nOverflow;
+                    nColumns = nOld + nNewOverflow;
                     int[] arrNumNew = new int[nColumns];
                     int[] arrTermNew = new int[nColumns];
                     bool[] arrSplitNew = new bool[nColumns];
                     bool[] arrOverfNew = new bool[nColumns];
+                    bool[] arrGapNew = new bool[nColumns];
                     Array.Copy(arrColNumber, arrNumNew, nOld);
                     Array.Copy(arrColTerminal, arrTermNew, nOld);
                     Array.Copy(arrSplitCol, arrSplitNew, nOld);
                     Array.Copy(arrOverflowCol, arrOverfNew, nOld);
+                    Array.Copy(arrGapCol, arrGapNew, nOld);
                     // якорей у вирт-колонок нет (-1 — дефолт массива не подходит,
                     // заполняем явно), клемма-владелец — из кандидата.
                     int[] arrCountsNew = new int[nColumns];
                     int[] arrCountsOld = oK4.Counts != null ? oK4.Counts : new int[nOld];
                     Array.Copy(arrCountsOld, arrCountsNew,
                         Math.Min(arrCountsOld.Length, nOld));
-                    for (int k = 0; k < nOverflow; k++)
+                    for (int k = 0; k < nNewOverflow; k++)
                     {
                         arrNumNew[nOld + k] = -1;
                         arrTermNew[nOld + k] = lstOverflow[k].OwnerNumber;
@@ -429,7 +578,20 @@ namespace MyEplanActions
                     arrColTerminal = arrTermNew;
                     arrSplitCol = arrSplitNew;
                     arrOverflowCol = arrOverfNew;
+                    arrGapCol = arrGapNew;
                     oK4.Counts = arrCountsNew;
+                }
+                // rev.17.1 (п.3б): усвоение колонок в пустых гнёздах — только флаги и
+                // номер клеммы в УЖЕ существующих массивах (индексы гнёзд < nOld, роста
+                // массивов и oK4.Columns здесь нет).
+                nOverflow = lstOverflow.Count;
+                foreach (GapSlot oGap in lstGap)
+                {
+                    arrColTerminal[oGap.Col] = oGap.OwnerNumber;
+                    arrOverflowCol[oGap.Col] = true;
+                    arrGapCol[oGap.Col] = true;   // rev.17.1 (m3): метка «гнездо»
+                    nOverflow++;
+                    nOverflowPts += oGap.Leaves;
                 }
             }
 
@@ -462,6 +624,7 @@ namespace MyEplanActions
                     int nTerm = arrColTerminal[i];
                     bool bSplit = arrSplitCol[i];
                     bool bOverflow = arrOverflowCol[i]; // rev.12.6 (H-3c)
+                    bool bGap = arrGapCol[i];           // rev.17.1 (m3): колонка в гнезде
                     DmTerminalGroup oGroup = nTerm >= 0
                         ? FindGroupByAnchorNumber(oMap, nTerm, dicGroups, dicByNumber)
                         : null;
@@ -476,7 +639,8 @@ namespace MyEplanActions
                     string strLine = "[MATCHCOL] колонка " + strAxis + "=" + FmtX(oK4.Columns[i]) + " ↔ " +
                         (nNumber >= 0 ? "№" + nNumber :
                             (bSplit ? "<якоря нет, раздвоение → №" + nTerm + ">" :
-                                (bOverflow ? "<оверфлоу-слот → №" + nTerm + ">" : "<якоря нет>"))) +
+                                (bGap ? "<гнездо → №" + nTerm + ">" :
+                                    (bOverflow ? "<оверфлоу-слот → №" + nTerm + ">" : "<якоря нет>")))) +
                         (oGroup == null
                             ? (nTerm >= 0 ? " — клеммы №" + nTerm + " нет в DM" : "")
                             : " клемма '" + oGroup.Name + "' (подключений " + oGroup.ConnCount +
@@ -513,6 +677,7 @@ namespace MyEplanActions
             //         счётчик в [MATCH-SUM]; печать — только при якорях, иначе
             //         каждая строка была бы «клемма -: нет сопоставления») ---
             int nIndex = 0;
+            int nNoTerm = 0;   // rev.17.1 (мелочь m1): точки с колонкой, но без клеммы
             foreach (Pt oPoint in oAnalysis.Points)
             {
                 nIndex++;
@@ -526,6 +691,7 @@ namespace MyEplanActions
                 int nTerm = oMatchRow.ColumnIndex >= 0 ? arrColTerminal[oMatchRow.ColumnIndex] : -1;
                 bool bSplitPoint = oMatchRow.ColumnIndex >= 0 && arrSplitCol[oMatchRow.ColumnIndex];
                 bool bOverflowPoint = oMatchRow.ColumnIndex >= 0 && arrOverflowCol[oMatchRow.ColumnIndex];
+                bool bGapPoint = oMatchRow.ColumnIndex >= 0 && arrGapCol[oMatchRow.ColumnIndex];
                 DmTerminalGroup oGroup = nTerm >= 0
                     ? FindGroupByAnchorNumber(oMap, nTerm, dicGroups, dicByNumber)
                     : null;
@@ -547,9 +713,20 @@ namespace MyEplanActions
                     (oMatchRow.ColumnIndex >= 0 ? FmtX(oMatchRow.ColumnX) : "СИРОТА") + " клемма " +
                     (oGroup != null ? "'" + oGroup.Name + "'" +
                         (bSplitPoint ? " (раздвоение → №" + nTerm + ")" : "") +
-                        (bOverflowPoint ? " (оверфлоу → №" + nTerm + ")" : "") : "-") + ": " +
+                        (bGapPoint ? " (гнездо → №" + nTerm + ")" : "") +
+                        (bOverflowPoint && !bGapPoint ? " (оверфлоу → №" + nTerm + ")" : "") : "-") + ": " +
                     (oGroup != null ? DescribeConns(oGroup) : "нет сопоставления");
                 if (oMatchRow.ColumnIndex < 0) log.Warn(strLine);
+                else if (oGroup == null)
+                {
+                    // rev.17.1 (мелочь m1): точка ПРИВЯЗАНА к колонке, но клеммы
+                    // у колонки нет. До rev17.1 такая точка была сиротой (WARN
+                    // «СИРОТА»), после — уходила в INFO («клемма -: нет
+                    // сопоставления»): видимость оператора была понижена.
+                    // Возвращаем WARN и считаем такие точки отдельно.
+                    nNoTerm++;
+                    log.Warn(strLine);
+                }
                 else log.Log(strLine);
             }
 
@@ -588,6 +765,14 @@ namespace MyEplanActions
             // «сирот» — детекторный счётчик К4 (засчитан ДО MatchBuilder), с
             // ревью-доработки аннотируется числом закрытых оверфлоу-листьев
             // «(закрыто оверфлоу N)» — N <= сирот, остальные сироты остаются честными.
+            // rev.17.1 (п.3б): «закрыто оверфлоу» теперь считает и листья гнёзд —
+            // их точки детектор привязал сам (вирт-колонка в пустом гнезде), поэтому
+            // это число может быть БОЛЬШЕ детекторного «сирот» (сирот 0, закрыто 2).
+            // Разделение счётчиков «сирот» / «закрыто оверфлоу» — продуктовое
+            // решение, здесь НЕ меняется (вне объёма ревью).
+            // rev.17.1 (мелочь m1): «точек без клеммы» — точки, привязанные к
+            // колонке, у которой нет клеммы (раньше такая строка [MATCH] уходила
+            // в INFO и была не видна оператору).
             log.Log("[INFO] [MATCH-SUM] точек " + lstRows.Count + ", колонок К4 " + nColumns +
                 ", клемм в DM " + lstTerminals.Count + ", якорей " + nAnchors +
                 " (коллизий " + nAnchorCollisions + ", дальних " + nAnchorFar + "), раздвоений моста " + nSplits +
@@ -596,6 +781,7 @@ namespace MyEplanActions
                 " (кабельных " + nCableConns + " [по имени CDP " + nCableByName +
                 ", только №31058 " + nCableBy31058Only + "], проводных " + nWireConns +
                 "); сирот " + oK4.Orphans + " (закрыто оверфлоу " + nOverflowPts + ")" +
+                ", точек без клеммы " + nNoTerm +
                 ", перегруженных колонок " + oK4.Over +
                 "; конфликтов классификации: " + nCabX);
 
@@ -631,6 +817,17 @@ namespace MyEplanActions
             public int Leaves;
         }
 
+        /// <summary>rev.17.1 (п.3б): колонка в ПУСТОМ ГНЁЗДЕ сетки, усвоенная как
+        /// оверфлоу-слот: индекс колонки в oK4.Columns (уже существующей — в отличие
+        /// от OverflowSlot, который дописывается в хвост), номер клеммы-владельца и
+        /// число точек в гнезде.</summary>
+        private sealed class GapSlot
+        {
+            public int Col;
+            public int OwnerNumber;
+            public int Leaves;
+        }
+
         /// <summary>Координата точки НА ОСИ ориентации (rev.12.6, H-3c): единый
         /// источник — oK4.Orientation (X для Horizontal, Y для Vertical) — как в
         /// LeadDetector.CheckK4Report и K4Report.BindIndex.</summary>
@@ -639,12 +836,55 @@ namespace MyEplanActions
             return oK4.Orientation == ReportOrientation.Vertical ? oPoint.Y : oPoint.X;
         }
 
+        /// <summary>Точка, привязанная к колонке-гнезду (rev.17.1, ревью M1):
+        /// индекс точки в oAnalysis.Points, -1 = в гнезде точек нет.</summary>
+        private static int FindGapPoint(LeadAnalysis oAnalysis, K4Report oK4, int nGapCol)
+        {
+            for (int nPt = 0; nPt < oAnalysis.Points.Count; nPt++)
+                if (oK4.BindIndex(oAnalysis.Points[nPt]) == nGapCol) return nPt;
+            return -1;
+        }
+
+        /// <summary>Колонка ВТОРОГО листа моста той же компоненты (rev.17.1, ревью
+        /// M1): там, где реально стоит клемма (якорь). -1 = второго листа нет либо
+        /// он ни к какой колонке не привязан.</summary>
+        private static int FindSecondLeafColumn(LeadAnalysis oAnalysis, K4Report oK4,
+            int nPt, int nComp)
+        {
+            for (int n = 0; n < oAnalysis.Points.Count; n++)
+            {
+                if (n == nPt) continue;
+                if (n >= oAnalysis.PointComponent.Count) continue;
+                if (oAnalysis.PointComponent[n] != nComp) continue;
+                return oK4.BindIndex(oAnalysis.Points[n]);
+            }
+            return -1;
+        }
+
+        /// <summary>Точка — лист моста (rev.17.1, ревью M1): признаки по точкам
+        /// (индексы совпадают с oAnalysis.Points). Список короче точек — «допустимо»
+        /// (не блокируем гнездо из-за неполных данных).</summary>
+        private static bool IsBridgePoint(LeadAnalysis oAnalysis, int nPt)
+        {
+            if (oAnalysis.PointIsBridge == null) return true;
+            if (nPt < 0 || nPt >= oAnalysis.PointIsBridge.Count) return true;
+            return oAnalysis.PointIsBridge[nPt];
+        }
+
+        /// <summary>Ближайшая колонка К4 к позиции якоря. rev.17.1 (ревью M2):
+        /// ГНЁЗДОВЫЕ колонки (вирт-колонки в пустых гнёздах сетки) НЕ участвуют
+        /// в разрешении якорей: якорь клеммы, смещённый в сторону гнезда, иначе
+        /// привязался бы к гнезду — и реальная колонка клеммы потеряла бы клемму
+        /// («точки есть, клеммы нет», в [TCM] теряется строка подключения).
+        /// Поведение до rev.17.1 (якорь всегда искал только реальные колонки)
+        /// восстановлено полностью.</summary>
         private static int FindNearestColumn(K4Report oK4, double dX, out double dDist)
         {
             int nBest = -1;
             double dBest = double.MaxValue;
             for (int i = 0; i < oK4.Columns.Count; i++)
             {
+                if (oK4.IsGapColumn(i)) continue;   // rev.17.1 (M2): гнёзда — не якоря
                 double d = Math.Abs(oK4.Columns[i] - dX);
                 if (d < dBest) { dBest = d; nBest = i; }
             }

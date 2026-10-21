@@ -329,7 +329,7 @@ namespace MyEplanActions
                     log.Log("[INFO] [RESULT] стубы-маркеры клемм не найдены — контроль К4 пропущен");
                 else
                     oResult.K4 = CheckK4Report(lstPoints, lstStubs, lstJumpers,
-                        eOrientation, log);
+                        eOrientation, log, oResult.PointIsBridge);
                 log.Summarize("Выводов: " + nLeads + ", точек подключения (кабель+провод): " +
                     lstPoints.Count + ".");
             }
@@ -351,9 +351,24 @@ namespace MyEplanActions
         /// подключений → нет выводов);
         /// WARN — только точки-«сироты» и клеммы с &gt;2 точками. Возвращает K4Report
         /// (колонки/шаг/привязка/ось) для свода [MATCH] (Задача 5); логи — как в
-        /// rev.13, строки [K4] печатают ось.</summary>
+        /// rev.13, строки [K4] печатают ось.
+        /// rev.17.1 (решение заказчика п.3б, 21.10.2026): ПУСТЫЕ ГНЁЗДА СЕТКИ —
+        /// пропуск между соседними колонками больше 1.5 шага (EPLAN рисует «второй
+        /// вывод» клеммы в гнезде, где нет стуба-маркера). Если в такое гнездо
+        /// попала точка подключения, в нём создаётся ВИРТУАЛЬНАЯ КОЛОНКА: точка
+        /// привязывается к ней штатным правилом (|Δ оси| ≤ полушага) и перестаёт быть
+        /// «сиротой» (WARN не печатается, Orphans не растёт). Владелец гнезда —
+        /// реальная колонка СЛЕВА от дыры (её клемма тянет второй вывод); он
+        /// отдаётся в K4Report.GapOwner для MatchBuilder. Гард перехвата: если в
+        /// окне ±полушага гнезда стоит точка, привязанная к другой колонке, гнездо
+        /// не создаётся (точка остаётся сиротой, прежний WARN).
+        /// rev.17.1 (ревью M3): гнездо занимает ТОЛЬКО ЛИСТ МОСТА (второй вывод
+        /// клеммы) — параметр lstIsBridge (признак «лист моста» по точкам, индексы
+        /// совпадают с точками). null = все точки допустимы (прежнее поведение,
+        /// старые вызовы и тесты не ломаются). Одиночная (не-мостовая) точка в
+        /// гнезде остаётся сиротой (прежнее поведение + прежний WARN).</summary>
         public static K4Report CheckK4Report(List<Pt> lstPoints, List<Seg> lstStubs, List<Seg> lstJumpers,
-            ReportOrientation orientation, DiagnosticLogger log)
+            ReportOrientation orientation, DiagnosticLogger log, List<bool> lstIsBridge = null)
         {
             K4Report oReport = new K4Report();
             oReport.Orientation = orientation;
@@ -389,6 +404,7 @@ namespace MyEplanActions
 
             // Виртуальные колонки под перемычками: позиции от начала перемычки с шагом
             // сетки (под перемычкой могут быть клеммы без собственного стуба).
+            int nVirtJumper = 0;
             foreach (Seg oJumper in lstJumpers)
             {
                 double dA = bVertical ? Math.Min(oJumper.A.Y, oJumper.B.Y) : Math.Min(oJumper.A.X, oJumper.B.X);
@@ -403,6 +419,7 @@ namespace MyEplanActions
                     if (!bExists)
                     {
                         lstCols.Add(dPos);
+                        nVirtJumper++;
                         log.Log("[K4] колонка клеммы без стуба (под перемычкой): " + strAxis + "=" +
                             dPos.ToString("F3", CultureInfo.InvariantCulture));
                     }
@@ -410,20 +427,128 @@ namespace MyEplanActions
             }
             lstCols.Sort();
 
+            // --- rev.17.1 (решение заказчика п.3б, 21.10.2026): ПУСТЫЕ ГНЁЗДА СЕТКИ ---
+            // Гнездо = пропуск между соседними колонками больше 1.5 шага: в таком гнезде
+            // EPLAN рисует «второй вывод» клеммы (два Ext-подключения одной клеммы),
+            // а стуба-маркера там нет — клемма заняла соседнее гнездо. Это НЕ аномалия
+            // геометрии, поэтому в гнезде создаётся ВИРТУАЛЬНАЯ КОЛОНКА: точка
+            // подключения привязывается к ней штатным правилом (|Δ оси| ≤ полушага) и
+            // перестаёт быть «сиротой» (иначе WARN печатается на каждом прогоне).
+            // Владелец гнезда — реальная колонка СЛЕВА от дыры: её клемма тянет второй
+            // вывод (MatchBuilder узнаёт владельца из K4Report.GapOwner).
+            List<double> lstSlots = new List<double>();      // ось гнезда
+            List<double> lstSlotOwner = new List<double>();   // ось колонки-владельца
+            for (int i = 0; i + 1 < lstCols.Count; i++)
+            {
+                double dGap = lstCols[i + 1] - lstCols[i];
+                if (dGap <= 1.5 * dPitch) continue;            // штатный шаг — дыры нет
+                // Число пустых гнёзд в пропуске: сколько шагов сетки умещается в
+                // промежутке, минус одно (занято правой колонкой). Ceiling, а не
+                // Round: округление «до чётного» ведёт себя непредсказуемо на
+                // дробных промежутках (2.5 шага → 2 гнезда, 3.5 → 4). Гнёзда,
+                // прижатые к правой колонке, отсекаются проверкой ниже.
+                int nEmpty = (int)Math.Ceiling(dGap / dPitch) - 1;
+                if (nEmpty < 1) continue;
+                for (int k = 1; k <= nEmpty; k++)
+                {
+                    double dSlot = lstCols[i] + k * dPitch;
+                    // гнездо, прижатое к правой колонке, — не гнездо (точка в нём
+                    // привязалась бы к этой колонке и не была бы сиротой).
+                    // rev.17.1 (мелочь m4): граница ВКЛЮЧЕНА (>=): гнездо ровно в
+                    // полушаге от правой колонки — уже не гнездо.
+                    if (dSlot + dHalf >= lstCols[i + 1]) continue;
+                    lstSlots.Add(dSlot);
+                    lstSlotOwner.Add(lstCols[i]);
+                }
+            }
+
+            // Первая привязка — по РЕАЛЬНЫМ колонкам: точки вне полушага — «сироты»,
+            // именно они могут попасть в пустое гнездо.
+            List<int> lstOrphan = new List<int>();
+            for (int i = 0; i < lstPoints.Count; i++)
+            {
+                double dPos = bVertical ? lstPoints[i].Y : lstPoints[i].X;
+                double dDist;
+                int nCol = NearestColumn(lstCols, dPos, out dDist);
+                if (nCol < 0 || dDist > dHalf) lstOrphan.Add(i);
+            }
+
+            // Создание вирт-колонок в пустых гнёздах (по одной на гнездо).
+            List<double> lstGapPos = new List<double>();      // ось вирт-колонки
+            List<double> lstGapOwner = new List<double>();    // ось колонки-владельца
+            for (int nSlot = 0; nSlot < lstSlots.Count; nSlot++)
+            {
+                double dSlot = lstSlots[nSlot];
+                // точки-кандидаты: сироты, попавшие в окно ±полушага гнезда.
+                // rev.17.1 (ревью M3): гнездо занимает ТОЛЬКО ЛИСТ МОСТА (второй
+                // вывод клеммы — решение заказчика п.3б). Одиночная (не-мостовая)
+                // точка в гнезде остаётся сиротой (прежнее поведение + прежний
+                // WARN): иначе она молча получила бы клемму владельца, а
+                // TerminalConnectionModelBuilder забрал бы у этой клеммы DmRow.
+                // lstIsBridge = null → все точки допустимы (прежнее поведение).
+                List<int> lstFit = new List<int>();
+                for (int i = 0; i < lstOrphan.Count; i++)
+                {
+                    int nPt = lstOrphan[i];
+                    double dPos = bVertical ? lstPoints[nPt].Y : lstPoints[nPt].X;
+                    if (Math.Abs(dPos - dSlot) > dHalf) continue;
+                    if (!IsBridgePoint(lstIsBridge, nPt)) continue;
+                    lstFit.Add(nPt);
+                }
+                if (lstFit.Count == 0) continue;  // в гнезде никого нет — пустая клетка
+                // Гард перехвата: в окне гнезда не должно быть точек, привязанных к
+                // ДРУГИМ колонкам — иначе вирт-колонка увела бы чужую точку. Точки
+                // самого гнезда (кандидаты lstFit) — не «чужие», их гнездо и создаёт.
+                // rev.17.1 (ревью M3): отдельный случай — в окне гнезда стоит
+                // ОДИНОЧНАЯ (не-мостовая) сирота: вирт-колонка «украла» бы и её
+                // (она тоже в окне ±полушага), поэтому гнездо не создаётся.
+                bool bSteal = false;
+                bool bNonBridge = false;
+                for (int i = 0; i < lstPoints.Count && !bSteal && !bNonBridge; i++)
+                {
+                    if (lstFit.Contains(i)) continue;
+                    double dPos = bVertical ? lstPoints[i].Y : lstPoints[i].X;
+                    if (Math.Abs(dPos - dSlot) > dHalf) continue;
+                    if (lstOrphan.Contains(i)) bNonBridge = true;   // сирота не-лист моста
+                    else bSteal = true;                             // точка другой колонки
+                }
+                if (bNonBridge)
+                {
+                    log.Warn("[K4] виртуальная колонка в пустом гнезде " + strAxis + "=" +
+                        dSlot.ToString("F3", CultureInfo.InvariantCulture) +
+                        " не создана: в её окне есть одиночная точка (не лист моста) — " +
+                        "точки остаются сиротами");
+                    continue;
+                }
+                if (bSteal)
+                {
+                    log.Warn("[K4] виртуальная колонка в пустом гнезде " + strAxis + "=" +
+                        dSlot.ToString("F3", CultureInfo.InvariantCulture) +
+                        " не создана: в её окне есть точка другой колонки (перехват привязки)");
+                    continue;
+                }
+                lstCols.Add(dSlot);
+                lstGapPos.Add(dSlot);
+                lstGapOwner.Add(lstSlotOwner[nSlot]);
+                log.Log("[K4] виртуальная колонка в пустом гнезде сетки: " + strAxis + "=" +
+                    dSlot.ToString("F3", CultureInfo.InvariantCulture) + " (владелец " + strAxis + "=" +
+                    lstSlotOwner[nSlot].ToString("F3", CultureInfo.InvariantCulture) +
+                    ", Δ" + strAxis + "=" +
+                    (dSlot - lstSlotOwner[nSlot]).ToString("F3", CultureInfo.InvariantCulture) + ")");
+            }
+            lstCols.Sort();
+
+            // Итоговая привязка — уже с вирт-колонками в пустых гнёздах.
             int[] arrCounts = new int[lstCols.Count];
             oReport.Counts = arrCounts;
             int nOrphan = 0, nOver = 0;
-            foreach (Pt oPoint in lstPoints)
+            for (int i = 0; i < lstPoints.Count; i++)
             {
+                Pt oPoint = lstPoints[i];
                 double dPos = bVertical ? oPoint.Y : oPoint.X;
-                int nBest = -1;
-                double dBest = double.MaxValue;
-                for (int i = 0; i < lstCols.Count; i++)
-                {
-                    double d = Math.Abs(lstCols[i] - dPos);
-                    if (d < dBest) { dBest = d; nBest = i; }
-                }
-                if (nBest >= 0 && dBest <= dHalf)
+                double dDist;
+                int nBest = NearestColumn(lstCols, dPos, out dDist);
+                if (nBest >= 0 && dDist <= dHalf)
                 {
                     arrCounts[nBest]++;
                     if (arrCounts[nBest] == 3) // WARN один раз на колонку
@@ -441,11 +566,22 @@ namespace MyEplanActions
                         oPoint.Y.ToString("F3", CultureInfo.InvariantCulture) +
                         ") не привязалась к колонке клемм (ближайшая " + strAxis + "=" +
                         (nBest >= 0 ? lstCols[nBest].ToString("F3", CultureInfo.InvariantCulture) : "?") +
-                        ", Δ" + strAxis + "=" + dBest.ToString("F3", CultureInfo.InvariantCulture) + ")");
+                        ", Δ" + strAxis + "=" + dDist.ToString("F3", CultureInfo.InvariantCulture) + ")");
                 }
             }
             oReport.Orphans = nOrphan;
             oReport.Over = nOver;
+
+            // Индексы вирт-колонок и их владельцев — ПОСЛЕ сортировки: добавление
+            // колонок в пустые гнёзда сдвинуло индексы реальных колонок.
+            for (int i = 0; i < lstGapPos.Count; i++)
+            {
+                int nGap = FindColumn(lstCols, lstGapPos[i]);
+                int nOwner = FindColumn(lstCols, lstGapOwner[i]);
+                if (nGap < 0 || nOwner < 0) continue;
+                oReport.GapColumns.Add(nGap);
+                oReport.GapOwner.Add(nOwner);
+            }
 
             int n0 = 0, n1 = 0, n2 = 0;
             foreach (int nCount in arrCounts)
@@ -455,12 +591,48 @@ namespace MyEplanActions
                 else if (nCount == 2) n2++;
             }
             log.Log("[INFO] [K4] клемм-колонок: " + lstCols.Count + " (" + strAxis + ", стубов " + lstStubs.Count +
-                ", виртуальных под перемычками " + (lstCols.Count - lstStubs.Count) +
+                ", виртуальных под перемычками " + nVirtJumper +
+                ", виртуальных в пустых гнёздах " + lstGapPos.Count +
                 "); распределение точек на клемму: 0×" + n0 + ", 1×" + n1 + ", 2×" + n2 +
                 ", >2×" + nOver + "; точек без клеммы: " + nOrphan);
             log.Summarize("К4: точек " + lstPoints.Count + ", клемм-колонок " + lstCols.Count +
                 ", точек без клеммы " + nOrphan + ", клемм с >2 точками " + nOver + ".");
             return oReport;
+        }
+
+        /// <summary>Индекс ближайшей колонки по оси и расстояние до неё (rev.17.1:
+        /// общий хелпер привязки точек и поиска вирт-колонок в пустых гнёздах).</summary>
+        private static int NearestColumn(List<double> lstCols, double dCoord, out double dDist)
+        {
+            int nBest = -1;
+            double dBest = double.MaxValue;
+            for (int i = 0; i < lstCols.Count; i++)
+            {
+                double d = Math.Abs(lstCols[i] - dCoord);
+                if (d < dBest) { dBest = d; nBest = i; }
+            }
+            dDist = nBest >= 0 ? dBest : double.MaxValue;
+            return nBest;
+        }
+
+        /// <summary>Точка nPt — лист моста? (rev.17.1, ревью M3): признак приходит
+        /// списком (индексы совпадают с индексами точек). lstIsBridge = null — все
+        /// точки допустимы (прежнее поведение, старые вызовы); список короче точек —
+        /// тоже «допустимо» (не блокируем гнездо из-за неполных данных).</summary>
+        private static bool IsBridgePoint(List<bool> lstIsBridge, int nPt)
+        {
+            if (lstIsBridge == null) return true;
+            if (nPt < 0 || nPt >= lstIsBridge.Count) return true;
+            return lstIsBridge[nPt];
+        }
+
+        /// <summary>Индекс колонки с точной координатой (rev.17.1: поиск индексов
+        /// вирт-колонок в пустых гнёздах и их владельцев после сортировки).</summary>
+        private static int FindColumn(List<double> lstCols, double dCoord)
+        {
+            for (int i = 0; i < lstCols.Count; i++)
+                if (Math.Abs(lstCols[i] - dCoord) < 1e-6) return i;
+            return -1;
         }
 
         /// <summary>Минимальное расстояние от точки до ближайшего маркера клеммы (стуб
